@@ -23,6 +23,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useUpdateStore } from '../../store/updateStore';
+import { useUpgradeStore } from '../../store/upgradeStore';
 
 type LibraryFilter = 'all' | 'playlists' | 'artists';
 
@@ -47,6 +48,9 @@ export const Sidebar: React.FC = () => {
     isPlaying,
     togglePlay,
   } = usePlayerStore();
+
+  const { currentVersion, isChecking, checkForUpdates } = useUpdateStore();
+  const { openHelpModal } = useUpgradeStore();
 
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>('all');
   const [librarySearch, setLibrarySearch] = useState('');
@@ -226,6 +230,23 @@ export const Sidebar: React.FC = () => {
               </button>
             );
           })}
+
+          {/* Help & AI Upgrade Studio Button */}
+          <button
+            type="button"
+            onClick={() => openHelpModal()}
+            title={isSidebarCollapsed ? 'Help & AI Upgrade' : undefined}
+            className={`group relative flex items-center gap-3.5 px-3 py-2.5 rounded-lg transition-all duration-150 text-sm cursor-pointer text-secondary hover:text-primary hover:bg-elevated/50 font-medium ${
+              isSidebarCollapsed ? 'justify-center px-0' : ''
+            }`}
+          >
+            <span className="text-accent group-hover:scale-110 transition-transform">
+              <Sparkles size={18} />
+            </span>
+            {!isSidebarCollapsed && (
+              <span className="truncate font-semibold">Help & AI Upgrade</span>
+            )}
+          </button>
         </nav>
       </div>
 
@@ -652,6 +673,33 @@ export const Sidebar: React.FC = () => {
                 </p>
               </div>
             )}
+        </div>
+
+        {/* Sidebar Version & Manual Update Trigger */}
+        <div className="mt-auto border-t border-customBorder/40 bg-surface/80 px-3 py-2 flex items-center justify-between text-[11px] text-muted select-none">
+          {!isSidebarCollapsed ? (
+            <>
+              <span className="font-mono text-secondary">v{currentVersion}</span>
+              <button
+                type="button"
+                onClick={() => checkForUpdates(true)}
+                className="hover:text-primary transition-colors flex items-center gap-1.5 cursor-pointer font-medium"
+                title="Check for updates"
+              >
+                <RefreshCw size={11} className={isChecking ? 'animate-spin text-accent' : ''} />
+                <span>{isChecking ? 'Checking...' : 'Check updates'}</span>
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => checkForUpdates(true)}
+              title={`Dotify v${currentVersion} (Check updates)`}
+              className="mx-auto p-1 rounded-md text-muted hover:text-primary transition-colors cursor-pointer"
+            >
+              <RefreshCw size={13} className={isChecking ? 'animate-spin text-accent' : ''} />
+            </button>
+          )}
         </div>
       </div>
 

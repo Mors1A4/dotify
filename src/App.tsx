@@ -12,6 +12,7 @@ import { JamModal } from './components/jam/JamModal';
 import { AuthModal } from './components/auth/AuthModal';
 import { CreatePlaylistModal } from './components/modals/CreatePlaylistModal';
 import { UpdateModal } from './components/modals/UpdateModal';
+import { HelpUpgradeModal } from './components/modals/HelpUpgradeModal';
 import { HomeView } from './components/views/HomeView';
 import { SearchView } from './components/views/SearchView';
 import { LibraryView } from './components/views/LibraryView';
@@ -178,6 +179,9 @@ export const App: React.FC = () => {
 
       {/* Automatic Desktop & Android Self-Update Modal */}
       <UpdateModal />
+
+      {/* Help & AI Feature Upgrade Studio Modal */}
+      <HelpUpgradeModal />
     </div>
   );
 };

@@ -438,10 +438,10 @@ function runOpencodeCli({ forkPath, savedImagePaths, promptText, onProgress }) {
     const args = ['run', '-m', modelId, '--variant', variant];
     for (const imgPath of savedImagePaths) {
       if (fs.existsSync(imgPath)) {
-        args.push('-f', imgPath);
+        args.push(`--file=${imgPath}`);
       }
     }
-    args.push(promptText);
+    args.push('--', promptText);
 
     const displayCmd = `opencode run -m opencode/muse-spark-1.3 --variant ${variant} --dir "${forkPath}" ${savedImagePaths
       .map((p) => `-f "${p}"`)

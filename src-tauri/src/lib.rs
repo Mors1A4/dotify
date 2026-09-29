@@ -189,7 +189,7 @@ fn start_google_auth_server(app: AppHandle) -> Result<u16, String> {
 }
 
 #[tauri::command]
-fn open_external_browser(_app: AppHandle, url: String) -> Result<(), String> {
+fn open_external_browser(app: AppHandle, url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("rundll32")
@@ -1267,25 +1267,33 @@ fn refresh_windows_taskbar_icon(hwnd: *mut std::ffi::c_void, seq: u64) {
 }
 
 #[tauri::command]
-fn set_app_icon_rgba(app: AppHandle, rgba: Vec<u8>, width: u32, height: u32) -> Result<(), String> {
-    use tauri::Manager;
-    let img = tauri::image::Image::new_owned(rgba.clone(), width, height);
-    #[cfg(target_os = "windows")]
-    let seq = ICON_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-
-    for (_, window) in app.webview_windows() {
-        let _ = window.set_icon(img.clone());
+fn set_app_icon_rgba(_app: AppHandle, _rgba: Vec<u8>, _width: u32, _height: u32) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        let img = tauri::image::Image::new_owned(_rgba.clone(), _width, _height);
         #[cfg(target_os = "windows")]
-        if let Ok(hwnd) = window.hwnd() {
-            refresh_windows_taskbar_icon(hwnd.0 as *mut std::ffi::c_void, seq);
+        let seq = ICON_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
+        for (_, window) in _app.webview_windows() {
+            let _ = window.set_icon(img.clone());
+            #[cfg(target_os = "windows")]
+            if let Ok(hwnd) = window.hwnd() {
+                refresh_windows_taskbar_icon(hwnd.0 as *mut std::ffi::c_void, seq);
+            }
         }
+
+        #[cfg(target_os = "windows")]
+        thread::spawn(move || {
+            sync_installed_icons_and_shortcuts(_rgba, _width, _height, seq);
+        });
     }
 
-    #[cfg(target_os = "windows")]
-    thread::spawn(move || {
-        sync_installed_icons_and_shortcuts(rgba, width, height, seq);
-    });
+    Ok(())
+}
 
+#[tauri::command]
+fn set_android_app_icon(_app: AppHandle, _theme: String) -> Result<(), String> {
     Ok(())
 }
 
@@ -1490,6 +1498,7 @@ pub fn run() {
                 }
             }
             spawn_backend_server();
+            #[cfg(desktop)]
             if let Some(icon) = app.default_window_icon().cloned() {
                 for (_, window) in app.webview_windows() {
                     let _ = window.set_icon(icon.clone());
@@ -1508,6 +1517,7 @@ pub fn run() {
             start_google_auth_server,
             open_external_browser,
             set_app_icon_rgba,
+            set_android_app_icon,
             open_mp3_folder,
             install_windows_update
         ])

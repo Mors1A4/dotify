@@ -3,8 +3,9 @@ import { usePlayerStore } from '../../store/playerStore';
 import { useThemeStore } from '../../store/themeStore';
 import { useJamStore } from '../../store/jamStore';
 import { useUpdateStore } from '../../store/updateStore';
+import { useUpgradeStore } from '../../store/upgradeStore';
 import { ACCENT_PRESETS } from '../../types/theme';
-import { Search, ChevronLeft, ChevronRight, Palette, Sliders, Radio, ChevronDown, Check, X, ArrowDownCircle } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Palette, Sliders, Radio, ChevronDown, Check, X, ArrowDownCircle, Sparkles } from 'lucide-react';
 import { AuthButton } from '../auth/AuthButton';
 import { BrandLogo } from '../common/BrandLogo';
 import { VisualizerIcon } from '../common/VisualizerIcon';
@@ -27,6 +28,8 @@ export const TopBar: React.FC = () => {
 
   const { isConnected: isJamConnected, members: jamMembers } = useJamStore();
   const { updateAvailable, latestRelease, setModalOpen: setUpdateModalOpen } = useUpdateStore();
+  const { openHelpModal, requests: upgradeRequests } = useUpgradeStore();
+  const hasProcessingUpgrade = upgradeRequests.some((r) => r.status === 'processing');
   const { colors, setAccentColor } = useThemeStore();
   const [isThemeHovered, setIsThemeHovered] = React.useState(false);
   const [isThemeOpen, setIsThemeOpen] = React.useState(false);
@@ -188,6 +191,25 @@ export const TopBar: React.FC = () => {
             </button>
           )}
 
+          {/* Help & AI Feature Upgrade Studio Button */}
+          <button
+            type="button"
+            onClick={() => openHelpModal()}
+            data-testid="open-help-upgrade-btn"
+            aria-label="Help & AI Upgrade Studio"
+            className={`px-2.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-semibold transition-all cursor-pointer ${
+              hasProcessingUpgrade
+                ? 'bg-accent text-white font-bold animate-pulse shadow-md shadow-accent/25'
+                : 'bg-elevated hover:bg-highlight text-secondary hover:text-primary'
+            }`}
+            title="Help & AI Feature Upgrade Studio (OpenCode muse-spark-1.3 xhigh)"
+          >
+            <Sparkles size={15} className={hasProcessingUpgrade ? 'animate-spin' : 'text-accent'} />
+            <span className="hidden md:inline">
+              {hasProcessingUpgrade ? 'Upgrading...' : 'Upgrade / Help'}
+            </span>
+          </button>
+
           {/* Collaborative Jam Button */}
           <button
             onClick={() => toggleJamModal(true)}
@@ -318,6 +340,20 @@ export const TopBar: React.FC = () => {
               <Search size={16} />
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => openHelpModal()}
+            aria-label="Help & AI Feature Upgrade"
+            className={`p-2 rounded-full transition-all cursor-pointer ${
+              hasProcessingUpgrade
+                ? 'bg-accent text-white animate-pulse shadow-md shadow-accent/25'
+                : 'bg-elevated text-secondary hover:text-primary'
+            }`}
+            title="Help & AI Feature Upgrade Studio"
+          >
+            <Sparkles size={16} className={hasProcessingUpgrade ? 'animate-spin' : 'text-accent'} />
+          </button>
 
           <button
             onClick={() => toggleJamModal(true)}

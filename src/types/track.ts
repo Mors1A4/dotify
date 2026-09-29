@@ -23,5 +23,6 @@ export interface Track {
     fileSize?: number;
     previewUrl?: string;
     fallbackUrl?: string;
+    vibe?: string;
   };
 }

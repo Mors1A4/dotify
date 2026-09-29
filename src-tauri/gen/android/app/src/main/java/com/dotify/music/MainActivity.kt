@@ -1,6 +1,8 @@
 package com.dotify.music
 
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -67,6 +69,18 @@ class MainActivity : TauriActivity() {
         }
       }
     }, "AndroidNativeAuth")
+
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface
+      fun setAppIcon(themeKey: String): Boolean {
+        return changeAppIcon(themeKey)
+      }
+
+      @JavascriptInterface
+      fun getCurrentAppIcon(): String {
+        return getActiveAppIcon()
+      }
+    }, "AndroidNativeTheme")
 
     webView.addJavascriptInterface(object {
       @JavascriptInterface
@@ -254,5 +268,74 @@ class MainActivity : TauriActivity() {
     } ?: run {
       pendingAuthUri = uriString
     }
+  }
+
+  companion object {
+    private val ALIAS_MAP = mapOf(
+      "green" to "MainActivityDefault",
+      "cyan" to "MainActivityCyan",
+      "purple" to "MainActivityPurple",
+      "pink" to "MainActivityPink",
+      "orange" to "MainActivityOrange",
+      "amber" to "MainActivityAmber",
+      "red" to "MainActivityRed",
+      "blue" to "MainActivityBlue"
+    )
+  }
+
+  private fun changeAppIcon(themeKey: String): Boolean {
+    return try {
+      val normalized = themeKey.trim().lowercase()
+      val targetAliasSuffix = ALIAS_MAP[normalized] ?: ALIAS_MAP["green"]!!
+      val pm = packageManager
+      val pkg = packageName
+      val targetCompName = ComponentName(pkg, "$pkg.$targetAliasSuffix")
+
+      val currentSetting = pm.getComponentEnabledSetting(targetCompName)
+      if (currentSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+        return true
+      }
+
+      // Step 1: Enable the target alias first so the launcher always sees an active component
+      pm.setComponentEnabledSetting(
+        targetCompName,
+        PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+        PackageManager.DONT_KILL_APP
+      )
+
+      // Step 2: Disable all other aliases
+      for ((_, aliasSuffix) in ALIAS_MAP) {
+        if (aliasSuffix != targetAliasSuffix) {
+          val comp = ComponentName(pkg, "$pkg.$aliasSuffix")
+          if (pm.getComponentEnabledSetting(comp) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+            pm.setComponentEnabledSetting(
+              comp,
+              PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+              PackageManager.DONT_KILL_APP
+            )
+          }
+        }
+      }
+      true
+    } catch (e: Exception) {
+      e.printStackTrace()
+      false
+    }
+  }
+
+  private fun getActiveAppIcon(): String {
+    try {
+      val pm = packageManager
+      val pkg = packageName
+      for ((key, aliasSuffix) in ALIAS_MAP) {
+        val comp = ComponentName(pkg, "$pkg.$aliasSuffix")
+        if (pm.getComponentEnabledSetting(comp) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+          return key
+        }
+      }
+    } catch (e: Exception) {
+      e.printStackTrace()
+    }
+    return "green"
   }
 }
