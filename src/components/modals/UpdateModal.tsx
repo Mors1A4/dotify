@@ -21,6 +21,7 @@ export const UpdateModal: React.FC = () => {
     currentVersion,
     latestRelease,
     updateAvailable,
+    recentlyAttempted,
     isChecking,
     isUpdating,
     progressPercent,
@@ -28,6 +29,7 @@ export const UpdateModal: React.FC = () => {
     updateError,
     isModalOpen,
     setModalOpen,
+    dismissCurrentUpdate,
     checkForUpdates,
     startUpdate,
   } = useUpdateStore();
@@ -52,7 +54,7 @@ export const UpdateModal: React.FC = () => {
       data-testid="update-modal-backdrop"
       onClick={() => {
         if (!isUpdating && !latestRelease?.mandatory) {
-          setModalOpen(false);
+          dismissCurrentUpdate();
         }
       }}
       className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200"
@@ -67,7 +69,7 @@ export const UpdateModal: React.FC = () => {
           {!isUpdating && !latestRelease?.mandatory && (
             <button
               type="button"
-              onClick={() => setModalOpen(false)}
+              onClick={() => dismissCurrentUpdate()}
               aria-label="Close update modal"
               className="absolute right-4 top-4 p-1.5 rounded-full bg-elevated/80 text-secondary hover:text-primary hover:bg-highlight transition-colors cursor-pointer"
             >
@@ -156,6 +158,16 @@ export const UpdateModal: React.FC = () => {
             </div>
           )}
 
+          {/* Recently Attempted Anti-Loop Notice */}
+          {recentlyAttempted && (
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed">
+              <AlertCircle size={15} className="shrink-0 mt-0.5 text-amber-400" />
+              <div className="flex-1">
+                An update was recently started. If Dotify reopened on the previous version, Windows may have kept the current file locked. You can click <strong>Installer (.exe)</strong> below to run the setup installer directly, or choose <strong>Later</strong> to continue using Dotify.
+              </div>
+            </div>
+          )}
+
           {/* Error Display */}
           {updateError && (
             <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs">
@@ -229,7 +241,7 @@ export const UpdateModal: React.FC = () => {
                   {!latestRelease.mandatory && !isUpdating && (
                     <button
                       type="button"
-                      onClick={() => setModalOpen(false)}
+                      onClick={() => dismissCurrentUpdate()}
                       className="py-2 px-4 rounded-xl bg-elevated/60 hover:bg-elevated text-xs font-semibold text-muted hover:text-primary transition-colors cursor-pointer"
                     >
                       Later

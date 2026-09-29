@@ -161,6 +161,15 @@ function buildTargets(newVersion, opts) {
     return;
   }
 
+  // Remove existing root binaries to guarantee only newly compiled binaries are published
+  if (!opts.androidOnly) {
+    try { fs.unlinkSync(path.join(ROOT_DIR, 'dotify.exe')); } catch {}
+    try { fs.unlinkSync(path.join(ROOT_DIR, 'dotify-setup.exe')); } catch {}
+  }
+  if (!opts.desktopOnly) {
+    try { fs.unlinkSync(path.join(ROOT_DIR, 'dotify.apk')); } catch {}
+  }
+
   if (!opts.androidOnly) {
     console.log('\n[2/4] Building Windows Desktop standalone binary & NSIS installer...');
     try {

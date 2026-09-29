@@ -38,14 +38,13 @@ export function compareSemver(vA: string, vB: string): number {
 }
 
 export async function getCurrentAppVersion(): Promise<string> {
-  let detected = APP_VERSION;
-
   if (typeof window !== 'undefined' && (window as any).AndroidNativeUpdater?.getVersionName) {
     try {
       const androidVer = (window as any).AndroidNativeUpdater.getVersionName();
       if (androidVer && typeof androidVer === 'string') {
-        if (compareSemver(androidVer, detected) > 0) {
-          detected = cleanVersion(androidVer);
+        const cleaned = cleanVersion(androidVer);
+        if (cleaned && cleaned !== '0.0.0') {
+          return cleaned;
         }
       }
     } catch {
@@ -57,15 +56,18 @@ export async function getCurrentAppVersion(): Promise<string> {
     try {
       const { getVersion } = await import('@tauri-apps/api/app');
       const tauriVer = await getVersion();
-      if (tauriVer && compareSemver(tauriVer, detected) > 0) {
-        detected = cleanVersion(tauriVer);
+      if (tauriVer && typeof tauriVer === 'string') {
+        const cleaned = cleanVersion(tauriVer);
+        if (cleaned && cleaned !== '0.0.0') {
+          return cleaned;
+        }
       }
     } catch {
       // ignore
     }
   }
 
-  return cleanVersion(detected);
+  return cleanVersion(APP_VERSION);
 }
 
 function buildDefaultReleaseUrls(version: string): {
