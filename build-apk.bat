@@ -8,6 +8,11 @@ echo.
 
 cd /d "%~dp0"
 
+set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
+set "PATH=%JAVA_HOME%\bin;%PATH%"
+set "ANDROID_HOME=C:\Users\monty\AppData\Local\Android\Sdk"
+set "NDK_HOME=C:\Users\monty\AppData\Local\Android\Sdk\ndk\27.0.12077973"
+
 echo [1/3] Building Web Frontend (Vite)...
 call npm run build
 if %ERRORLEVEL% neq 0 (

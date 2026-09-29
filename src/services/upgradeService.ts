@@ -264,6 +264,7 @@ export class UpgradeService {
     title: string;
     prompt: string;
     attachments: UpgradeAttachment[];
+    autoApply?: boolean;
   }): Promise<UpgradeRequest> {
     const user = authService.getCurrentUser();
     const now = Date.now();
@@ -329,6 +330,7 @@ export class UpgradeService {
       submittedBy,
       attachments: sanitizedAttachments,
       messages: [initialMessage],
+      autoApply: params.autoApply ?? true,
     };
 
     // 2. Save locally immediately
@@ -485,6 +487,24 @@ export class UpgradeService {
       } catch {}
     }
     return att.previewDataUrl || '';
+  }
+
+  public async applyUpgrade(requestId: string): Promise<{ ok: boolean; version?: string; error?: string }> {
+    const baseUrl = getApiBaseUrl() || 'http://localhost:3001';
+    try {
+      const res = await fetch(`${baseUrl}/api/upgrades/${encodeURIComponent(requestId)}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      return data;
+    } catch (err: any) {
+      console.error('[UpgradeService] applyUpgrade failed:', err);
+      return { ok: false, error: err.message };
+    }
   }
 }
 

@@ -30,10 +30,18 @@ const GEMINI_API_KEYS: string[] = [
   'AIzaSyA5wf9L5Ja15CK2njDQ69l2U29RkykrTog',
 ];
 
+const CANDIDATE_MODELS: string[] = [
+  'gemini-3.8-flash',
+  'gemini-3-flash-preview',
+  'gemini-3.7-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+];
+
 export class GeminiVibeService {
   private static instance: GeminiVibeService;
   private currentKeyIndex = 0;
-  private readonly MODEL_NAME = 'gemini-3.8-flash';
+  private readonly DEFAULT_MODEL = 'gemini-3.8-flash';
 
   public static getInstance(): GeminiVibeService {
     if (!GeminiVibeService.instance) {
@@ -59,86 +67,98 @@ export class GeminiVibeService {
   }
 
   /**
-   * Curates 4-5 daily vibe playlists using Gemini 3.8 Flash grounded with Google Search.
+   * Curates 4-5 daily vibe playlists using Gemini Flash grounded with Google Search,
+   * with automatic multi-model failover (3.8 Flash -> 3 Flash Preview -> 3.7 Flash) and key rotation.
    */
   public async generateDailyVibePlaylists(
     tasteProfile: UserTasteProfile,
     dateString: string
   ): Promise<GeminiVibeResult> {
     const prompt = this.buildPrompt(tasteProfile, dateString);
+    let useSearch = true;
 
-    let attempts = 0;
-    const maxAttempts = GEMINI_API_KEYS.length;
+    for (const model of CANDIDATE_MODELS) {
+      let modelKeyAttempts = 0;
+      const maxKeyAttempts = GEMINI_API_KEYS.length;
 
-    while (attempts < maxAttempts) {
-      const apiKey = this.getActiveKey();
-      try {
-        console.log(`[GeminiVibeService] Requesting vibe playlists via ${this.MODEL_NAME} (Key index ${this.currentKeyIndex})...`);
+      while (modelKeyAttempts < maxKeyAttempts) {
+        const apiKey = this.getActiveKey();
+        try {
+          console.log(`[GeminiVibeService] Requesting vibe playlists via ${model} (Key index ${this.currentKeyIndex}, search: ${useSearch})...`);
 
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.MODEL_NAME}:generateContent?key=${apiKey}`;
+          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-        const payload = {
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: prompt }],
+          const payload: any = {
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: prompt }],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.7,
+              topP: 0.95,
+              maxOutputTokens: 8192,
             },
-          ],
-          tools: [
-            {
-              google_search: {},
-            },
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            topP: 0.95,
-          },
-        };
-
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(30000), // 30s timeout
-        });
-
-        if (!res.ok) {
-          const errText = await res.text().catch(() => '');
-          console.warn(`[GeminiVibeService] Key index ${this.currentKeyIndex} failed (${res.status}):`, errText);
-          // If rate limit (429) or forbidden (403), rotate and retry
-          this.rotateKey();
-          attempts++;
-          continue;
-        }
-
-        const data = await res.json();
-        const candidateText =
-          data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('\n') || '';
-
-        const parsed = this.extractJsonPlaylists(candidateText);
-        if (parsed && parsed.length >= 4) {
-          console.log(`[GeminiVibeService] Successfully curated ${parsed.length} vibe playlists with ${this.MODEL_NAME}`);
-          return {
-            playlists: parsed,
-            modelUsed: this.MODEL_NAME,
-            fromFallback: false,
           };
-        } else {
-          console.warn('[GeminiVibeService] Candidate text did not contain at least 4 valid playlists. Raw text preview:', candidateText.slice(0, 300));
+
+          if (useSearch) {
+            payload.tools = [{ google_search: {} }];
+          }
+
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(90000), // 90s timeout for 20-30 track playlists
+          });
+
+          if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            console.warn(`[GeminiVibeService] ${model} on Key index ${this.currentKeyIndex} failed (${res.status}):`, errText);
+
+            // If search tool quota failed (429 or 400), disable search tool and retry this key immediately
+            if (useSearch && (res.status === 429 || res.status === 400)) {
+              console.log('[GeminiVibeService] Search tool quota exhausted or unsupported; disabling search tool and retrying directly...');
+              useSearch = false;
+              continue;
+            }
+
+            // On 503 (high demand) or 429 (rate limit), rotate to next key in pool
+            this.rotateKey();
+            modelKeyAttempts++;
+            continue;
+          }
+
+          const data = await res.json();
+          const candidateText =
+            data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('\n') || '';
+
+          const parsed = this.extractJsonPlaylists(candidateText);
+          if (parsed && parsed.length >= 4) {
+            console.log(`[GeminiVibeService] Successfully curated ${parsed.length} vibe playlists with ${model}`);
+            return {
+              playlists: parsed,
+              modelUsed: model,
+              fromFallback: false,
+            };
+          } else {
+            console.warn(`[GeminiVibeService] ${model} response did not contain at least 4 valid playlists. Raw text preview:`, candidateText.slice(0, 300));
+            this.rotateKey();
+            modelKeyAttempts++;
+          }
+        } catch (err: any) {
+          console.warn(`[GeminiVibeService] Network or execution error on ${model} (Key index ${this.currentKeyIndex}):`, err?.message || err);
           this.rotateKey();
-          attempts++;
+          modelKeyAttempts++;
         }
-      } catch (err: any) {
-        console.warn(`[GeminiVibeService] Network or execution error on key index ${this.currentKeyIndex}:`, err?.message || err);
-        this.rotateKey();
-        attempts++;
       }
     }
 
-    // If all keys or attempts exhausted, generate through high-fidelity algorithmic fallback
-    console.warn('[GeminiVibeService] All Gemini attempts exhausted. Using intelligent algorithmic fallback.');
+    // If all models or attempts exhausted, generate through high-fidelity algorithmic fallback
+    console.warn('[GeminiVibeService] All Gemini models and keys exhausted. Using intelligent algorithmic fallback.');
     return {
       playlists: this.generateAlgorithmicFallback(tasteProfile),
       modelUsed: 'Algorithmic Fallback Engine',
@@ -175,7 +195,7 @@ USER'S LISTENING HISTORY & TASTE PROFILE:
 CRITICAL CURATION INSTRUCTIONS:
 1. CURATED BASED ON TASTE, BUT NOT SOLELY FAMILIAR SONGS:
    Each playlist MUST blend tracks inspired by the user's genre tastes with FRESH, ACCLAIMED songs found via your Google Search tool. Search for real songs, real artists, and trending or classic gems. DO NOT solely regurgitate the user's past tracks.
-2. EACH PLAYLIST MUST HAVE 10 TO 14 TRACKS.
+2. EACH PLAYLIST MUST HAVE 20 TO 30 TRACKS.
 3. PROVIDE REAL, ACCURATE TRACKS (exact song title and exact artist name).
 4. RETURN STRICTLY VALID JSON ONLY, with NO extra conversational text, markdown preamble, or explanation outside the JSON block.
 
@@ -345,6 +365,16 @@ Now curate the playlists and return the JSON.`;
           { title: 'Genesis', artist: 'Justice', genre: 'Electro House', vibeReason: 'Crunchy distorted bass and rhythmic drive' },
           { title: 'Blinding Lights', artist: 'The Weeknd', genre: 'Synth-Pop', vibeReason: 'High tempo neon synth momentum' },
           { title: 'Voyager', artist: 'Daft Punk', genre: 'French Touch', vibeReason: 'Smooth groove for long gaming sessions' },
+          { title: 'Fortune Days', artist: 'The Glitch Mob', genre: 'Glitch Hop', vibeReason: 'Complex rhythmic build-ups and electronic momentum' },
+          { title: '4:42', artist: 'Danger', genre: 'Electro Darkwave', vibeReason: 'Fast-paced rhythmic synth pulses' },
+          { title: 'The Island, Pt. I (Dawn)', artist: 'Pendulum', genre: 'Drum & Bass', vibeReason: 'High-speed adrenaline and driving drums' },
+          { title: 'Strobe', artist: 'Deadmau5', genre: 'Progressive House', vibeReason: 'Epic progressive electronic build for marathon sessions' },
+          { title: 'Invaders Must Die', artist: 'The Prodigy', genre: 'Big Beat', vibeReason: 'Unstoppable aggressive energy and dirty synths' },
+          { title: 'Future Club', artist: 'Perturbator', genre: 'Cyberpunk Synthwave', vibeReason: 'Neon dystopia arcade atmosphere' },
+          { title: 'Daybreak', artist: 'OVERWERK', genre: 'Complextro', vibeReason: 'Orchestral and electro house fusion' },
+          { title: 'Kept', artist: 'Crystal Castles', genre: 'Chiptune / Electronic', vibeReason: 'Hypnotic electronic pulses' },
+          { title: 'Icarus', artist: 'Madeon', genre: 'French House', vibeReason: 'Bright soaring chords and euphoric progression' },
+          { title: 'Bonfire', artist: 'Knife Party', genre: 'Dubstep', vibeReason: 'Heavy relentless drops for intense gaming moments' },
         ],
       },
       {
@@ -364,6 +394,16 @@ Now curate the playlists and return the JSON.`;
           { title: 'Time', artist: 'Hans Zimmer', genre: 'Cinematic', vibeReason: 'Expansive swelling chords for ambitious tasks' },
           { title: 'Weightless Pt. 2', artist: 'Marconi Union', genre: 'Ambient', vibeReason: 'Sustained focus soundscape' },
           { title: 'Avril 14th', artist: 'Aphex Twin', genre: 'Piano Instrumental', vibeReason: 'Delicate acoustic piano elegance' },
+          { title: 'Kerala', artist: 'Bonobo', genre: 'Downtempo', vibeReason: 'Intricate percussion loops and atmospheric vocal chops' },
+          { title: 'Soon It Will Be Cold', artist: 'Emancipator', genre: 'Trip-Hop / Chill', vibeReason: 'Organic violin and chilled downtempo rhythm' },
+          { title: 'nagashi', artist: 'idealism', genre: 'Lo-Fi Hip-Hop', vibeReason: 'Serene rainy day piano beats' },
+          { title: 'Monday Loop', artist: 'Tomppabeats', genre: 'Lo-Fi', vibeReason: 'Warm short soothing sample loops' },
+          { title: 'Dayvan Cowboy', artist: 'Boards of Canada', genre: 'IDM / Ambient', vibeReason: 'Majestic drifting soundscapes for uninterrupted flow' },
+          { title: 'An Ending (Ascent)', artist: 'Brian Eno', genre: 'Ambient', vibeReason: 'Timeless peaceful texture that clears mental noise' },
+          { title: 'saman', artist: 'Ólafur Arnalds', genre: 'Neo-Classical', vibeReason: 'Intimate piano keys and subtle strings' },
+          { title: 'Says', artist: 'Nils Frahm', genre: 'Modern Classical', vibeReason: 'Mesmerizing synthesizer arpeggios that build focus' },
+          { title: 'Blurred', artist: 'Kiasmos', genre: 'Minimal Techno', vibeReason: 'Subtle driving pulse that keeps momentum without distraction' },
+          { title: 'On the Nature of Daylight', artist: 'Max Richter', genre: 'Contemporary Classical', vibeReason: 'Deep contemplative string movements' },
         ],
       },
       {
@@ -383,6 +423,16 @@ Now curate the playlists and return the JSON.`;
           { title: 'Levels', artist: 'Avicii', genre: 'Progressive House', vibeReason: 'Legendary melodic drop that never fails' },
           { title: 'About Damn Time', artist: 'Lizzo', genre: 'Disco Funk', vibeReason: 'Irresistible celebratory rhythm' },
           { title: 'Uptown Funk', artist: 'Mark Ronson ft. Bruno Mars', genre: 'Funk Pop', vibeReason: 'Maximum funk and infectious brass' },
+          { title: 'CUFF IT', artist: 'Beyoncé', genre: 'Disco / R&B', vibeReason: 'Irresistible groove and celebratory vibes' },
+          { title: 'Closer', artist: 'The Chainsmokers', genre: 'Pop / EDM', vibeReason: 'Nostalgic sing-along anthem' },
+          { title: 'Time of Our Lives', artist: 'Pitbull', genre: 'Party Pop', vibeReason: 'High-spirits weekend party classic' },
+          { title: 'The Business', artist: 'Tiësto', genre: 'Deep House', vibeReason: 'Hypnotic driving bass for late-night floors' },
+          { title: '(It Goes Like) Nanana', artist: 'Peggy Gou', genre: 'House', vibeReason: 'Catchy 90s eurodance summer revival' },
+          { title: 'Don\'t You Worry Child', artist: 'Swedish House Mafia', genre: 'Progressive House', vibeReason: 'Hands-in-the-air festival euphoria' },
+          { title: 'Losing It', artist: 'FISHER', genre: 'Tech House', vibeReason: 'Thunderous rolling bassline drop' },
+          { title: 'Turn On The Lights again..', artist: 'Fred again.. & Swedish House Mafia', genre: 'Future Garage', vibeReason: 'Modern club peak-time energy' },
+          { title: 'One Kiss', artist: 'Calvin Harris & Dua Lipa', genre: 'Dance-Pop', vibeReason: 'Effortlessly smooth dance groove' },
+          { title: 'I Gotta Feeling', artist: 'Black Eyed Peas', genre: 'Party Anthem', vibeReason: 'The ultimate kickoff track for celebration' },
         ],
       },
       {
@@ -402,6 +452,16 @@ Now curate the playlists and return the JSON.`;
           { title: 'Beyond', artist: 'Leon Bridges', genre: 'Soul', vibeReason: 'Warm vintage soul ballads' },
           { title: 'Yellow', artist: 'Coldplay', genre: 'Alternative Rock', vibeReason: 'Emotional nostalgic comfort' },
           { title: 'Lost in the Light', artist: 'Bahamas', genre: 'Chill Rock', vibeReason: 'Soulful groove with spacious guitar' },
+          { title: 'Come Away With Me', artist: 'Norah Jones', genre: 'Vocal Jazz / Acoustic', vibeReason: 'Velvet vocals and soothing acoustic guitar' },
+          { title: 'Chamber of Reflection', artist: 'Mac DeMarco', genre: 'Indie Pop', vibeReason: 'Dreamy vintage synthesizer chords' },
+          { title: 'White Ferrari', artist: 'Frank Ocean', genre: 'Alternative R&B', vibeReason: 'Intimate poetic reflection and soft acoustic ambiance' },
+          { title: 'Show Me How', artist: 'Men I Trust', genre: 'Dream Pop', vibeReason: 'Gentle bassline and ethereal vocals' },
+          { title: 'Riptide', artist: 'Vance Joy', genre: 'Indie Folk', vibeReason: 'Breezy ukulele strums and sunny indie vibes' },
+          { title: 'The Night We Met', artist: 'Lord Huron', genre: 'Indie Folk', vibeReason: 'Haunting atmospheric ballad' },
+          { title: 'ocean eyes', artist: 'Billie Eilish', genre: 'Alt-Pop', vibeReason: 'Airy vocal harmonies and delicate texture' },
+          { title: 'Easily', artist: 'Bruno Major', genre: 'Neo-Soul', vibeReason: 'Velvety guitar chords and smooth vocal delivery' },
+          { title: 'Pretty Girl', artist: 'Clairo', genre: 'Bedroom Pop', vibeReason: 'Charming lo-fi keys and sweet melody' },
+          { title: 'Apocalypse', artist: 'Cigarettes After Sex', genre: 'Slowcore / Ambient Pop', vibeReason: 'Hypnotic cinematic romantic haze' },
         ],
       },
       {
@@ -421,6 +481,16 @@ Now curate the playlists and return the JSON.`;
           { title: 'Seven Nation Army (Glitch Mob Remix)', artist: 'The White Stripes', genre: 'Electronic Rock', vibeReason: 'Heavy bass rework of a classic' },
           { title: 'Remember the Name', artist: 'Fort Minor', genre: 'Hip-Hop', vibeReason: 'Classic determination and focus' },
           { title: 'Turn Down for What', artist: 'DJ Snake & Lil Jon', genre: 'Trap', vibeReason: 'Explosive drop to power through final reps' },
+          { title: 'Eye of the Tiger', artist: 'Survivor', genre: 'Hard Rock', vibeReason: 'The quintessential workout driving rhythm' },
+          { title: 'X Gon\' Give It To Ya', artist: 'DMX', genre: 'Hardcore Hip-Hop', vibeReason: 'Raw aggressive energy for heavy lifts' },
+          { title: 'Thunderstruck', artist: 'AC/DC', genre: 'Hard Rock', vibeReason: 'Electrifying guitar intro that surges heart rate' },
+          { title: 'In The End', artist: 'Linkin Park', genre: 'Nu-Metal', vibeReason: 'Powerful chorus and cathartic release' },
+          { title: 'HUMBLE.', artist: 'Kendrick Lamar', genre: 'Hip-Hop', vibeReason: 'Hard-hitting minimalist piano bassline' },
+          { title: 'Firestarter', artist: 'The Prodigy', genre: 'Big Beat / Breakbeat', vibeReason: 'Wild frenetic tempo for high-intensity intervals' },
+          { title: 'Killing In the Name', artist: 'Rage Against the Machine', genre: 'Rap Metal', vibeReason: 'Pure explosive defiance and adrenaline' },
+          { title: 'Fight Back', artist: 'NEFFEX', genre: 'Electronic Rock', vibeReason: 'Relentless drive to push past fatigue' },
+          { title: 'Galvanize', artist: 'The Chemical Brothers', genre: 'Electronic / Big Beat', vibeReason: 'Exotic driving strings and urgent rhythm' },
+          { title: 'Purple Lamborghini', artist: 'Skrillex & Rick Ross', genre: 'Trap / Dubstep', vibeReason: 'Massive sub-bass and heavy rap swagger' },
         ],
       },
     ];

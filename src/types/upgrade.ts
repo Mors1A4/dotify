@@ -1,6 +1,6 @@
 export type UpgradeType = 'upgrade' | 'fix';
 
-export type UpgradeStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type UpgradeStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'applied' | 'released';
 
 export interface UpgradeAttachment {
   id: string;
@@ -32,6 +32,9 @@ export interface UpgradeRequest {
   createdAt: number;
   updatedAt: number;
   completedAt?: number;
+  autoApply?: boolean;
+  releasedVersion?: string;
+  releasedAt?: number;
   submittedBy: {
     uid: string;
     email: string;

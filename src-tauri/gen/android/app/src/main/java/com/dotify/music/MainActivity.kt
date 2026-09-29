@@ -292,7 +292,8 @@ class MainActivity : TauriActivity() {
       val targetCompName = ComponentName(pkg, "$pkg.$targetAliasSuffix")
 
       val currentSetting = pm.getComponentEnabledSetting(targetCompName)
-      if (currentSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+      if (currentSetting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED ||
+          (currentSetting == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT && targetAliasSuffix == "MainActivityDefault")) {
         return true
       }
 
@@ -329,7 +330,9 @@ class MainActivity : TauriActivity() {
       val pkg = packageName
       for ((key, aliasSuffix) in ALIAS_MAP) {
         val comp = ComponentName(pkg, "$pkg.$aliasSuffix")
-        if (pm.getComponentEnabledSetting(comp) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+        val setting = pm.getComponentEnabledSetting(comp)
+        if (setting == PackageManager.COMPONENT_ENABLED_STATE_ENABLED ||
+            (setting == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT && aliasSuffix == "MainActivityDefault")) {
           return key
         }
       }

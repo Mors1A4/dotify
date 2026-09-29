@@ -18,10 +18,12 @@ interface UpgradeStoreState {
     title: string;
     prompt: string;
     attachments: UpgradeAttachment[];
+    autoApply?: boolean;
   }) => Promise<UpgradeRequest>;
 
   sendChatMessage: (requestId: string, text: string, attachments?: UpgradeAttachment[]) => Promise<void>;
   retryRequest: (requestId: string) => Promise<void>;
+  applyUpgrade: (requestId: string) => Promise<{ ok: boolean; version?: string; error?: string }>;
 }
 
 export const useUpgradeStore = create<UpgradeStoreState>((set, get) => {
@@ -68,6 +70,10 @@ export const useUpgradeStore = create<UpgradeStoreState>((set, get) => {
 
     retryRequest: async (requestId) => {
       await upgradeService.retryRequest(requestId);
+    },
+
+    applyUpgrade: async (requestId) => {
+      return await upgradeService.applyUpgrade(requestId);
     },
   };
 });

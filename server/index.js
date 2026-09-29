@@ -6,7 +6,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { handleStreamProxy } from './streamProxy.js';
 import { handleTrackStream } from './trackResolver.js';
-import { setupJamServer } from './jamServer.js';
 import { setupConnectHub } from './connectHub.js';
 import { resolveSpotifyUrl, isSpotifyUrl } from './spotifyResolver.js';
 import { getDiscoveredCastDevices, scanForCastDevices } from './castHub.js';
@@ -321,9 +320,8 @@ app.get('*', (req, res, next) => {
 });
 
 const server = http.createServer(app);
-setupJamServer(server);
 setupConnectHub(server);
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[dotify] Streaming, Jam, Connect & WiFi MP3 Sync backend active at http://0.0.0.0:${PORT}`);
+  console.log(`[dotify] Streaming, Connect & WiFi MP3 Sync backend active at http://0.0.0.0:${PORT}`);
 });

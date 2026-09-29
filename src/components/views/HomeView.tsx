@@ -3,9 +3,31 @@ import { usePlayerStore } from '../../store/playerStore';
 import { fetchTopCharts, fetchTopArtists, TopArtist } from '../../services/chartsApi';
 import { Track } from '../../types/track';
 import { prefetchTrack, prefetchTracks } from '../../utils/prefetch';
-import { Play, Flame, Disc3, Sparkles, Heart, Trophy, Users, Compass, Clock } from 'lucide-react';
+import {
+  Play,
+  Flame,
+  Disc3,
+  Sparkles,
+  Heart,
+  Trophy,
+  Users,
+  Compass,
+  Clock,
+  Gamepad2,
+  Briefcase,
+  PartyPopper,
+  Coffee,
+  Dumbbell,
+  ExternalLink,
+  Plus,
+  Check,
+  Loader2,
+} from 'lucide-react';
 import { recommendationEngine, DailyMix } from '../../services/recommendationEngine';
 import { telemetryDb } from '../../services/telemetryDb';
+import { dailyVibeManager } from '../../services/dailyVibeManager';
+import { DailyVibePlaylist, VibeCategory } from '../../types/vibes';
+import { useAuthStore } from '../../store/authStore';
 import {
   DEFAULT_MUSIC_ARTWORK,
   getTrackArtwork,
@@ -65,13 +87,24 @@ export const HomeView: React.FC = () => {
     isLiked,
     likedTracks,
     followedArtists,
+    playlists,
     navigateToArtist,
+    navigateToPlaylist,
   } = usePlayerStore();
+
+  const { user } = useAuthStore();
 
   const [chartTracks, setChartTracks] = useState<Track[]>([]);
   const [topArtists, setTopArtists] = useState<TopArtist[]>([]);
   const [activeArtistName, setActiveArtistName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Daily AI Vibe Playlists
+  const [vibePlaylists, setVibePlaylists] = useState<DailyVibePlaylist[]>([]);
+  const [activeVibe, setActiveVibe] = useState<VibeCategory>('gaming');
+  const [isVibesLoading, setIsVibesLoading] = useState(true);
+  const [savedVibes, setSavedVibes] = useState<Set<string>>(new Set());
+  const [vibeToast, setVibeToast] = useState<string | null>(null);
 
   // Personalized Shelves
   const [madeForYou, setMadeForYou] = useState<Track[]>([]);
@@ -79,6 +112,33 @@ export const HomeView: React.FC = () => {
   const [dailyMixes, setDailyMixes] = useState<DailyMix[]>([]);
   const [heavyRotation, setHeavyRotation] = useState<Track[]>([]);
   const [forgottenFavorites, setForgottenFavorites] = useState<Track[]>([]);
+
+  useEffect(() => {
+    let mounted = true;
+    const accountId = user?.uid || 'guest';
+    setIsVibesLoading(true);
+
+    dailyVibeManager
+      .getDailyVibes(accountId)
+      .then((playlists) => {
+        if (mounted && Array.isArray(playlists) && playlists.length > 0) {
+          setVibePlaylists(playlists);
+          if (!activeVibe || !playlists.some((p) => p.vibe === activeVibe)) {
+            setActiveVibe(playlists[0].vibe);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('[HomeView] Failed loading daily vibe playlists:', err);
+      })
+      .finally(() => {
+        if (mounted) setIsVibesLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [user?.uid]);
 
   useEffect(() => {
     let mounted = true;
@@ -280,74 +340,307 @@ export const HomeView: React.FC = () => {
             </section>
           )}
 
-          {/* Shelf 2: Daily Mixes */}
-          {dailyMixes.length > 0 && (
-            <section data-testid="daily-mix-shelf" className="flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Disc3 className="text-accent" size={22} />
-                  <div>
-                    <h2 className="text-xl font-bold text-primary">Your Daily Mixes</h2>
-                    <p className="text-xs text-muted font-medium">Cohesive genre-clustered mixes blending familiar tracks and new discoveries</p>
+          {/* Shelf 2: Daily Vibe Curation (Curated Daily by Gemini 3.8 Flash) */}
+          <section data-testid="daily-vibe-shelf" className="flex flex-col gap-5">
+            {vibeToast && (
+              <div className="fixed top-20 right-6 z-50 bg-accent text-accent-content font-bold text-xs px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+                <Sparkles size={14} />
+                <span>{vibeToast}</span>
+              </div>
+            )}
+
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-accent/15 text-accent border border-accent/30 shadow-md">
+                  <Sparkles size={24} className="animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <h2 className="text-xl sm:text-2xl font-black text-primary tracking-tight">
+                      Daily Vibe Playlists
+                    </h2>
+                    <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-accent/20 text-accent border border-accent/30 tracking-wider">
+                      Gemini 3.8 Flash
+                    </span>
                   </div>
+                  <p className="text-xs text-secondary font-medium mt-0.5">
+                    Curated once per day based on your listening history & live web search discoveries
+                  </p>
                 </div>
               </div>
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {dailyMixes.map((mix, idx) => {
-                  const gradientClasses = [
-                    'from-purple-900/60 via-surface to-elevated border-purple-800/40',
-                    'from-emerald-900/60 via-surface to-elevated border-emerald-800/40',
-                    'from-blue-900/60 via-surface to-elevated border-blue-800/40',
-                  ][idx % 3];
+            {/* Interactive Vibe Selector Tabs */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+              {[
+                { id: 'gaming' as VibeCategory, label: 'Gaming', icon: Gamepad2, color: 'text-purple-400' },
+                { id: 'working' as VibeCategory, label: 'Working', icon: Briefcase, color: 'text-emerald-400' },
+                { id: 'partying' as VibeCategory, label: 'Partying', icon: PartyPopper, color: 'text-rose-400' },
+                { id: 'chilling' as VibeCategory, label: 'Chilling', icon: Coffee, color: 'text-sky-400' },
+                { id: 'workout' as VibeCategory, label: 'Workout', icon: Dumbbell, color: 'text-amber-400' },
+              ].map((tab) => {
+                const isActive = activeVibe === tab.id;
+                const IconComponent = tab.icon;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveVibe(tab.id)}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl font-bold text-xs transition-all cursor-pointer whitespace-nowrap border ${
+                      isActive
+                        ? 'bg-accent text-accent-content border-accent shadow-lg shadow-accent/20 scale-[1.02]'
+                        : 'bg-elevated/70 hover:bg-elevated text-secondary hover:text-primary border-customBorder/60 hover:border-customBorder'
+                    }`}
+                  >
+                    <IconComponent size={16} className={isActive ? 'text-accent-content' : tab.color} />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
 
+            {/* Active Vibe Spotlight Banner */}
+            {(() => {
+              const currentVibe = vibePlaylists.find((p) => p.vibe === activeVibe) || vibePlaylists[0];
+              if (!currentVibe) {
+                return (
+                  <div className="p-8 rounded-3xl bg-elevated/40 border border-customBorder flex items-center justify-center gap-3 text-secondary text-sm">
+                    <Loader2 size={18} className="animate-spin text-accent" />
+                    <span>Loading today's curated vibes...</span>
+                  </div>
+                );
+              }
+
+              const isSaved = savedVibes.has(currentVibe.id) || (playlists || []).some((p) => p.name === currentVibe.name);
+
+              return (
+                <div
+                  className={`relative overflow-hidden rounded-3xl p-6 sm:p-8 bg-gradient-to-br ${currentVibe.themeGradient} border shadow-2xl transition-all flex flex-col gap-6`}
+                >
+                  {/* Backdrop Glow */}
+                  {currentVibe.coverArt && (
+                    <img
+                      src={currentVibe.coverArt}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute -top-20 -right-20 w-80 h-80 object-cover blur-3xl opacity-25 pointer-events-none select-none scale-125"
+                    />
+                  )}
+
+                  <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center gap-6 justify-between">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
+                      <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-2xl overflow-hidden shadow-2xl border border-white/10 shrink-0 bg-highlight group">
+                        <img
+                          src={currentVibe.coverArt}
+                          alt={currentVibe.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md text-[11px] font-extrabold text-white flex items-center gap-1">
+                          <span>{currentVibe.vibeIcon}</span>
+                          <span>{currentVibe.vibeLabel}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-extrabold uppercase tracking-wider text-accent px-2.5 py-0.5 rounded-full bg-accent/20 border border-accent/30">
+                            {currentVibe.vibeTagline || 'Curated for today'}
+                          </span>
+                        </div>
+
+                        <h3 className="text-2xl sm:text-3xl font-black text-primary tracking-tight">
+                          {currentVibe.name}
+                        </h3>
+
+                        <p className="text-xs sm:text-sm text-secondary max-w-xl line-clamp-2">
+                          {currentVibe.description}
+                        </p>
+
+                        <div className="flex items-center gap-2 text-xs text-muted font-medium mt-1">
+                          <span>{currentVibe.tracks.length} songs</span>
+                          <span>•</span>
+                          <span>{currentVibe.modelUsed || 'Gemini 3.8 Flash'}</span>
+                          <span>•</span>
+                          <span>Updated for Today</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex flex-wrap items-center gap-3 w-full md:w-auto mt-2 md:mt-0">
+                      <button
+                        onClick={() => {
+                          if (currentVibe.tracks.length > 0) {
+                            playTrack(currentVibe.tracks[0], currentVibe.tracks);
+                          }
+                        }}
+                        className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-accent text-accent-content font-extrabold text-xs sm:text-sm shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <Play size={18} fill="currentColor" />
+                        <span>Play Vibe</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          navigateToPlaylist(currentVibe.id);
+                        }}
+                        className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-4 py-3 rounded-full bg-elevated/80 hover:bg-highlight border border-customBorder text-primary font-bold text-xs shadow transition-all active:scale-95 cursor-pointer"
+                        title="View complete playlist and tracks list"
+                      >
+                        <ExternalLink size={15} />
+                        <span>View Full Playlist</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (!isSaved) {
+                            dailyVibeManager.saveVibeToLibrary(currentVibe);
+                            setSavedVibes((prev) => new Set(prev).add(currentVibe.id));
+                            setVibeToast(`Saved "${currentVibe.name}" to your library!`);
+                            setTimeout(() => setVibeToast(null), 3000);
+                          }
+                        }}
+                        className={`flex items-center justify-center gap-1.5 p-3 rounded-full border text-xs font-bold transition-all active:scale-95 cursor-pointer ${
+                          isSaved
+                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                            : 'bg-elevated/80 hover:bg-highlight text-secondary hover:text-primary border-customBorder'
+                        }`}
+                        title={isSaved ? 'Saved to Library' : 'Save to Library'}
+                      >
+                        {isSaved ? <Check size={16} /> : <Plus size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Track Peek Preview Carousel */}
+                  <div className="relative z-10 flex flex-col gap-2.5 pt-2 border-t border-white/10">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-primary uppercase tracking-wider">
+                        Curated Songs in this Vibe
+                      </span>
+                      <button
+                        onClick={() => navigateToPlaylist(currentVibe.id)}
+                        className="text-xs font-bold text-accent hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>View all {currentVibe.tracks.length} tracks</span>
+                        <span>→</span>
+                      </button>
+                    </div>
+
+                    <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-highlight scrollbar-track-transparent">
+                      {currentVibe.tracks.slice(0, 8).map((track, trackIdx) => {
+                        const isCurrent = currentTrack?.id === track.id;
+                        return (
+                          <div
+                            key={`vibe-track-${track.id}-${trackIdx}`}
+                            onClick={() => playTrack(track, currentVibe.tracks)}
+                            onMouseEnter={() => prefetchTrack(track)}
+                            className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-2xl bg-surface/70 hover:bg-surface border border-white/5 hover:border-customBorder transition-all cursor-pointer flex flex-col gap-2 shadow-md"
+                          >
+                            <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-highlight">
+                              <ShelfTrackImage track={track} />
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isCurrent) togglePlay();
+                                  else playTrack(track, currentVibe.tracks);
+                                }}
+                                className={`absolute bottom-2 right-2 w-8 h-8 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
+                                  isCurrent
+                                    ? 'opacity-100 scale-100'
+                                    : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
+                                }`}
+                              >
+                                <Play size={14} fill="currentColor" className="ml-0.5" />
+                              </button>
+                            </div>
+
+                            <div className="flex flex-col min-w-0">
+                              <h4
+                                className={`text-xs font-bold truncate ${
+                                  isCurrent ? 'text-accent' : 'text-primary'
+                                }`}
+                              >
+                                {track.title}
+                              </h4>
+                              <p className="text-[11px] text-secondary truncate mt-0.5">
+                                {track.artist}
+                              </p>
+                              {track.vibeReason && (
+                                <span className="text-[10px] text-accent/90 truncate mt-1 bg-accent/10 px-1.5 py-0.5 rounded-md font-medium">
+                                  ✨ {track.vibeReason}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Quick Switch Cards for All Vibes */}
+            {vibePlaylists.length > 1 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-1">
+                {vibePlaylists.map((vPl) => {
+                  const isSelected = activeVibe === vPl.vibe;
                   return (
                     <div
-                      key={mix.id}
-                      data-testid="daily-mix-card"
-                      onClick={() => {
-                        if (mix.tracks.length > 0) {
-                          playTrack(mix.tracks[0], mix.tracks);
-                        }
-                      }}
-                      className={`group relative p-5 rounded-2xl bg-gradient-to-br ${gradientClasses} border hover:border-customBorder shadow-lg cursor-pointer transition-all hover:scale-[1.02] flex flex-col justify-between min-h-[160px]`}
+                      key={`card-${vPl.id}`}
+                      onClick={() => setActiveVibe(vPl.vibe)}
+                      className={`group p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                        isSelected
+                          ? 'bg-elevated border-accent shadow-md scale-[1.02]'
+                          : 'bg-elevated/40 hover:bg-elevated border-customBorder/60 hover:border-customBorder'
+                      }`}
                     >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <span className="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full bg-accent/20 text-accent mb-2">
-                            {mix.genre}
-                          </span>
-                          <h3 className="text-lg font-extrabold text-primary group-hover:text-accent transition-colors">
-                            {mix.title}
-                          </h3>
-                          <p className="text-xs text-secondary line-clamp-2 mt-1">
-                            {mix.description}
-                          </p>
-                        </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xl">{vPl.vibeIcon}</span>
                         <button
-                          data-testid="daily-mix-play-btn"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (mix.tracks.length > 0) {
-                              playTrack(mix.tracks[0], mix.tracks);
+                            if (vPl.tracks.length > 0) {
+                              playTrack(vPl.tracks[0], vPl.tracks);
                             }
                           }}
-                          className="w-11 h-11 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all flex-shrink-0 ml-2"
+                          className="w-8 h-8 rounded-full bg-accent text-accent-content flex items-center justify-center opacity-80 group-hover:opacity-100 transition-all hover:scale-105 shadow"
+                          title={`Play ${vPl.vibeLabel} Vibe`}
                         >
-                          <Play size={20} fill="currentColor" className="ml-0.5" />
+                          <Play size={14} fill="currentColor" className="ml-0.5" />
                         </button>
                       </div>
 
-                      <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/5 text-xs text-muted font-medium">
-                        <span>{mix.tracks.length} tailored songs</span>
-                        <span className="text-accent text-[11px] font-bold group-hover:underline">Play mix</span>
+                      <div>
+                        <h4 className="text-xs font-extrabold text-primary truncate group-hover:text-accent transition-colors">
+                          {vPl.name}
+                        </h4>
+                        <p className="text-[11px] text-secondary truncate mt-0.5">
+                          {vPl.tracks.length} tracks • {vPl.vibeLabel}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px] text-muted">
+                        <span className="group-hover:text-primary font-medium">
+                          {isSelected ? 'Active Vibe' : 'Select Vibe'}
+                        </span>
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigateToPlaylist(vPl.id);
+                          }}
+                          className="text-accent hover:underline font-bold"
+                        >
+                          View
+                        </span>
                       </div>
                     </div>
                   );
                 })}
               </div>
-            </section>
-          )}
+            )}
+          </section>
 
           {/* Shelf 3: Discover Weekly */}
           {discoverWeekly.length > 0 && (

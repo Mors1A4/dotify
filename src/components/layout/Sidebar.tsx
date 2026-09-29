@@ -14,16 +14,15 @@ import {
   ChevronRight,
   Play,
   Pause,
-  Sparkles,
   X,
   Check,
   Pin,
   Users,
   Music2,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { useUpdateStore } from '../../store/updateStore';
-import { useUpgradeStore } from '../../store/upgradeStore';
 
 type LibraryFilter = 'all' | 'playlists' | 'artists';
 
@@ -50,7 +49,6 @@ export const Sidebar: React.FC = () => {
   } = usePlayerStore();
 
   const { currentVersion, isChecking, checkForUpdates } = useUpdateStore();
-  const { openHelpModal } = useUpgradeStore();
 
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>('all');
   const [librarySearch, setLibrarySearch] = useState('');
@@ -231,22 +229,6 @@ export const Sidebar: React.FC = () => {
             );
           })}
 
-          {/* Help & AI Upgrade Studio Button */}
-          <button
-            type="button"
-            onClick={() => openHelpModal()}
-            title={isSidebarCollapsed ? 'Help & AI Upgrade' : undefined}
-            className={`group relative flex items-center gap-3.5 px-3 py-2.5 rounded-lg transition-all duration-150 text-sm cursor-pointer text-secondary hover:text-primary hover:bg-elevated/50 font-medium ${
-              isSidebarCollapsed ? 'justify-center px-0' : ''
-            }`}
-          >
-            <span className="text-accent group-hover:scale-110 transition-transform">
-              <Sparkles size={18} />
-            </span>
-            {!isSidebarCollapsed && (
-              <span className="truncate font-semibold">Help & AI Upgrade</span>
-            )}
-          </button>
         </nav>
       </div>
 

@@ -717,6 +717,15 @@ export async function processUpgradeRequest(reqDoc) {
     });
 
     console.log(`[UpgradeWorker] Completed request ${reqDoc.id} -> branch ${forkInfo.forkBranch}`);
+
+    if (cliResult.ok && reqDoc.autoApply) {
+      try {
+        console.log(`[UpgradeWorker] autoApply is enabled for ${reqDoc.id} — applying changes & publishing update...`);
+        await applyAndReleaseForkUpgrade(reqDoc.id);
+      } catch (applyErr) {
+        console.warn('[UpgradeWorker] autoApply error:', applyErr.message);
+      }
+    }
   } catch (err) {
     console.error(`[UpgradeWorker] Error processing request ${reqDoc.id}:`, err);
     await updateRequestState(reqDoc.id, {
@@ -727,6 +736,108 @@ export async function processUpgradeRequest(reqDoc) {
   } finally {
     activeRequestId = null;
     await updateHeartbeat('online', null);
+  }
+}
+
+export async function applyAndReleaseForkUpgrade(requestId) {
+  const docRef = doc(db, UPGRADE_COLLECTION, requestId);
+  const snap = await getDoc(docRef);
+  let reqDoc = snap.exists() ? snap.data() : null;
+  if (!reqDoc) {
+    reqDoc = getLocalRequests().find((r) => r.id === requestId);
+  }
+  if (!reqDoc) {
+    throw new Error(`Upgrade request ${requestId} not found.`);
+  }
+
+  const { forkBranch, forkPath } = reqDoc;
+  if (!forkBranch) {
+    throw new Error(`Request has no associated fork branch.`);
+  }
+
+  console.log(`[UpgradeWorker] Applying upgrade ${requestId} (branch: ${forkBranch})...`);
+
+  await updateRequestState(requestId, {
+    status: 'processing',
+    agentLogs: (reqDoc.agentLogs || '') + `\n[5/6] Merging changes from ${forkBranch} into live project...\n`,
+  });
+
+  try {
+    // 1. Copy or merge modified files from fork
+    if (forkPath && fs.existsSync(forkPath) && Array.isArray(reqDoc.changedFiles) && reqDoc.changedFiles.length > 0) {
+      console.log(`[UpgradeWorker] Applying changed files from fork ${forkPath}...`);
+      for (const fileLine of reqDoc.changedFiles) {
+        const relPath = fileLine.replace(/^[MADRCU?!]+\s+/, '').trim();
+        if (relPath.startsWith('.upgrade-context') || relPath === 'opencode.json') continue;
+        const srcFile = path.join(forkPath, relPath);
+        const destFile = path.join(PROJECT_ROOT, relPath);
+        if (fs.existsSync(srcFile) && fs.statSync(srcFile).isFile()) {
+          fs.mkdirSync(path.dirname(destFile), { recursive: true });
+          fs.copyFileSync(srcFile, destFile);
+          console.log(`[UpgradeWorker] Copied: ${relPath}`);
+        }
+      }
+    } else {
+      execSync(`git merge --no-ff "${forkBranch}" -m "feat(upgrade): apply ${sanitizeSlug(reqDoc.title || 'feature upgrade')}"`, {
+        cwd: PROJECT_ROOT,
+        stdio: 'pipe',
+      });
+    }
+
+    // 2. Commit changes to main git repo
+    try {
+      execSync('git add -A', { cwd: PROJECT_ROOT, stdio: 'pipe' });
+      const commitTitle = String(reqDoc.title || reqDoc.prompt || 'upgrade').replace(/["\r\n]+/g, ' ').slice(0, 72);
+      execSync(`git commit -m "feat: ${commitTitle}"`, { cwd: PROJECT_ROOT, stdio: 'pipe' });
+    } catch {}
+
+    // 3. Verify frontend build passes cleanly
+    await updateRequestState(requestId, {
+      agentLogs: (reqDoc.agentLogs || '') + `\n[5/6] Verifying project build...\n`,
+    });
+    execSync('npm run build', { cwd: PROJECT_ROOT, stdio: 'pipe' });
+
+    // 4. Publish update package (patch bump) to GitHub Releases CDN + Firestore
+    await updateRequestState(requestId, {
+      agentLogs: (reqDoc.agentLogs || '') + `\n[6/6] Publishing release package to GitHub Releases CDN & Firestore...\n`,
+    });
+
+    const releaseScript = path.join(PROJECT_ROOT, 'scripts', 'release.mjs');
+    const releaseCmd = `node "${releaseScript}" patch --skip-build --notes "Implemented: ${reqDoc.title || 'Feature upgrade'}"`;
+    execSync(releaseCmd, { cwd: PROJECT_ROOT, stdio: 'pipe' });
+
+    // 5. Read new version
+    const pkg = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+    const newVersion = pkg.version;
+
+    const successMessage = {
+      id: `msg_${Date.now()}_released`,
+      role: 'assistant',
+      authorName: 'OpenCode Release Manager',
+      createdAt: Date.now(),
+      text: `🚀 **Update v${newVersion} Published!**\n\nThe changes from \`${forkBranch}\` have been merged and published.\n\nAll Dotify clients across Windows Desktop and Android will now receive this update on startup.`,
+    };
+
+    const existingMessages = Array.isArray(reqDoc.messages) ? reqDoc.messages : [];
+
+    await updateRequestState(requestId, {
+      status: 'released',
+      releasedVersion: newVersion,
+      releasedAt: Date.now(),
+      agentLogs:
+        (reqDoc.agentLogs || '') +
+        `\n[SUCCESS] Update v${newVersion} published successfully to GitHub CDN and Firestore.\n`,
+      messages: [...existingMessages, successMessage],
+    });
+
+    return { ok: true, version: newVersion };
+  } catch (err) {
+    console.error(`[UpgradeWorker] Failed applying upgrade:`, err);
+    await updateRequestState(requestId, {
+      error: `Apply/Release failed: ${err.message}`,
+      agentLogs: (reqDoc.agentLogs || '') + `\n[ERROR] Apply/Release failed: ${err.message}\n`,
+    });
+    throw err;
   }
 }
 
@@ -963,6 +1074,16 @@ export function startUpgradeWorker(app) {
         }, 50);
 
         res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
+    app.post('/api/upgrades/:id/apply', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await applyAndReleaseForkUpgrade(id);
+        res.json(result);
       } catch (err) {
         res.status(500).json({ ok: false, error: err.message });
       }

@@ -8,7 +8,6 @@ import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { MobileMiniPlayer } from './components/layout/MobileMiniPlayer';
 import { MobileNowPlayingSheet } from './components/player/MobileNowPlayingSheet';
 import { VisualizerModal } from './components/player/VisualizerModal';
-import { JamModal } from './components/jam/JamModal';
 import { AuthModal } from './components/auth/AuthModal';
 import { CreatePlaylistModal } from './components/modals/CreatePlaylistModal';
 import { UpdateModal } from './components/modals/UpdateModal';
@@ -167,9 +166,6 @@ export const App: React.FC = () => {
 
       {/* Full-Screen / Modal Audio Spectrum Visualizer */}
       <VisualizerModal />
-
-      {/* Real-time Collaborative Jam Modal */}
-      <JamModal />
 
       {/* Account & Library Sync Modal */}
       <AuthModal />

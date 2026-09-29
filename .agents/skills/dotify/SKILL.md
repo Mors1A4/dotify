@@ -5,7 +5,7 @@ description: Complete operational guide, architecture, Windows & Android build c
 
 # Dotify (Notify) — Operations, Architecture & Development Guide
 
-Dotify (`notify`) is a full-stack, Spotify-inspired music streaming application supporting multi-source audio (YouTube full-track extraction, Deezer/Charts, Audius, Internet Archive, RadioBrowser, and WebTorrent P2P), real-time collaborative Jams, and cross-device cloud synchronization (Firestore + REST fallback) across Windows and Android.
+Dotify (`notify`) is a full-stack, Spotify-inspired music streaming application supporting multi-source audio (YouTube full-track extraction, Deezer/Charts, Audius, Internet Archive, RadioBrowser, and WebTorrent P2P), and cross-device cloud synchronization (Firestore + REST fallback) across Windows and Android.
 
 ---
 

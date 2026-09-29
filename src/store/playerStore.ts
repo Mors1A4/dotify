@@ -184,7 +184,6 @@ export interface PlayerStoreState {
   isMobileSheetOpen: boolean;
   isVisualizerOpen: boolean;
   isSidebarCollapsed: boolean;
-  isJamModalOpen: boolean;
   isDevicePickerOpen: boolean;
   isCreatePlaylistModalOpen: boolean;
   createPlaylistModalTab: 'custom' | 'spotify';
@@ -250,7 +249,6 @@ export interface PlayerStoreState {
   toggleMobileSheet: (open?: boolean) => void;
   toggleVisualizer: (open?: boolean) => void;
   toggleSidebarCollapse: () => void;
-  toggleJamModal: (open?: boolean) => void;
   openCreatePlaylistModal: (tab?: 'custom' | 'spotify', initialTracks?: Track[]) => void;
   closeCreatePlaylistModal: () => void;
 
@@ -700,7 +698,6 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     isMobileSheetOpen: false,
     isVisualizerOpen: false,
     isSidebarCollapsed: false,
-    isJamModalOpen: false,
     isDevicePickerOpen: false,
     isCreatePlaylistModalOpen: false,
     createPlaylistModalTab: 'custom',
@@ -1509,9 +1506,6 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
     toggleSidebarCollapse: () =>
       set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
-
-    toggleJamModal: (open) =>
-      set((state) => ({ isJamModalOpen: open !== undefined ? open : !state.isJamModalOpen })),
 
     openCreatePlaylistModal: (tab = 'custom', initialTracks = []) =>
       set({

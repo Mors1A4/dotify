@@ -16,16 +16,17 @@ open class BuildTask : DefaultTask() {
 
     @TaskAction
     fun assemble() {
-        val executable = """npm""";
+        val executable = if (Os.isFamily(Os.FAMILY_WINDOWS)) "npm.cmd" else "npm"
         try {
             runTauriCli(executable)
         } catch (e: Exception) {
             if (Os.isFamily(Os.FAMILY_WINDOWS)) {
                 // Try different Windows-specific extensions
                 val fallbacks = listOf(
-                    "$executable.exe",
-                    "$executable.cmd",
-                    "$executable.bat",
+                    "npm.cmd",
+                    "npm.exe",
+                    "npm.bat",
+                    "npm",
                 )
                 
                 var lastException: Exception = e

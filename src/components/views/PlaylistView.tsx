@@ -12,6 +12,7 @@ import {
   DEFAULT_MUSIC_ARTWORK,
   isUglyPlaceholder,
 } from '../../services/artworkService';
+import { dailyVibeManager } from '../../services/dailyVibeManager';
 import { SaveMp3Button } from '../common/SaveMp3Button';
 import {
   Play,
@@ -83,8 +84,8 @@ export const PlaylistView: React.FC = () => {
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const playlist = playlists.find((p) => p.id === selectedPlaylistId) || null;
+  const vibePlaylist = selectedPlaylistId ? dailyVibeManager.getVibePlaylistById(selectedPlaylistId) : null;
+  const playlist = playlists.find((p) => p.id === selectedPlaylistId) || vibePlaylist || null;
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -361,6 +362,12 @@ export const PlaylistView: React.FC = () => {
             <span className="text-[11px] font-extrabold text-accent uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-accent/15 border border-accent/30">
               PLAYLIST
             </span>
+            {((playlist as any)?.isAIGenerated || vibePlaylist) && (
+              <span className="text-[11px] font-bold text-accent px-2.5 py-0.5 rounded-full bg-accent/15 border border-accent/30 flex items-center gap-1 shadow-sm">
+                <Sparkles size={11} />
+                <span>Curated by Gemini 3.8 Flash</span>
+              </span>
+            )}
             {playlist.sourceSpotifyUrl && (
               <span className="text-[11px] font-bold text-[#1DB954] px-2.5 py-0.5 rounded-full bg-[#1DB954]/15 border border-[#1DB954]/30 flex items-center gap-1">
                 <Sparkles size={11} />
@@ -440,6 +447,20 @@ export const PlaylistView: React.FC = () => {
               <Shuffle size={15} />
               <span>Shuffle</span>
             </button>
+
+            {vibePlaylist && !playlists.some((p) => p.id === vibePlaylist.id) && (
+              <button
+                onClick={() => {
+                  dailyVibeManager.saveVibeToLibrary(vibePlaylist);
+                  showToast('Saved daily vibe playlist to your library!');
+                }}
+                className="flex items-center gap-1.5 px-4 py-3 rounded-full bg-accent text-accent-content font-bold text-xs shadow-lg hover:scale-105 transition-all active:scale-95 cursor-pointer"
+                title="Save this daily vibe playlist permanently to your library"
+              >
+                <Plus size={14} />
+                <span>Save to Library</span>
+              </button>
+            )}
 
             <button
               onClick={openDetailsEditor}

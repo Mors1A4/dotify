@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useUpgradeStore } from '../../store/upgradeStore';
 import { UpgradeType, UpgradeAttachment } from '../../types/upgrade';
@@ -21,7 +21,150 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  Copy,
+  Check,
+  Code2,
+  Rocket,
 } from 'lucide-react';
+
+/**
+ * Format timestamp into human-readable relative time (e.g. 'Just now', '12m ago', '2h ago', 'Yesterday')
+ */
+function formatRelativeTime(timestamp: number): string {
+  if (!timestamp) return '';
+  const now = Date.now();
+  const diffMs = Math.max(0, now - timestamp);
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Clean copy-to-clipboard helper with fallback
+ */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Minimalist Code Block with syntax highlight tint & 1-click copy
+ */
+const CodeBlock: React.FC<{ language?: string; code: string }> = ({ language, code }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(code);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="my-2.5 rounded-xl border border-customBorder/80 bg-base/90 overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-elevated/70 border-b border-customBorder/50 text-[11px] font-mono text-muted">
+        <span className="uppercase font-semibold tracking-wider text-secondary">
+          {language || 'code'}
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex items-center gap-1 px-2 py-0.5 rounded hover:bg-highlight text-secondary hover:text-primary transition-colors cursor-pointer"
+        >
+          {copied ? (
+            <>
+              <Check size={12} className="text-emerald-400" />
+              <span className="text-emerald-400">Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy size={12} />
+              <span>Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="p-3 text-xs font-mono overflow-x-auto select-text leading-relaxed text-emerald-300/90 whitespace-pre">
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+};
+
+/**
+ * Format markdown text with bold, inline code, paragraphs, and code blocks
+ */
+const FormattedMarkdown: React.FC<{ text: string }> = ({ text }) => {
+  const parts = useMemo(() => {
+    // Split by fenced code blocks: ```lang ... ```
+    return text.split(/(```[\s\S]*?```)/g);
+  }, [text]);
+
+  return (
+    <div className="space-y-2 text-xs sm:text-sm leading-relaxed select-text">
+      {parts.map((part, idx) => {
+        if (part.startsWith('```') && part.endsWith('```')) {
+          const match = part.match(/^```(\w+)?\n?([\s\S]*?)```$/);
+          const lang = match ? match[1] : '';
+          const code = match ? match[2].trimEnd() : part.slice(3, -3);
+          return <CodeBlock key={idx} language={lang} code={code} />;
+        }
+
+        // Split text by lines
+        const lines = part.split('\n');
+        return (
+          <div key={idx} className="space-y-1">
+            {lines.map((line, lIdx) => {
+              if (!line.trim()) {
+                return <div key={lIdx} className="h-2" />;
+              }
+
+              // Parse bold and inline code in line
+              const tokens = line.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+
+              return (
+                <p key={lIdx}>
+                  {tokens.map((token, tIdx) => {
+                    if (token.startsWith('`') && token.endsWith('`')) {
+                      return (
+                        <code
+                          key={tIdx}
+                          className="px-1.5 py-0.5 rounded-md bg-base/80 border border-customBorder/60 font-mono text-[11px] text-accent font-medium mx-0.5"
+                        >
+                          {token.slice(1, -1)}
+                        </code>
+                      );
+                    }
+                    if (token.startsWith('**') && token.endsWith('**')) {
+                      return (
+                        <strong key={tIdx} className="font-semibold text-primary">
+                          {token.slice(2, -2)}
+                        </strong>
+                      );
+                    }
+                    return <span key={tIdx}>{token}</span>;
+                  })}
+                </p>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 export const HelpUpgradeModal: React.FC = () => {
   const {
@@ -34,6 +177,7 @@ export const HelpUpgradeModal: React.FC = () => {
     submitRequest,
     sendChatMessage,
     retryRequest,
+    applyUpgrade,
   } = useUpgradeStore();
 
   const [mode, setMode] = useState<'create' | 'thread'>('create');
@@ -43,6 +187,11 @@ export const HelpUpgradeModal: React.FC = () => {
   const [pendingAttachments, setPendingAttachments] = useState<UpgradeAttachment[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
+  const [autoApply, setAutoApply] = useState(true);
+
+  // Apply & release state
+  const [isApplying, setIsApplying] = useState(false);
+  const [applyStatusMessage, setApplyStatusMessage] = useState<string | null>(null);
 
   // Follow-up reply state
   const [replyText, setReplyText] = useState('');
@@ -50,16 +199,19 @@ export const HelpUpgradeModal: React.FC = () => {
   const [isReplying, setIsReplying] = useState(false);
 
   // Live log viewer collapse
-  const [showLogs, setShowLogs] = useState(true);
+  const [showLogs, setShowLogs] = useState(false);
 
   // Full-size image preview modal
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Clipboard copy feedback
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // When activeRequestId changes or modal opens, decide which view to show
+  // When activeRequestId changes or modal opens, decide view
   useEffect(() => {
     if (activeRequestId && requests.some((r) => r.id === activeRequestId)) {
       setMode('thread');
@@ -166,6 +318,7 @@ export const HelpUpgradeModal: React.FC = () => {
         title: title.trim() || prompt.slice(0, 50),
         prompt: prompt.trim(),
         attachments: pendingAttachments,
+        autoApply,
       });
 
       setTitle('');
@@ -175,6 +328,23 @@ export const HelpUpgradeModal: React.FC = () => {
       setMode('thread');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleApplyAndRelease = async (id: string) => {
+    setIsApplying(true);
+    setApplyStatusMessage('Merging fork changes into live app & compiling...');
+    try {
+      const res = await applyUpgrade(id);
+      if (res.ok) {
+        setApplyStatusMessage(`✓ Published in v${res.version}! All clients on Desktop and Android can now update.`);
+      } else {
+        setApplyStatusMessage(`Error: ${res.error || 'Failed to apply update'}`);
+      }
+    } catch (err: any) {
+      setApplyStatusMessage(`Error: ${err.message || 'Failed to apply'}`);
+    } finally {
+      setIsApplying(false);
     }
   };
 
@@ -192,35 +362,51 @@ export const HelpUpgradeModal: React.FC = () => {
     }
   };
 
+  const copyChip = async (key: string, value: string) => {
+    const ok = await copyToClipboard(value);
+    if (ok) {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    }
+  };
+
   const renderStatusBadge = (status: string) => {
     switch (status) {
       case 'processing':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-accent/20 text-accent border border-accent/30 animate-pulse">
-            <RotateCw size={12} className="animate-spin" />
-            Running OpenCode
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-accent/15 text-accent border border-accent/25 animate-pulse">
+            <RotateCw size={11} className="animate-spin" />
+            <span>Running</span>
+          </span>
+        );
+      case 'released':
+      case 'applied':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/25 text-emerald-300 border border-emerald-500/40">
+            <Rocket size={11} />
+            <span>Update Live</span>
           </span>
         );
       case 'completed':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-            <CheckCircle2 size={12} />
-            Fork Ready
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+            <CheckCircle2 size={11} />
+            <span>Fork Ready</span>
           </span>
         );
       case 'failed':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30">
-            <AlertCircle size={12} />
-            Failed
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/25">
+            <AlertCircle size={11} />
+            <span>Failed</span>
           </span>
         );
       case 'queued':
       default:
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-            <Clock size={12} />
-            Queued in Cloud
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/25">
+            <Clock size={11} />
+            <span>Queued</span>
           </span>
         );
     }
@@ -231,53 +417,53 @@ export const HelpUpgradeModal: React.FC = () => {
       role="dialog"
       aria-modal="true"
       aria-labelledby="help-upgrade-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200 select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 select-none"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-4xl h-[92vh] max-h-[760px] bg-surface border border-customBorder rounded-2xl shadow-2xl flex flex-col overflow-hidden text-primary"
+        className="w-full max-w-4xl h-[90vh] max-h-[740px] bg-surface/95 border border-customBorder/80 rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-primary backdrop-blur-xl"
       >
-        {/* Top Header */}
-        <div className="px-4 py-3.5 border-b border-customBorder/70 flex items-center justify-between gap-3 bg-surface/95 shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-accent/20 border border-accent/40 flex items-center justify-center text-accent shrink-0 shadow-sm">
-              <Sparkles size={17} />
+        {/* Minimalist Top Header */}
+        <div className="px-5 py-3.5 border-b border-customBorder/60 flex items-center justify-between gap-4 bg-surface shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-accent/15 border border-accent/30 flex items-center justify-center text-accent shrink-0 shadow-sm">
+              <Sparkles size={16} />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 id="help-upgrade-modal-title" className="text-sm sm:text-base font-bold tracking-tight truncate">
-                  Help & AI Upgrade Studio
+                  AI Studio & Feedback
                 </h2>
-                <span className="hidden sm:inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold bg-elevated border border-customBorder text-secondary">
-                  OpenCode • Muse Spark 1.3 xhigh
+                <span className="hidden sm:inline-flex px-2 py-0.5 rounded-full text-[10px] font-mono text-muted bg-elevated border border-customBorder/50">
+                  opencode 1.3
                 </span>
               </div>
-              <p className="text-[11px] text-secondary truncate">
-                Chat a feature upgrade or fix with screenshots • Auto-forks repo & implements changes
+              <p className="text-[11px] text-muted truncate">
+                Chat feature upgrades and bug fixes • OpenCode creates automated git forks
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-3 shrink-0">
             {/* Host PC Status Pill */}
             <div
-              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${
+              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
                 hostStatus.status === 'online'
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
                   : hostStatus.status === 'busy'
-                  ? 'bg-accent/10 text-accent border-accent/30'
-                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                  ? 'bg-accent/10 text-accent border-accent/25'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/25'
               }`}
               title={
                 hostStatus.status === 'online'
-                  ? 'Host PC is ON and ready to run OpenCode immediately'
+                  ? 'Host PC is Online: OpenCode starts immediately'
                   : hostStatus.status === 'busy'
-                  ? 'Host PC is currently building a fork'
-                  : 'Host PC is OFF: Requests queue in Firebase and run as soon as your PC turns on'
+                  ? 'Host PC is Busy building a fork'
+                  : 'Host PC is Offline: Requests queue in Firebase and execute when turned on'
               }
             >
               <span
-                className={`w-2 h-2 rounded-full ${
+                className={`w-1.5 h-1.5 rounded-full ${
                   hostStatus.status === 'online'
                     ? 'bg-emerald-400 animate-pulse'
                     : hostStatus.status === 'busy'
@@ -285,12 +471,12 @@ export const HelpUpgradeModal: React.FC = () => {
                     : 'bg-amber-400'
                 }`}
               />
-              <span className="text-[11px]">
+              <span>
                 {hostStatus.status === 'online'
-                  ? 'Host PC Online'
+                  ? 'Host Online'
                   : hostStatus.status === 'busy'
-                  ? 'Host PC Busy'
-                  : 'Host PC Offline (Queuing)'}
+                  ? 'Host Busy'
+                  : 'Host Queuing'}
               </span>
             </div>
 
@@ -300,16 +486,17 @@ export const HelpUpgradeModal: React.FC = () => {
               onClick={closeHelpModal}
               aria-label="Close modal"
               className="p-1.5 rounded-full text-secondary hover:text-primary hover:bg-elevated transition-colors cursor-pointer"
+              title="Close (Esc)"
             >
               <X size={18} />
             </button>
           </div>
         </div>
 
-        {/* Modal Body: Sidebar + Stage */}
+        {/* Modal Body: Sidebar + Main Stage */}
         <div className="flex-1 flex min-h-0 overflow-hidden">
-          {/* Left Column: Request List & New Request Button */}
-          <div className="w-64 sm:w-72 border-r border-customBorder/60 bg-base/50 flex flex-col shrink-0 min-h-0">
+          {/* Left Column: History & Queue List */}
+          <div className="w-64 sm:w-72 border-r border-customBorder/60 bg-base/40 flex flex-col shrink-0 min-h-0">
             <div className="p-3 border-b border-customBorder/40">
               <button
                 type="button"
@@ -319,24 +506,26 @@ export const HelpUpgradeModal: React.FC = () => {
                 }}
                 className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer shadow-sm ${
                   mode === 'create'
-                    ? 'bg-accent text-white shadow-accent/30'
+                    ? 'bg-accent text-white shadow-accent/25'
                     : 'bg-elevated hover:bg-highlight text-primary border border-customBorder/60'
                 }`}
               >
-                <Sparkles size={14} />
-                <span>New Upgrade or Fix</span>
+                <Sparkles size={13} />
+                <span>New Request</span>
               </button>
             </div>
 
             {/* Request Feed */}
             <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1.5">
-              <div className="px-2 pt-1 text-[11px] font-bold text-muted uppercase tracking-wider">
-                History & Queue ({requests.length})
+              <div className="px-2 pt-1 pb-0.5 text-[10px] font-bold text-muted uppercase tracking-wider">
+                Requests ({requests.length})
               </div>
 
               {requests.length === 0 ? (
-                <div className="py-8 px-4 text-center text-xs text-muted">
-                  No requests submitted yet. Click above to chat your first upgrade!
+                <div className="py-12 px-4 text-center text-xs text-muted leading-relaxed">
+                  No requests yet.
+                  <br />
+                  Click above to chat your first upgrade!
                 </div>
               ) : (
                 requests.map((req) => {
@@ -351,33 +540,38 @@ export const HelpUpgradeModal: React.FC = () => {
                         setActiveRequestId(req.id);
                         setMode('thread');
                       }}
-                      className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer border flex flex-col gap-1.5 ${
+                      className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer border flex flex-col gap-1.5 relative overflow-hidden ${
                         isSelected
-                          ? 'bg-elevated border-accent/60 shadow-sm text-primary'
-                          : 'bg-surface/60 hover:bg-elevated/70 border-transparent text-secondary hover:text-primary'
+                          ? 'bg-elevated/90 border-accent/50 shadow-sm text-primary'
+                          : 'bg-surface/50 hover:bg-elevated/60 border-transparent text-secondary hover:text-primary'
                       }`}
                     >
+                      {/* Active indicator bar */}
+                      {isSelected && (
+                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r bg-accent" />
+                      )}
+
                       <div className="flex items-center justify-between gap-1.5">
-                        <span className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
                           {req.type === 'fix' ? (
                             <span className="text-amber-400 flex items-center gap-1">
-                              <Bug size={11} /> Fix
+                              <Bug size={10} /> Fix
                             </span>
                           ) : (
                             <span className="text-accent flex items-center gap-1">
-                              <Sparkles size={11} /> Feature
+                              <Sparkles size={10} /> Feature
                             </span>
                           )}
                         </span>
                         {renderStatusBadge(req.status)}
                       </div>
 
-                      <div className="flex items-start gap-2">
+                      <div className="flex items-center gap-2">
                         {firstThumb && (
                           <img
                             src={firstThumb}
                             alt=""
-                            className="w-8 h-8 rounded-lg object-cover border border-customBorder shrink-0 bg-black/40"
+                            className="w-7 h-7 rounded-lg object-cover border border-customBorder/60 shrink-0 bg-base"
                           />
                         )}
                         <div className="min-w-0 flex-1">
@@ -385,7 +579,7 @@ export const HelpUpgradeModal: React.FC = () => {
                             {req.title || req.prompt}
                           </p>
                           <p className="text-[10px] text-muted truncate mt-0.5">
-                            {new Date(req.createdAt).toLocaleDateString()} • {req.messages?.length || 1} msg
+                            {formatRelativeTime(req.createdAt)} • {req.messages?.length || 1} msg
                             {req.attachments?.length ? ` • ${req.attachments.length} img` : ''}
                           </p>
                         </div>
@@ -397,86 +591,86 @@ export const HelpUpgradeModal: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Column: Active View (Create Composer OR Chat Thread Inspector) */}
-          <div className="flex-1 flex flex-col min-h-0 bg-surface/30">
+          {/* Right Column: Active View (Create Composer OR Chat Thread) */}
+          <div className="flex-1 flex flex-col min-h-0 bg-surface/40">
             {mode === 'create' ? (
               /* Composer Form */
-              <form onSubmit={handleCreateSubmit} className="flex-1 flex flex-col min-h-0 p-4 sm:p-6 overflow-y-auto">
-                <div className="flex flex-col gap-4 max-w-2xl mx-auto w-full">
+              <form onSubmit={handleCreateSubmit} className="flex-1 flex flex-col min-h-0 p-5 sm:p-7 overflow-y-auto">
+                <div className="flex flex-col gap-4 max-w-xl mx-auto w-full">
                   <div>
-                    <h3 className="text-base font-bold text-primary">Chat a Feature Upgrade or Bug Fix</h3>
+                    <h3 className="text-base font-bold text-primary">Chat an Upgrade or Bug Fix</h3>
                     <p className="text-xs text-secondary mt-0.5">
-                      OpenCode will inspect your instructions & images, create a dedicated git fork of Dotify, and build the upgrade.
+                      OpenCode creates an isolated git fork of Dotify, executes the changes, and reports back here.
                     </p>
                   </div>
 
-                  {/* Type Selector: Feature vs Fix */}
-                  <div className="flex items-center gap-2">
+                  {/* Segmented Type Selector */}
+                  <div className="grid grid-cols-2 p-1 bg-elevated/70 rounded-xl border border-customBorder/60 gap-1">
                     <button
                       type="button"
                       onClick={() => setRequestType('upgrade')}
-                      className={`flex-1 py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      className={`py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                         requestType === 'upgrade'
-                          ? 'bg-accent/15 border-accent text-accent'
-                          : 'bg-elevated border-customBorder text-secondary hover:text-primary'
+                          ? 'bg-surface text-accent shadow-sm'
+                          : 'text-secondary hover:text-primary'
                       }`}
                     >
-                      <Sparkles size={14} />
-                      <span>✨ Feature Upgrade</span>
+                      <Sparkles size={13} />
+                      <span>Feature Upgrade</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setRequestType('fix')}
-                      className={`flex-1 py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      className={`py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                         requestType === 'fix'
-                          ? 'bg-amber-500/15 border-amber-500 text-amber-400'
-                          : 'bg-elevated border-customBorder text-secondary hover:text-primary'
+                          ? 'bg-surface text-amber-400 shadow-sm'
+                          : 'text-secondary hover:text-primary'
                       }`}
                     >
-                      <Bug size={14} />
-                      <span>🛠️ Bug Fix / Help</span>
+                      <Bug size={13} />
+                      <span>Bug Fix / Help</span>
                     </button>
                   </div>
 
-                  {/* Title / Slug */}
+                  {/* Title / Summary */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold text-secondary">
-                      Title / Summary (Optional)
+                      Title (Optional)
                     </label>
                     <input
                       type="text"
-                      placeholder={requestType === 'upgrade' ? 'e.g. Add synchronized lyrics sync' : 'e.g. Fix audio stream stutter on pause'}
+                      placeholder={requestType === 'upgrade' ? 'e.g. Add synchronized lyrics or gesture controls' : 'e.g. Fix audio stream stutter on pause'}
                       value={title}
                       onChange={(e) => setTitle(e.target.value)}
-                      className="w-full bg-elevated border border-customBorder rounded-xl px-3 py-2 text-xs md:text-sm text-primary placeholder-muted outline-none focus:border-accent"
+                      className="w-full bg-elevated/70 border border-customBorder/70 rounded-xl px-3 py-2 text-xs md:text-sm text-primary placeholder-muted outline-none focus:border-accent"
                     />
                   </div>
 
-                  {/* Multi-line Prompt */}
+                  {/* Prompt Textarea */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold text-secondary">
-                      Description & Instructions *
+                      Instructions & Behavior *
                     </label>
                     <textarea
                       required
                       rows={5}
-                      placeholder="Describe what you want to build or fix in detail. Mention any desired UI layout, components, buttons, or behaviors. OpenCode will implement it in a git fork..."
+                      placeholder="Describe the feature or fix in detail. Mention any desired buttons, styling, layout, or components. OpenCode will inspect your instructions and build it in a git fork..."
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
-                      className="w-full bg-elevated border border-customBorder rounded-xl p-3 text-xs md:text-sm text-primary placeholder-muted outline-none focus:border-accent resize-none select-text"
+                      className="w-full bg-elevated/70 border border-customBorder/70 rounded-xl p-3 text-xs md:text-sm text-primary placeholder-muted outline-none focus:border-accent resize-none select-text leading-relaxed"
                     />
                   </div>
 
-                  {/* Attached Images & Drag/Drop Area */}
+                  {/* Minimalist Screenshot Dropzone */}
                   <div className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-secondary flex items-center gap-1.5">
+                    <div className="flex items-center justify-between text-xs font-bold text-secondary">
+                      <span className="flex items-center gap-1.5">
                         <ImageIcon size={14} className="text-accent" />
-                        <span>Attached Images & Screenshots ({pendingAttachments.length})</span>
-                      </label>
-                      <span className="text-[10px] text-muted">
-                        Paste with Ctrl+V or drag & drop
+                        <span>Attached Screenshots ({pendingAttachments.length})</span>
+                      </span>
+                      <span className="text-[10px] text-muted font-normal">
+                        Press Ctrl+V anywhere to paste
                       </span>
                     </div>
 
@@ -484,7 +678,7 @@ export const HelpUpgradeModal: React.FC = () => {
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => handleDrop(e, false)}
                       onClick={() => fileInputRef.current?.click()}
-                      className="border-2 border-dashed border-customBorder/80 hover:border-accent/60 rounded-xl p-4 flex flex-col items-center justify-center gap-2 cursor-pointer bg-elevated/30 hover:bg-elevated/60 transition-all text-center"
+                      className="border border-dashed border-customBorder hover:border-accent/60 rounded-xl p-3.5 flex flex-col items-center justify-center gap-1.5 cursor-pointer bg-elevated/30 hover:bg-elevated/60 transition-all text-center"
                     >
                       <input
                         ref={fileInputRef}
@@ -494,18 +688,15 @@ export const HelpUpgradeModal: React.FC = () => {
                         className="hidden"
                         onChange={(e) => handleFilesSelected(e.target.files, false)}
                       />
-                      <UploadCloud size={24} className="text-secondary" />
+                      <UploadCloud size={20} className="text-secondary" />
                       <p className="text-xs font-medium text-secondary">
-                        Click to browse or drop screenshots/photos here
-                      </p>
-                      <p className="text-[10px] text-muted">
-                        Images are saved to your PC inbox (<code className="text-accent">inbox/</code>) and forwarded to OpenCode
+                        Drop screenshot or click to browse
                       </p>
                     </div>
 
                     {isCompressing && (
                       <p className="text-xs text-accent animate-pulse font-medium">
-                        Optimizing attached images...
+                        Optimizing screenshot...
                       </p>
                     )}
 
@@ -515,7 +706,7 @@ export const HelpUpgradeModal: React.FC = () => {
                         {pendingAttachments.map((att, idx) => (
                           <div
                             key={att.id}
-                            className="relative group rounded-lg overflow-hidden border border-customBorder bg-base w-20 h-20 shrink-0"
+                            className="relative group rounded-xl overflow-hidden border border-customBorder bg-base w-16 h-16 shrink-0 shadow-sm"
                           >
                             <img
                               src={att.previewDataUrl || att.dataUrl}
@@ -528,48 +719,43 @@ export const HelpUpgradeModal: React.FC = () => {
                                 e.stopPropagation();
                                 setPendingAttachments((prev) => prev.filter((_, i) => i !== idx));
                               }}
-                              className="absolute top-1 right-1 p-1 rounded-full bg-black/70 hover:bg-rose-500 text-white transition-colors cursor-pointer"
-                              title="Remove image"
+                              className="absolute top-1 right-1 p-0.5 rounded-full bg-black/75 hover:bg-rose-500 text-white transition-colors cursor-pointer"
+                              title="Remove screenshot"
                             >
-                              <X size={11} />
+                              <X size={10} />
                             </button>
-                            <span className="absolute bottom-0 inset-x-0 bg-black/80 text-[9px] text-muted truncate px-1 py-0.5 text-center">
-                              {(att.sizeBytes ? (att.sizeBytes / 1024).toFixed(0) : '?') + ' KB'}
-                            </span>
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  {/* Offline / Online Queue Notice */}
-                  <div className="p-3 rounded-xl bg-elevated/60 border border-customBorder/60 flex items-start gap-2.5 text-xs text-secondary">
-                    <Clock size={16} className="text-accent shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold text-primary">
-                        Always-On Cloud Queueing
-                      </p>
-                      <p className="text-[11px] text-muted mt-0.5 leading-relaxed">
-                        If your computer is on, OpenCode starts immediately. If your computer is off or asleep, your request and images will queue in Firebase and auto-run the instant your PC turns on.
-                      </p>
-                    </div>
-                  </div>
+                  {/* Auto-publish checkbox */}
+                  <label className="flex items-center gap-2 text-xs text-secondary cursor-pointer select-none hover:text-primary pt-0.5">
+                    <input
+                      type="checkbox"
+                      checked={autoApply}
+                      onChange={(e) => setAutoApply(e.target.checked)}
+                      className="rounded accent-accent w-3.5 h-3.5 cursor-pointer"
+                    />
+                    <span>Automatically merge fork & publish update when OpenCode finishes</span>
+                  </label>
 
-                  {/* Submit Button */}
+                  {/* Submit CTA */}
                   <button
                     type="submit"
                     disabled={!prompt.trim() || isSubmitting || isCompressing}
-                    className="w-full py-3 px-4 rounded-xl bg-accent hover:bg-accentHover disabled:bg-elevated disabled:text-muted text-white font-bold text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-accent/20 disabled:cursor-not-allowed"
+                    className="w-full py-2.5 px-4 rounded-xl bg-accent hover:brightness-110 disabled:bg-elevated disabled:text-muted text-white font-bold text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md shadow-accent/20 disabled:cursor-not-allowed mt-1"
                   >
                     {isSubmitting ? (
                       <>
-                        <RotateCw size={16} className="animate-spin" />
-                        <span>Submitting to Firebase Queue...</span>
+                        <RotateCw size={15} className="animate-spin" />
+                        <span>Submitting Request...</span>
                       </>
                     ) : (
                       <>
-                        <Send size={16} />
-                        <span>Queue Upgrade with OpenCode (muse-spark-1.3 xhigh)</span>
+                        <Send size={15} />
+                        <span>Submit Request to OpenCode →</span>
                       </>
                     )}
                   </button>
@@ -578,17 +764,17 @@ export const HelpUpgradeModal: React.FC = () => {
             ) : activeRequest ? (
               /* Thread Inspector View */
               <div className="flex-1 flex flex-col min-h-0">
-                {/* Thread Header Banner */}
-                <div className="p-3.5 border-b border-customBorder/60 bg-surface flex flex-col gap-2 shrink-0">
+                {/* Clean Thread Header Toolbar */}
+                <div className="px-5 py-3 border-b border-customBorder/60 bg-surface flex flex-col gap-2 shrink-0">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold uppercase tracking-wider text-muted">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted">
                           {activeRequest.type === 'fix' ? '🛠️ Bug Fix' : '✨ Feature Upgrade'}
                         </span>
                         {renderStatusBadge(activeRequest.status)}
                       </div>
-                      <h3 className="text-base font-bold text-primary mt-0.5">
+                      <h3 className="text-sm sm:text-base font-bold text-primary mt-0.5 truncate">
                         {activeRequest.title}
                       </h3>
                     </div>
@@ -598,45 +784,110 @@ export const HelpUpgradeModal: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => retryRequest(activeRequest.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-elevated hover:bg-highlight text-xs font-semibold text-secondary hover:text-primary transition-colors cursor-pointer border border-customBorder"
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated hover:bg-highlight text-xs font-semibold text-secondary hover:text-primary transition-colors cursor-pointer border border-customBorder/60"
                         title="Re-run OpenCode on this request"
                       >
-                        <RotateCw size={13} />
-                        <span>Re-run OpenCode</span>
+                        <RotateCw size={12} />
+                        <span>Re-run</span>
                       </button>
                     )}
                   </div>
 
-                  {/* Metadata Chips: Git Fork, Branch, Local Inbox */}
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                  {/* Metadata Chips: Branch, Local Directory, Inbox */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs pt-0.5">
                     {activeRequest.forkBranch && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated border border-customBorder text-secondary font-mono text-[11px]">
-                        <GitFork size={13} className="text-accent" />
-                        <span>{activeRequest.forkBranch}</span>
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => copyChip('branch', activeRequest.forkBranch || '')}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-elevated hover:bg-highlight border border-customBorder/60 text-secondary hover:text-primary font-mono text-[11px] transition-colors cursor-pointer"
+                        title="Click to copy git branch"
+                      >
+                        <GitFork size={12} className="text-accent" />
+                        <span className="truncate max-w-xs">{activeRequest.forkBranch}</span>
+                        {copiedKey === 'branch' ? (
+                          <Check size={11} className="text-emerald-400" />
+                        ) : (
+                          <Copy size={11} className="text-muted" />
+                        )}
+                      </button>
                     )}
 
                     {activeRequest.forkPath && (
-                      <span
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated border border-customBorder text-secondary text-[11px] truncate max-w-xs"
+                      <button
+                        type="button"
+                        onClick={() => copyChip('path', activeRequest.forkPath || '')}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-elevated hover:bg-highlight border border-customBorder/60 text-secondary hover:text-primary text-[11px] transition-colors cursor-pointer truncate max-w-xs"
                         title={activeRequest.forkPath}
                       >
-                        <FolderOpen size={13} className="text-accent" />
+                        <FolderOpen size={12} className="text-accent" />
                         <span className="truncate">{activeRequest.forkPath}</span>
-                      </span>
+                        {copiedKey === 'path' ? (
+                          <Check size={11} className="text-emerald-400" />
+                        ) : (
+                          <Copy size={11} className="text-muted" />
+                        )}
+                      </button>
                     )}
 
                     {activeRequest.savedImages?.length ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-elevated border border-customBorder text-secondary text-[11px]">
-                        <ImageIcon size={13} className="text-accent" />
-                        <span>{activeRequest.savedImages.length} images saved to inbox</span>
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-elevated border border-customBorder/60 text-secondary text-[11px]">
+                        <ImageIcon size={12} className="text-accent" />
+                        <span>{activeRequest.savedImages.length} images saved</span>
                       </span>
                     ) : null}
                   </div>
                 </div>
 
+                {/* Apply & Release Update Action Banner */}
+                {activeRequest.status === 'completed' && (
+                  <div className="px-5 py-3 bg-gradient-to-r from-accent/20 via-purple-500/10 to-transparent border-b border-accent/30 flex items-center justify-between gap-3 shrink-0">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-accent">
+                        <Rocket size={13} />
+                        <span>Fork Changes Ready</span>
+                      </div>
+                      <p className="text-[11px] text-secondary mt-0.5 truncate">
+                        Merge {activeRequest.forkBranch} into live app & publish auto-update for all clients.
+                      </p>
+                      {applyStatusMessage && (
+                        <p className="text-[11px] font-semibold text-accent mt-1 animate-pulse">
+                          {applyStatusMessage}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleApplyAndRelease(activeRequest.id)}
+                      disabled={isApplying}
+                      className="shrink-0 px-3.5 py-1.5 rounded-xl bg-accent hover:brightness-110 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-accent/25 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isApplying ? (
+                        <>
+                          <RotateCw size={12} className="animate-spin" />
+                          <span>Applying...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Rocket size={12} />
+                          <span>Apply & Release Update</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* If already released */}
+                {activeRequest.releasedVersion && (
+                  <div className="px-5 py-2.5 bg-emerald-500/15 border-b border-emerald-500/30 flex items-center gap-2 text-xs font-medium text-emerald-400 shrink-0">
+                    <CheckCircle2 size={14} className="shrink-0" />
+                    <span>
+                      Published in <strong>v{activeRequest.releasedVersion}</strong>! All clients on Windows & Android will receive this on launch.
+                    </span>
+                  </div>
+                )}
+
                 {/* Messages & Logs Scroll Area */}
-                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+                <div className="flex-1 overflow-y-auto p-4 sm:p-5 flex flex-col gap-4">
                   {/* Messages Feed */}
                   {activeRequest.messages?.map((msg) => {
                     const isUser = msg.role === 'user';
@@ -653,18 +904,20 @@ export const HelpUpgradeModal: React.FC = () => {
                           <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
 
+                        {/* Message Card: Elegant dark card instead of garish solid neon red */}
                         <div
-                          className={`max-w-[85%] rounded-2xl p-3.5 text-xs sm:text-sm select-text leading-relaxed whitespace-pre-wrap ${
+                          className={`max-w-[88%] rounded-2xl p-4 select-text leading-relaxed shadow-sm ${
                             isUser
-                              ? 'bg-accent text-white rounded-tr-sm'
-                              : 'bg-elevated border border-customBorder/70 text-primary rounded-tl-sm'
+                              ? 'bg-elevated/95 border border-customBorder/80 text-primary rounded-tr-sm'
+                              : 'bg-surface/90 border border-customBorder/70 text-primary rounded-tl-sm'
                           }`}
                         >
-                          {msg.text}
+                          {/* Markdown formatted content */}
+                          <FormattedMarkdown text={msg.text} />
 
                           {/* Render Attached Images inside message */}
                           {msg.attachments && msg.attachments.length > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-2 pt-2 border-t border-white/20">
+                            <div className="mt-3 flex flex-wrap gap-2 pt-2 border-t border-customBorder/50">
                               {msg.attachments.map((att) => {
                                 const imgSrc = att.dataUrl || att.previewDataUrl;
                                 if (!imgSrc) return null;
@@ -672,12 +925,12 @@ export const HelpUpgradeModal: React.FC = () => {
                                   <div
                                     key={att.id}
                                     onClick={() => setPreviewImage(imgSrc)}
-                                    className="cursor-pointer group relative rounded-lg overflow-hidden border border-white/20 bg-black/40 w-24 h-24 shrink-0 hover:scale-105 transition-transform"
+                                    className="cursor-pointer group relative rounded-xl overflow-hidden border border-customBorder/60 bg-base w-24 h-24 shrink-0 hover:scale-105 transition-transform shadow-sm"
                                     title="Click to view full size"
                                   >
                                     <img src={imgSrc} alt={att.name} className="w-full h-full object-cover" />
-                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                      <ExternalLink size={16} className="text-white" />
+                                    <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                      <ExternalLink size={15} className="text-white" />
                                     </div>
                                   </div>
                                 );
@@ -691,21 +944,21 @@ export const HelpUpgradeModal: React.FC = () => {
 
                   {/* Live OpenCode CLI Terminal Logs */}
                   {activeRequest.agentLogs && (
-                    <div className="rounded-xl border border-customBorder overflow-hidden bg-black/80 shadow-md">
+                    <div className="rounded-xl border border-customBorder/80 overflow-hidden bg-black/85 shadow-md">
                       <div
                         onClick={() => setShowLogs((prev) => !prev)}
-                        className="px-3 py-2 bg-elevated/60 border-b border-customBorder/50 flex items-center justify-between cursor-pointer text-xs font-semibold text-secondary hover:text-primary"
+                        className="px-3.5 py-2 bg-elevated/60 border-b border-customBorder/50 flex items-center justify-between cursor-pointer text-xs font-semibold text-secondary hover:text-primary transition-colors"
                       >
                         <div className="flex items-center gap-2">
-                          <Terminal size={14} className="text-accent" />
-                          <span>OpenCode CLI Execution Logs</span>
+                          <Terminal size={13} className="text-accent" />
+                          <span>OpenCode Execution Logs</span>
                           {activeRequest.status === 'processing' && (
                             <span className="w-2 h-2 rounded-full bg-accent animate-ping" />
                           )}
                         </div>
                         <div className="flex items-center gap-1 text-[11px] text-muted">
-                          <span>{showLogs ? 'Collapse' : 'Expand'}</span>
-                          {showLogs ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          <span>{showLogs ? 'Hide' : 'Show'}</span>
+                          {showLogs ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                         </div>
                       </div>
 
@@ -723,7 +976,7 @@ export const HelpUpgradeModal: React.FC = () => {
                 {/* Follow-up Chat Composer Bar */}
                 <form
                   onSubmit={handleReplySubmit}
-                  className="p-3 border-t border-customBorder/60 bg-surface/90 flex flex-col gap-2 shrink-0"
+                  className="p-3 border-t border-customBorder/60 bg-surface flex flex-col gap-2 shrink-0"
                 >
                   {/* Reply Image Previews */}
                   {replyAttachments.length > 0 && (
@@ -731,7 +984,7 @@ export const HelpUpgradeModal: React.FC = () => {
                       {replyAttachments.map((att, idx) => (
                         <div
                           key={att.id}
-                          className="relative rounded-lg overflow-hidden border border-customBorder w-14 h-14 shrink-0 bg-black/40"
+                          className="relative rounded-lg overflow-hidden border border-customBorder w-12 h-12 shrink-0 bg-base"
                         >
                           <img src={att.previewDataUrl || att.dataUrl} alt="" className="w-full h-full object-cover" />
                           <button
@@ -759,10 +1012,10 @@ export const HelpUpgradeModal: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => replyFileInputRef.current?.click()}
-                      className="p-2 rounded-full bg-elevated hover:bg-highlight text-secondary hover:text-primary transition-colors cursor-pointer shrink-0"
-                      title="Attach image (or paste with Ctrl+V)"
+                      className="p-2 rounded-xl bg-elevated hover:bg-highlight text-secondary hover:text-primary transition-colors cursor-pointer shrink-0"
+                      title="Attach screenshot (or press Ctrl+V to paste)"
                     >
-                      <Paperclip size={16} />
+                      <Paperclip size={15} />
                     </button>
 
                     <input
@@ -770,16 +1023,16 @@ export const HelpUpgradeModal: React.FC = () => {
                       placeholder="Follow up with OpenCode to refine or add to this fork..."
                       value={replyText}
                       onChange={(e) => setReplyText(e.target.value)}
-                      className="flex-1 bg-elevated border border-customBorder rounded-full px-4 py-2 text-xs md:text-sm text-primary placeholder-muted outline-none focus:border-accent"
+                      className="flex-1 bg-elevated/70 border border-customBorder/70 rounded-xl px-3.5 py-2 text-xs md:text-sm text-primary placeholder-muted outline-none focus:border-accent"
                     />
 
                     <button
                       type="submit"
                       disabled={(!replyText.trim() && replyAttachments.length === 0) || isReplying || isCompressing}
-                      className="p-2 rounded-full bg-accent hover:bg-accentHover disabled:bg-elevated disabled:text-muted text-white transition-all cursor-pointer shrink-0"
+                      className="p-2 rounded-xl bg-accent hover:brightness-110 disabled:bg-elevated disabled:text-muted text-white transition-all cursor-pointer shrink-0 shadow-sm shadow-accent/20"
                       title="Send message"
                     >
-                      <Send size={16} />
+                      <Send size={15} />
                     </button>
                   </div>
                 </form>
@@ -793,7 +1046,7 @@ export const HelpUpgradeModal: React.FC = () => {
       {previewImage && (
         <div
           onClick={() => setPreviewImage(null)}
-          className="fixed inset-0 z-60 bg-black/90 flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-60 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in"
         >
           <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
             <button
@@ -805,14 +1058,14 @@ export const HelpUpgradeModal: React.FC = () => {
             <img
               src={previewImage}
               alt="Full preview"
-              className="max-w-full max-h-[85vh] rounded-xl object-contain shadow-2xl border border-customBorder"
+              className="max-w-full max-h-[85vh] rounded-2xl object-contain shadow-2xl border border-customBorder"
               onClick={(e) => e.stopPropagation()}
             />
             <div className="mt-3 flex items-center gap-3">
               <a
                 href={previewImage}
                 download="dotify-attachment.png"
-                className="px-3 py-1.5 rounded-lg bg-elevated hover:bg-highlight text-xs font-semibold text-primary transition-colors"
+                className="px-3 py-1.5 rounded-xl bg-elevated hover:bg-highlight text-xs font-semibold text-primary transition-colors"
                 onClick={(e) => e.stopPropagation()}
               >
                 Download Image

@@ -28,6 +28,7 @@ const MACRO_GENRE_KEYWORDS: Record<MacroGenre, string[]> = {
     'deep house',
     'tech house',
     'progressive house',
+    'remix',
   ],
   'Hip-Hop & Urban': [
     'hip hop',
@@ -152,30 +153,41 @@ export class GenreProfiler {
     const artist = (artistName || '').toLowerCase().trim();
     const title = (trackTitle || '').toLowerCase().trim();
 
-    // 1. Direct match or substring match against rawGenre
+    // Prepare all (keyword, macro) pairs sorted by keyword length descending
+    const allKeywordPairs: { kw: string; macro: MacroGenre }[] = [];
+    for (const [macro, keywords] of Object.entries(MACRO_GENRE_KEYWORDS) as [MacroGenre, string[]][]) {
+      for (const kw of keywords) {
+        allKeywordPairs.push({ kw, macro });
+      }
+    }
+    allKeywordPairs.sort((a, b) => b.kw.length - a.kw.length);
+
+    // 1. Exact match check on rawGenre
     if (raw && raw !== 'unknown') {
-      for (const [macro, keywords] of Object.entries(MACRO_GENRE_KEYWORDS) as [MacroGenre, string[]][]) {
-        for (const kw of keywords) {
-          if (raw === kw || raw.includes(kw)) {
-            return macro;
-          }
+      for (const pair of allKeywordPairs) {
+        if (raw === pair.kw) {
+          return pair.macro;
+        }
+      }
+
+      // Substring check on rawGenre (longer keywords checked first)
+      for (const pair of allKeywordPairs) {
+        if (raw.includes(pair.kw)) {
+          return pair.macro;
         }
       }
     }
 
     // 2. Keyword heuristic checks in title and artist
     const combined = `${title} ${artist}`;
-    for (const [macro, keywords] of Object.entries(MACRO_GENRE_KEYWORDS) as [MacroGenre, string[]][]) {
-      for (const kw of keywords) {
-        // Match word boundaries
-        const regex = new RegExp(`\\b${kw}\\b`, 'i');
-        if (regex.test(combined)) {
-          return macro;
-        }
+    for (const pair of allKeywordPairs) {
+      const regex = new RegExp(`\\b${pair.kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      if (regex.test(combined)) {
+        return pair.macro;
       }
     }
 
-    // 3. Fallback based on common artist conventions or Pop & Anthems default
+    // 3. Fallback based on Pop & Anthems default
     return 'Pop & Anthems';
   }
 
