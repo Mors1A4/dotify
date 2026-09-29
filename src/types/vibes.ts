@@ -1,7 +1,15 @@
 import { Track } from './track';
 import { CustomPlaylist } from './playlist';
 
-export type VibeCategory = 'gaming' | 'working' | 'partying' | 'chilling' | 'workout';
+export type VibeCategory = 'gaming' | 'working' | 'partying' | 'chilling' | 'workout' | string;
+
+export interface UserVibeConfig {
+  id: string;
+  label: string;
+  prompt: string;
+  themeColor?: 'purple' | 'emerald' | 'blue' | 'amber' | 'rose';
+  defaultCover?: string;
+}
 
 export type MacroGenre =
   | 'Electronic & Dance'
@@ -25,7 +33,7 @@ export interface GenreGroupAffinity {
 
 export interface UserTasteProfile {
   topGenreGroups: GenreGroupAffinity[];
-  dominantGenre: MacroGenre | string;
+  dominantGenre?: MacroGenre | string;
   topArtists: { name: string; playCount: number; genreGroup?: string }[];
   topTracks: { title: string; artist: string; playCount: number }[];
   totalPlays: number;

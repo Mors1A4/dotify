@@ -3,6 +3,8 @@ import { EQ_FREQUENCIES, EQ_PRESET_GAINS, EqualizerPreset, EqualizerState } from
 import { audioCache } from './audioCache';
 import { getApiUrl, getCustomApiUrl, isAndroidApp } from '../services/apiConfig';
 import { useMp3VaultStore } from '../services/mp3VaultService';
+import { YouTubeIframeBridge } from './youtubeIframeBridge';
+import { resolveYouTubeVideoId } from '../services/youtubeResolver';
 
 function createAudioElement(): HTMLAudioElement {
   if (typeof Audio !== 'undefined') {
@@ -32,6 +34,10 @@ export class AudioEngine {
   private primaryAudio: HTMLAudioElement;
   private secondaryAudio: HTMLAudioElement;
   private isPrimaryActive: boolean = true;
+
+  // YouTube IFrame Player Bridge for 100% self-contained mobile & fallback playback
+  private ytBridge: YouTubeIframeBridge;
+  private isUsingYouTubeBridge: boolean = false;
 
   private prebufferedTrack: Track | null = null;
   private isPrebufferedReady: boolean = false;
@@ -74,6 +80,18 @@ export class AudioEngine {
     this.secondaryAudio = createAudioElement();
     this.secondaryAudio.crossOrigin = 'anonymous';
     this.secondaryAudio.preload = 'auto';
+
+    this.ytBridge = YouTubeIframeBridge.getInstance();
+    this.ytBridge.setOnStateChange((isPlaying, isBuffering) => {
+      if (this.isUsingYouTubeBridge) {
+        this.notifyState(isPlaying, isBuffering);
+      }
+    });
+    this.ytBridge.setOnEnded(() => {
+      if (this.isUsingYouTubeBridge) {
+        this.handleTrackEnded();
+      }
+    });
 
     this.setupAudioListeners(this.primaryAudio, true);
     this.setupAudioListeners(this.secondaryAudio, false);
@@ -186,6 +204,25 @@ export class AudioEngine {
     const tick = () => {
       this.rafId = null;
       if (this.isControllerMode) return;
+
+      if (this.isUsingYouTubeBridge) {
+        if (this.ytBridge.isPlaying()) {
+          const cur = this.ytBridge.getCurrentTime();
+          const dur = this.getDuration();
+          for (const cb of this.timeUpdateCallbacks) {
+            cb(cur, dur);
+          }
+          if (isFinite(dur) && dur > 20 && dur - cur <= 15 && !this.hasNotifiedApproachingEnd) {
+            this.hasNotifiedApproachingEnd = true;
+            for (const cb of this.approachingEndCallbacks) {
+              cb();
+            }
+          }
+          this.rafId = requestAnimationFrame(tick);
+        }
+        return;
+      }
+
       const el = this.activeAudio;
       if (!el.paused && !el.ended) {
         const cur = el.currentTime || 0;
@@ -262,12 +299,7 @@ export class AudioEngine {
 
     el.addEventListener('ended', () => {
       if (this.isElementActive(isPrimary)) {
-        this.stopProgressLoop();
-        this.isSwitchingTrack = false;
-        this.notifyState(false, false);
-        for (const cb of this.trackEndCallbacks) {
-          cb();
-        }
+        this.handleTrackEnded();
       }
     });
 
@@ -330,29 +362,26 @@ export class AudioEngine {
           }
         }
 
-        // 2. If /api/stream/track failed once, retry once with cache-busting retry param
-        if (el.src && el.src.includes('/api/stream/track') && !el.src.includes('_retry=1')) {
-          const retryUrl = `${el.src}${el.src.includes('?') ? '&' : '?'}_retry=1`;
-          el.src = retryUrl;
-          el.load();
-          el.play().catch(() => {});
-          return;
+        // 2. If /api/stream/track failed once, retry up to 2 times with cache-busting retry param before stopping
+        if (el.src && el.src.includes('/api/stream/track')) {
+          if (!el.src.includes('_retry=1') && !el.src.includes('_retry=2')) {
+            const retryUrl = `${el.src}${el.src.includes('?') ? '&' : '?'}_retry=1`;
+            el.src = retryUrl;
+            el.load();
+            el.play().catch(() => {});
+            return;
+          } else if (el.src.includes('_retry=1')) {
+            const retryUrl = el.src.replace('_retry=1', '_retry=2');
+            el.src = retryUrl;
+            el.load();
+            el.play().catch(() => {});
+            return;
+          }
         }
 
-        const fallbackUrl =
-          (this.currentTrack as any)?.previewUrl ||
-          this.currentTrack?.sourceMetadata?.previewUrl ||
-          this.currentTrack?.sourceMetadata?.fallbackUrl;
-
-        if (fallbackUrl && el.src !== fallbackUrl) {
-          console.log('[AudioEngine] Primary stream failed, switching to direct preview fallback:', fallbackUrl);
-          el.src = fallbackUrl;
-          el.load();
-          el.play().catch((err) => {
-            console.warn('[AudioEngine] Fallback play error:', err.message);
-            this.isSwitchingTrack = false;
-            this.notifyState(false, false);
-          });
+        // 3. Fallback to self-contained YouTube IFrame Bridge if standard stream failed
+        if (this.currentTrack && this.currentTrack.source !== 'radio') {
+          this.playViaYouTubeBridge(this.currentTrack, this.playRequestId).catch(() => {});
           return;
         }
 
@@ -360,6 +389,15 @@ export class AudioEngine {
         this.notifyState(false, false);
       }
     });
+  }
+
+  private handleTrackEnded(): void {
+    this.stopProgressLoop();
+    this.isSwitchingTrack = false;
+    this.notifyState(false, false);
+    for (const cb of this.trackEndCallbacks) {
+      cb();
+    }
   }
 
   private isElementActive(isPrimary: boolean): boolean {
@@ -381,8 +419,6 @@ export class AudioEngine {
 
   private async attemptBackgroundFullStreamUpgrade(track: Track, reqId: number): Promise<void> {
     if (!track.artist || !track.title) return;
-    const hasBackend = !isAndroidApp() || Boolean(getCustomApiUrl());
-    if (!hasBackend) return;
 
     try {
       const fullTrackUrl = this.resolveFullStreamUrl(track);
@@ -474,19 +510,13 @@ export class AudioEngine {
     };
 
     const expectedDuration = track.duration && isFinite(track.duration) ? track.duration : 210;
-    const preview =
-      (track as any)?.previewUrl ||
-      track.sourceMetadata?.previewUrl ||
-      track.sourceMetadata?.fallbackUrl ||
-      (rawUrl.includes('dzcdn.net') ? rawUrl : '');
 
     if (rawUrl.includes('/api/stream/track')) {
       let fullUrl = rawUrl.startsWith('/api/') ? resolveTrackEndpoint(rawUrl) : rawUrl;
+      // Strip any legacy &preview= query parameters that might have been saved in localStorage/queue
+      fullUrl = fullUrl.replace(/([?&])preview=[^&]*(&|$)/g, '$1').replace(/[?&]$/, '');
       if (!fullUrl.includes('duration=')) {
         fullUrl += `${fullUrl.includes('?') ? '&' : '?'}duration=${expectedDuration}`;
-      }
-      if (preview && !fullUrl.includes('preview=http')) {
-        fullUrl += `&preview=${encodeURIComponent(preview)}`;
       }
       return fullUrl;
     }
@@ -500,12 +530,12 @@ export class AudioEngine {
       rawUrl.includes('/api/torrent/') ||
       !rawUrl;
 
-    if (isLegacyNonYtStream && track.artist && track.title && hasBackend) {
+    if (isLegacyNonYtStream && track.artist && track.title) {
       const rawId = String(track.id || '').replace(/^(charts|audius|archive|radio|p2p):/, '');
       return resolveTrackEndpoint(
         `/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(
           track.title
-        )}&preview=${encodeURIComponent(preview)}&id=${encodeURIComponent(rawId)}&duration=${expectedDuration}`
+        )}&id=${encodeURIComponent(rawId)}&duration=${expectedDuration}`
       );
     }
 
@@ -575,6 +605,12 @@ export class AudioEngine {
 
     this.prebufferedTrack = track;
     this.isPrebufferedReady = false;
+
+    // In background on Android or YouTube bridge mode, pre-resolve next track's video ID
+    if (track.artist && track.title) {
+      resolveYouTubeVideoId(track.artist, track.title, track.duration).catch(() => {});
+    }
+
     try {
       const targetUrl = this.resolveFullStreamUrl(track);
       const streamUrl = await audioCache.getCachedStreamUrl(track.id, targetUrl, true);
@@ -598,6 +634,34 @@ export class AudioEngine {
     const reqId = ++this.playRequestId;
     this.stopProgressLoop();
     this.isSwitchingTrack = true;
+
+    if (this.isUsingYouTubeBridge) {
+      this.ytBridge.pause();
+      this.isUsingYouTubeBridge = false;
+    }
+
+    const vault = useMp3VaultStore.getState();
+    const isSavedMp3 = Boolean(track.id && vault.isTrackSaved(track.id));
+    const isRadio = track.source === 'radio';
+    const vaultPeers = vault.peers || [];
+    const desktopWifiPeer = isAndroidApp()
+      ? vaultPeers.find((p) => p.deviceType === 'desktop' && p.ip)
+      : null;
+    const hasDesktopServer = !isAndroidApp() || Boolean(getCustomApiUrl()) || Boolean(desktopWifiPeer);
+
+    // If on Android in standalone mode (no desktop peer or custom server) and track is not local MP3 or radio:
+    // Route directly through the self-contained YouTube IFrame Bridge!
+    if (isAndroidApp() && !hasDesktopServer && !isSavedMp3 && !isRadio) {
+      this.currentTrack = track;
+      this.hasNotifiedApproachingEnd = false;
+      this.prebufferedTrack = null;
+      this.isPrebufferedReady = false;
+      const initialDuration = track.duration && isFinite(track.duration) ? track.duration : 210;
+      this.emitSyntheticTimeUpdate(0, initialDuration);
+
+      const ok = await this.playViaYouTubeBridge(track, reqId);
+      if (ok) return;
+    }
 
     this.initWebAudio();
 
@@ -726,25 +790,49 @@ export class AudioEngine {
         }
       }
 
-      const fallbackUrl =
-        (track as any)?.previewUrl ||
-        track.sourceMetadata?.previewUrl ||
-        track.sourceMetadata?.fallbackUrl;
-      if (fallbackUrl && audio.src !== fallbackUrl) {
-        try {
-          audio.src = fallbackUrl;
-          audio.load();
-          await audio.play();
-          this.isSwitchingTrack = false;
-          this.notifyState(true, false);
-          this.startProgressLoop();
-        } catch (fErr: any) {
-          this.isSwitchingTrack = false;
-          console.warn('[AudioEngine] Fallback play error:', fErr.message);
-        }
-      } else {
-        this.isSwitchingTrack = false;
+      // 3. Fallback to self-contained YouTube IFrame Bridge if standard stream failed
+      if (!isRadio) {
+        const ok = await this.playViaYouTubeBridge(track, reqId);
+        if (ok) return;
       }
+
+      this.isSwitchingTrack = false;
+      this.notifyState(false, false);
+    }
+  }
+
+  private async playViaYouTubeBridge(
+    track: Track,
+    reqId: number,
+    startSeconds = 0,
+    shouldPlay = true
+  ): Promise<boolean> {
+    if (!track.artist && !track.title) return false;
+    try {
+      this.notifyState(true, true); // buffering
+      const videoId = await resolveYouTubeVideoId(track.artist, track.title, track.duration);
+      if (reqId !== this.playRequestId || !videoId) {
+        return false;
+      }
+
+      this.activeAudio.pause();
+      this.standbyAudio.pause();
+      this.isUsingYouTubeBridge = true;
+
+      await this.ytBridge.play(videoId, startSeconds);
+      if (!shouldPlay) {
+        this.ytBridge.pause();
+      }
+      this.isSwitchingTrack = false;
+      this.notifyState(shouldPlay, false);
+      if (shouldPlay) {
+        this.startProgressLoop();
+      }
+      return true;
+    } catch (err: any) {
+      console.warn('[AudioEngine] YouTube IFrame playback failed:', err);
+      this.isUsingYouTubeBridge = false;
+      return false;
     }
   }
 
@@ -766,10 +854,17 @@ export class AudioEngine {
   }
 
   public getCurrentTime(): number {
+    if (this.isUsingYouTubeBridge) {
+      return this.ytBridge.getCurrentTime();
+    }
     return this.activeAudio.currentTime || 0;
   }
 
   public getDuration(): number {
+    if (this.isUsingYouTubeBridge) {
+      const bridgeDur = this.ytBridge.getDuration();
+      if (bridgeDur > 0) return bridgeDur;
+    }
     return this.getEffectiveDuration();
   }
 
@@ -782,6 +877,15 @@ export class AudioEngine {
   public togglePlay(): void {
     if (this.isControllerMode) {
       this.remoteCommandDelegate?.('toggle_play');
+      return;
+    }
+
+    if (this.isUsingYouTubeBridge) {
+      if (this.ytBridge.isPlaying()) {
+        this.ytBridge.pause();
+      } else {
+        this.ytBridge.resume();
+      }
       return;
     }
 
@@ -807,6 +911,11 @@ export class AudioEngine {
       this.standbyFadeTimer = null;
       this.standbyFadePromise = null;
     }
+    if (this.isUsingYouTubeBridge) {
+      this.ytBridge.pause();
+      this.notifyState(false, false);
+      return;
+    }
     this.activeAudio.pause();
     this.standbyAudio.pause();
   }
@@ -816,12 +925,23 @@ export class AudioEngine {
       this.remoteCommandDelegate?.('play');
       return;
     }
+    if (this.isUsingYouTubeBridge) {
+      this.ytBridge.resume();
+      this.notifyState(true, false);
+      return;
+    }
     this.activeAudio.play().catch(() => {});
   }
 
   public seekTo(seconds: number): void {
     if (this.isControllerMode) {
       this.remoteCommandDelegate?.('seek', { seconds, positionMs: seconds * 1000 });
+      return;
+    }
+    if (this.isUsingYouTubeBridge) {
+      this.ytBridge.seekTo(seconds);
+      const dur = this.getDuration();
+      this.emitSyntheticTimeUpdate(seconds, dur);
       return;
     }
     const audio = this.activeAudio;
@@ -848,6 +968,35 @@ export class AudioEngine {
   ): Promise<void> {
     this.stopProgressLoop();
     this.isSwitchingTrack = shouldPlay;
+
+    if (this.isUsingYouTubeBridge) {
+      this.ytBridge.pause();
+      this.isUsingYouTubeBridge = false;
+    }
+
+    const targetSeconds = Math.max(0, positionMs / 1000);
+
+    const vault = useMp3VaultStore.getState();
+    const isSavedMp3 = Boolean(track.id && vault.isTrackSaved(track.id));
+    const isRadio = track.source === 'radio';
+    const vaultPeers = vault.peers || [];
+    const desktopWifiPeer = isAndroidApp()
+      ? vaultPeers.find((p) => p.deviceType === 'desktop' && p.ip)
+      : null;
+    const hasDesktopServer = !isAndroidApp() || Boolean(getCustomApiUrl()) || Boolean(desktopWifiPeer);
+
+    if (isAndroidApp() && !hasDesktopServer && !isSavedMp3 && !isRadio) {
+      this.currentTrack = track;
+      this.hasNotifiedApproachingEnd = false;
+      this.prebufferedTrack = null;
+      this.isPrebufferedReady = false;
+      const initialDur = track.duration && isFinite(track.duration) ? track.duration : 210;
+      this.emitSyntheticTimeUpdate(targetSeconds, initialDur);
+
+      const ok = await this.playViaYouTubeBridge(track, ++this.playRequestId, targetSeconds, shouldPlay);
+      if (ok) return;
+    }
+
     this.initWebAudio();
     if (this.audioContext && this.audioContext.state === 'suspended') {
       await this.audioContext.resume().catch(() => {});
@@ -857,7 +1006,6 @@ export class AudioEngine {
     this.hasNotifiedApproachingEnd = false;
     this.prebufferedTrack = null;
 
-    const targetSeconds = Math.max(0, positionMs / 1000);
     const initialDur = this.getEffectiveDuration(undefined, track);
     this.emitSyntheticTimeUpdate(targetSeconds, initialDur);
 
@@ -912,6 +1060,7 @@ export class AudioEngine {
   public setVolume(volume: number): void {
     const clamped = Math.max(0, Math.min(1, volume));
     this.currentVolume = clamped;
+    this.ytBridge.setVolume(clamped);
     if (this.isControllerMode) {
       this.remoteCommandDelegate?.('set_volume', { volume: clamped });
       return;

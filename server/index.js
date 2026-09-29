@@ -49,17 +49,18 @@ startUpgradeWorker(app);
 
 // External browser Google Auth portal & callback
 app.get('/login', (req, res) => {
+  try {
+    if (fs.existsSync(authHtmlPath)) {
+      const html = fs.readFileSync(authHtmlPath, 'utf8');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(html);
+    }
+  } catch {}
   if (cachedAuthHtml) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.send(cachedAuthHtml);
   }
-  try {
-    const html = fs.readFileSync(authHtmlPath, 'utf8');
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.send(html);
-  } catch {
-    res.status(404).send('Auth page not found');
-  }
+  res.status(404).send('Auth page not found');
 });
 
 app.post('/callback', (req, res) => {

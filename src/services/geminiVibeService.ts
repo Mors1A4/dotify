@@ -1,4 +1,4 @@
-import { UserTasteProfile, VibeCategory } from '../types/vibes';
+import { UserTasteProfile, VibeCategory, UserVibeConfig } from '../types/vibes';
 
 export interface RawVibeTrack {
   title: string;
@@ -72,9 +72,10 @@ export class GeminiVibeService {
    */
   public async generateDailyVibePlaylists(
     tasteProfile: UserTasteProfile,
-    dateString: string
+    dateString: string,
+    customVibes?: UserVibeConfig[]
   ): Promise<GeminiVibeResult> {
-    const prompt = this.buildPrompt(tasteProfile, dateString);
+    const prompt = this.buildPrompt(tasteProfile, dateString, customVibes);
     let useSearch = true;
 
     for (const model of CANDIDATE_MODELS) {
@@ -136,7 +137,7 @@ export class GeminiVibeService {
           const candidateText =
             data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('\n') || '';
 
-          const parsed = this.extractJsonPlaylists(candidateText);
+          const parsed = this.extractJsonPlaylists(candidateText, customVibes);
           if (parsed && parsed.length >= 4) {
             console.log(`[GeminiVibeService] Successfully curated ${parsed.length} vibe playlists with ${model}`);
             return {
@@ -160,106 +161,123 @@ export class GeminiVibeService {
     // If all models or attempts exhausted, generate through high-fidelity algorithmic fallback
     console.warn('[GeminiVibeService] All Gemini models and keys exhausted. Using intelligent algorithmic fallback.');
     return {
-      playlists: this.generateAlgorithmicFallback(tasteProfile),
+      playlists: this.generateAlgorithmicFallback(tasteProfile, customVibes),
       modelUsed: 'Algorithmic Fallback Engine',
       fromFallback: true,
     };
   }
 
-  private buildPrompt(tasteProfile: UserTasteProfile, dateString: string): string {
-    const genreSummary = tasteProfile.topGenreGroups
-      .slice(0, 4)
-      .map((g) => `${g.group} (${g.percentage}% affinity, subgenres: ${g.topSubgenres.join(', ') || 'various'})`)
-      .join('\n- ');
+  private buildPrompt(
+    tasteProfile: UserTasteProfile,
+    dateString: string,
+    customVibes?: UserVibeConfig[]
+  ): string {
+    const vibes = (customVibes && customVibes.length > 0)
+      ? customVibes
+      : [
+          { id: 'gaming', label: 'Gaming', prompt: 'High focus, high adrenaline, driving beats, dynamic flow state.', themeColor: 'purple' as const },
+          { id: 'working', label: 'Working', prompt: 'Deep focus, study, productive flow, minimal distractions.', themeColor: 'emerald' as const },
+          { id: 'partying', label: 'Partying', prompt: 'High energy bangers, danceable rhythms, celebratory anthems.', themeColor: 'rose' as const },
+          { id: 'chilling', label: 'Chilling', prompt: 'Laid back, relaxing evening downtime, mellow acoustic or atmospheric tones.', themeColor: 'blue' as const },
+          { id: 'workout', label: 'Workout', prompt: 'Cardio motivation, heavy drive, powerful momentum, high energy.', themeColor: 'amber' as const },
+        ];
 
-    const topArtists = tasteProfile.topArtists.slice(0, 6).map((a) => a.name).join(', ') || 'Daft Punk, The Weeknd, Arctic Monkeys';
-    const topTracks = tasteProfile.topTracks.slice(0, 5).map((t) => `"${t.title}" by ${t.artist}`).join(', ') || 'Popular hits';
+    const themesList = vibes
+      .map((v, i) => `${i + 1}. "${v.id}" ("${v.label}"): ${v.prompt}`)
+      .join('\n');
+
+    const genreSummary = tasteProfile.topGenreGroups && tasteProfile.topGenreGroups.length > 0
+      ? tasteProfile.topGenreGroups
+          .map((g) => `- ${g.group}: ${g.percentage}% listening affinity${g.topSubgenres && g.topSubgenres.length > 0 ? ` (subgenres: ${g.topSubgenres.join(', ')})` : ''}`)
+          .join('\n')
+      : 'No prior genre history recorded yet (new listener).';
+
+    const topArtists = tasteProfile.topArtists && tasteProfile.topArtists.length > 0
+      ? tasteProfile.topArtists.map((a) => `${a.name} (${a.playCount} plays)`).join(', ')
+      : 'No artist history recorded yet.';
+
+    const topTracks = tasteProfile.topTracks && tasteProfile.topTracks.length > 0
+      ? tasteProfile.topTracks.map((t) => `"${t.title}" by ${t.artist} (${t.playCount} plays)`).join(', ')
+      : 'No track history recorded yet.';
+
+    const hasListeningHistory = Boolean(
+      (tasteProfile.topGenreGroups && tasteProfile.topGenreGroups.length > 0) ||
+      (tasteProfile.topArtists && tasteProfile.topArtists.length > 0) ||
+      (tasteProfile.topTracks && tasteProfile.topTracks.length > 0)
+    );
+
+    const tasteSection = hasListeningHistory
+      ? `USER'S ACTUAL LISTENING PROFILE & TASTE TELEMETRY:
+- Dominant Genre: ${tasteProfile.dominantGenre || 'Eclectic'}
+- Macro Genre Distribution:
+${genreSummary}
+- Most Played Artists:
+${topArtists}
+- Recent Favorite & Repeated Songs:
+${topTracks}
+
+CRITICAL TASTE-FIRST CURATION DIRECTIVE:
+1. FILTER EVERY CUSTOM THEME THROUGH THE USER'S MUSICAL TASTE:
+   Every single playlist MUST be anchored in the user's genuine listening preferences.
+   Even for activity-based vibes (e.g. "Gaming", "Workout", "Coding", "Late Night"), select songs that match the specific genres, subgenres, and styles the user actually loves. For example:
+   - If the user loves Indie Rock & Alternative, curate high-energy indie rock / post-punk tracks for high-tempo vibes—do NOT give them generic mainstream EDM or pop club hits.
+   - If the user loves Electronic & House, curate melodic techno and French touch rather than acoustic pop.
+   Blend tracks by their favorite artists (or their contemporaries and collaborators) with fresh, acclaimed discoveries that naturally expand their taste within those sonic worlds.
+2. ZERO UNRELATED COMMERCIAL FILLER:
+   Do NOT output generic top-40 songs that disregard the user's listening profile. Every recommendation must feel custom-tailored by a boutique DJ who knows this listener intimately.`
+      : `USER PROFILE:
+- New listener (cold start, no listening history yet).
+- Curate each custom vibe based strictly on the user's specified title, mood, and musical direction, selecting critically acclaimed, authentic, high-quality songs that capture that vibe.`;
 
     return `You are Dotify's master AI music curator and DJ.
 Today is ${dateString}.
 
-Your task is to curate 4 to 5 distinct daily music playlists tailored for the user, set for specific vibes:
-1. "gaming" - High focus, high adrenaline, synthwave, driving beats, dynamic flow state, epic electronic/rock.
-2. "working" - Deep focus, study, lo-fi, melodic techno, ambient, chill instrumental, smooth productivity beats.
-3. "partying" - High energy bangers, dance, upbeat hip-hop, club anthems, crowd-pleasers, vibrant rhythm.
-4. "chilling" - Laid back, sunset vibes, acoustic, smooth R&B, relaxing indie, mellow downtime.
-5. "workout" - Cardio, gym motivation, heavy bass, powerful drops, high BPM rock or electronic hype.
+The user has explicitly defined the following ${vibes.length} custom daily vibes/themes for their music rotation:
+${themesList}
 
-USER'S LISTENING HISTORY & TASTE PROFILE:
-- Dominant Genre: ${tasteProfile.dominantGenre}
-- Macro Genre Distribution:
-- ${genreSummary}
-- User's Top Artists: ${topArtists}
-- Recent Favorite Songs: ${topTracks}
+${tasteSection}
 
-CRITICAL CURATION INSTRUCTIONS:
-1. CURATED BASED ON TASTE, BUT NOT SOLELY FAMILIAR SONGS:
-   Each playlist MUST blend tracks inspired by the user's genre tastes with FRESH, ACCLAIMED songs found via your Google Search tool. Search for real songs, real artists, and trending or classic gems. DO NOT solely regurgitate the user's past tracks.
-2. EACH PLAYLIST MUST HAVE 20 TO 30 TRACKS.
-3. PROVIDE REAL, ACCURATE TRACKS (exact song title and exact artist name).
-4. RETURN STRICTLY VALID JSON ONLY, with NO extra conversational text, markdown preamble, or explanation outside the JSON block.
+PLAYLIST REQUIREMENTS:
+1. 20 TO 30 TRACKS PER PLAYLIST:
+   Every playlist MUST have between 20 and 30 tracks.
+2. ACCURATE REAL SONGS:
+   Provide real, released songs with exact track title and artist name.
+3. AUTHENTIC VIBE REASONS:
+   For each track, write a concise "vibeReason" explaining why this track fits this theme and connects to the user's musical taste.
+4. STRICT VALID JSON ONLY (no markdown text or commentary outside the JSON block).
 
 JSON OUTPUT SCHEMA:
 {
   "playlists": [
-    {
-      "vibe": "gaming",
-      "title": "Creative Playlist Name",
-      "description": "Engaging 1-2 sentence description of the vibe and soundscape.",
-      "tagline": "Based on your Electronic affinity + fresh discoveries",
-      "themeColor": "purple",
+${vibes
+  .map(
+    (v) => `    {
+      "vibe": "${v.id}",
+      "title": "${v.label} Set Name",
+      "description": "Engaging description of this ${v.label} soundscape.",
+      "tagline": "Tailored for ${v.label}",
+      "themeColor": "${v.themeColor || 'purple'}",
       "tracks": [
         {
           "title": "Track Title",
           "artist": "Artist Name",
           "genre": "Genre",
-          "vibeReason": "Why this track fits this vibe today"
+          "vibeReason": "Why this track fits this theme and user taste"
         }
       ]
-    },
-    {
-      "vibe": "working",
-      "title": "Creative Playlist Name",
-      "description": "Engaging description...",
-      "tagline": "Deep focus beats matching your Chill & Lo-Fi taste",
-      "themeColor": "emerald",
-      "tracks": [ ... ]
-    },
-    {
-      "vibe": "partying",
-      "title": "Creative Playlist Name",
-      "description": "Engaging description...",
-      "tagline": "Weekend energy with fresh hits",
-      "themeColor": "rose",
-      "tracks": [ ... ]
-    },
-    {
-      "vibe": "chilling",
-      "title": "Creative Playlist Name",
-      "description": "Engaging description...",
-      "tagline": "Relaxed acoustic & mellow rhythms",
-      "themeColor": "blue",
-      "tracks": [ ... ]
-    },
-    {
-      "vibe": "workout",
-      "title": "Creative Playlist Name",
-      "description": "Engaging description...",
-      "tagline": "High octane momentum",
-      "themeColor": "amber",
-      "tracks": [ ... ]
-    }
+    }`
+  )
+  .join(',\n')}
   ]
 }
 
-Theme colors: use "purple" for gaming, "emerald" for working, "rose" for partying, "blue" for chilling, "amber" for workout.
 Now curate the playlists and return the JSON.`;
   }
 
   /**
    * Extracts and validates the JSON playlists payload from the model's text response.
    */
-  private extractJsonPlaylists(text: string): RawVibePlaylist[] | null {
+  private extractJsonPlaylists(text: string, customVibes?: UserVibeConfig[]): RawVibePlaylist[] | null {
     if (!text || typeof text !== 'string') return null;
 
     try {
@@ -281,12 +299,15 @@ Now curate the playlists and return the JSON.`;
       const list = parsed.playlists || parsed;
       if (!Array.isArray(list)) return null;
 
-      const validVibes: VibeCategory[] = ['gaming', 'working', 'partying', 'chilling', 'workout'];
+      const validVibes: string[] =
+        customVibes && customVibes.length > 0
+          ? customVibes.map((v) => v.id.toLowerCase())
+          : ['gaming', 'working', 'partying', 'chilling', 'workout'];
       const validated: RawVibePlaylist[] = [];
 
       for (const item of list) {
         if (!item || typeof item !== 'object') continue;
-        const vibe = String(item.vibe || '').toLowerCase() as VibeCategory;
+        const vibe = String(item.vibe || '').toLowerCase();
         if (!validVibes.includes(vibe)) continue;
 
         const tracks: RawVibeTrack[] = [];
@@ -304,51 +325,55 @@ Now curate the playlists and return the JSON.`;
         }
 
         if (tracks.length > 0) {
+          const matchingVibe = customVibes?.find((v) => v.id.toLowerCase() === vibe);
+          const fallbackLabel = matchingVibe?.label || (vibe.charAt(0).toUpperCase() + vibe.slice(1));
+          const allowedColors = ['purple', 'emerald', 'blue', 'amber', 'rose'];
+          const themeColor = allowedColors.includes(item.themeColor)
+            ? item.themeColor
+            : (matchingVibe?.themeColor && allowedColors.includes(matchingVibe.themeColor)
+                ? matchingVibe.themeColor
+                : this.getDefaultColorForVibe(vibe));
+
           validated.push({
             vibe,
-            title: String(item.title || `${vibe.charAt(0).toUpperCase() + vibe.slice(1)} Mix`).trim(),
-            description: String(item.description || `Curated ${vibe} playlist tailored to your listening taste.`).trim(),
-            tagline: String(item.tagline || `Curated with Gemini 3.8 Flash`).trim(),
-            themeColor: ['purple', 'emerald', 'blue', 'amber', 'rose'].includes(item.themeColor)
-              ? item.themeColor
-              : this.getDefaultColorForVibe(vibe),
+            title: String(item.title || `${fallbackLabel} Mix`).trim(),
+            description: String(
+              item.description || matchingVibe?.prompt || `Curated ${fallbackLabel} playlist tailored to your listening taste.`
+            ).trim(),
+            tagline: String(item.tagline || `Curated for ${fallbackLabel}`).trim(),
+            themeColor,
             tracks,
           });
         }
       }
 
-      return validated.length >= 4 ? validated : null;
+      return validated.length >= 3 ? validated : null;
     } catch (err) {
       console.debug('[GeminiVibeService] JSON parse error:', err);
       return null;
     }
   }
 
-  private getDefaultColorForVibe(vibe: VibeCategory): 'purple' | 'emerald' | 'blue' | 'amber' | 'rose' {
-    switch (vibe) {
-      case 'gaming':
-        return 'purple';
-      case 'working':
-        return 'emerald';
-      case 'partying':
-        return 'rose';
-      case 'chilling':
-        return 'blue';
-      case 'workout':
-        return 'amber';
-      default:
-        return 'purple';
-    }
+  private getDefaultColorForVibe(vibe: string): 'purple' | 'emerald' | 'blue' | 'amber' | 'rose' {
+    const v = vibe.toLowerCase();
+    if (v.includes('work') || v.includes('cod') || v.includes('study')) return 'emerald';
+    if (v.includes('party') || v.includes('dance') || v.includes('nostal')) return 'rose';
+    if (v.includes('chill') || v.includes('meditat') || v.includes('sleep')) return 'blue';
+    if (v.includes('workout') || v.includes('gym') || v.includes('run') || v.includes('coffee')) return 'amber';
+    return 'purple';
   }
 
   /**
    * Resilient, high-fidelity algorithmic fallback playlists.
    */
-  public generateAlgorithmicFallback(tasteProfile: UserTasteProfile): RawVibePlaylist[] {
+  public generateAlgorithmicFallback(
+    tasteProfile: UserTasteProfile,
+    customVibes?: UserVibeConfig[]
+  ): RawVibePlaylist[] {
     const dominant = tasteProfile.dominantGenre;
 
-    return [
-      {
+    const catalog: Record<string, RawVibePlaylist> = {
+      gaming: {
         vibe: 'gaming',
         title: 'Cyber Circuit // Game Mode',
         description: 'Driving synthwave, high-BPM electronic adrenaline, and dark electro for intense flow state.',
@@ -377,7 +402,7 @@ Now curate the playlists and return the JSON.`;
           { title: 'Bonfire', artist: 'Knife Party', genre: 'Dubstep', vibeReason: 'Heavy relentless drops for intense gaming moments' },
         ],
       },
-      {
+      working: {
         vibe: 'working',
         title: 'Deep Flow // Studio Focus',
         description: 'Instrumental chillhop, ambient lo-fi textures, and melodic soundscapes for uninterrupted concentration.',
@@ -406,7 +431,7 @@ Now curate the playlists and return the JSON.`;
           { title: 'On the Nature of Daylight', artist: 'Max Richter', genre: 'Contemporary Classical', vibeReason: 'Deep contemplative string movements' },
         ],
       },
-      {
+      partying: {
         vibe: 'partying',
         title: 'Neon Euphoria // Party Anthems',
         description: 'High-energy dance hits, club bangers, and infectious hooks to turn the volume all the way up.',
@@ -435,7 +460,7 @@ Now curate the playlists and return the JSON.`;
           { title: 'I Gotta Feeling', artist: 'Black Eyed Peas', genre: 'Party Anthem', vibeReason: 'The ultimate kickoff track for celebration' },
         ],
       },
-      {
+      chilling: {
         vibe: 'chilling',
         title: 'Golden Sunset // Chill Session',
         description: 'Mellow acoustic strums, smooth soul, and relaxing downtempo melodies to unwind after a long day.',
@@ -464,7 +489,7 @@ Now curate the playlists and return the JSON.`;
           { title: 'Apocalypse', artist: 'Cigarettes After Sex', genre: 'Slowcore / Ambient Pop', vibeReason: 'Hypnotic cinematic romantic haze' },
         ],
       },
-      {
+      workout: {
         vibe: 'workout',
         title: 'Pure Beast // High Octane',
         description: 'Heavy basslines, aggressive rock riffs, and motivating drops to push your physical limits.',
@@ -493,6 +518,136 @@ Now curate the playlists and return the JSON.`;
           { title: 'Purple Lamborghini', artist: 'Skrillex & Rick Ross', genre: 'Trap / Dubstep', vibeReason: 'Massive sub-bass and heavy rap swagger' },
         ],
       },
+      nightdrive: {
+        vibe: 'nightdrive',
+        title: 'Neon Horizon // Night Drive',
+        description: 'Atmospheric synth-pop, darkwave pulses, and midnight cruising rhythms under street lamps.',
+        tagline: 'Moody highway soundscapes and neon synthwave',
+        themeColor: 'purple',
+        tracks: [
+          { title: 'Nightcall', artist: 'Kavinsky', genre: 'Synthwave', vibeReason: 'Iconic cinematic driving electronic anthem' },
+          { title: 'Blinding Lights', artist: 'The Weeknd', genre: 'Synth-Pop', vibeReason: 'Neon momentum and late-night highway pulse' },
+          { title: 'Midnight City', artist: 'M83', genre: 'Synth-Pop', vibeReason: 'Expansive nocturnal city soundscapes' },
+          { title: 'Something About Us', artist: 'Daft Punk', genre: 'French Touch', vibeReason: 'Smooth sultry late-night cruising' },
+          { title: 'Shadow', artist: 'Chromatics', genre: 'Dream Pop', vibeReason: 'Echoing atmospheric guitar and moody vocals' },
+          { title: 'Lost in the Fire', artist: 'Gesaffelstein & The Weeknd', genre: 'Dark Electronic', vibeReason: 'Heavy dark electronic swagger' },
+          { title: 'Tech Noir', artist: 'Gunship', genre: 'Synthwave', vibeReason: 'Atmospheric retro-futuristic driving groove' },
+          { title: 'Sentient', artist: 'Perturbator', genre: 'Darksynth', vibeReason: 'Moody electronic pulse through neon rain' },
+          { title: 'Starboy', artist: 'The Weeknd', genre: 'Pop / R&B', vibeReason: 'Punchy bass and cruising tempo' },
+          { title: 'Resonance', artist: 'HOME', genre: 'Chillwave', vibeReason: 'Dreamy nostalgic highway soundtrack' },
+        ],
+      },
+      coffee: {
+        vibe: 'coffee',
+        title: 'Morning Sun // Acoustic Brew',
+        description: 'Warm acoustic fingerpicking, gentle neo-soul, and optimistic morning melodies.',
+        tagline: 'Warm acoustic tones and morning sunrise calm',
+        themeColor: 'amber',
+        tracks: [
+          { title: 'Better Together', artist: 'Jack Johnson', genre: 'Acoustic', vibeReason: 'Warm morning acoustic strums' },
+          { title: 'Don\'t Know Why', artist: 'Norah Jones', genre: 'Vocal Jazz', vibeReason: 'Soothing piano and morning warmth' },
+          { title: 'Put Your Records On', artist: 'Corinne Bailey Rae', genre: 'Soul / Pop', vibeReason: 'Carefree sunrise optimism' },
+          { title: 'Texas Sun', artist: 'Leon Bridges & Khruangbin', genre: 'Psychedelic Soul', vibeReason: 'Warm breezy soul guitars' },
+          { title: 'Easily', artist: 'Bruno Major', genre: 'Neo-Soul', vibeReason: 'Smooth velvet vocals with morning coffee' },
+          { title: 'Movie', artist: 'Tom Misch', genre: 'Neo-Soul / Jazz', vibeReason: 'Warm jazz guitar chords and mellow vocals' },
+          { title: 'My Kind of Woman', artist: 'Mac DeMarco', genre: 'Indie Pop', vibeReason: 'Dreamy relaxed morning guitar' },
+          { title: 'Riptide', artist: 'Vance Joy', genre: 'Indie Folk', vibeReason: 'Uplifting acoustic rhythm' },
+          { title: 'Banana Pancakes', artist: 'Jack Johnson', genre: 'Acoustic Folk', vibeReason: 'Classic lazy morning acoustic vibe' },
+          { title: 'Sunflower', artist: 'Rex Orange County', genre: 'Indie Pop', vibeReason: 'Bright cheerful brass and rhythm' },
+        ],
+      },
+      coding: {
+        vibe: 'coding',
+        title: 'Binary Flow // Deep Code',
+        description: 'Modular synth arpeggios, progressive ambient techno, and steady beats for complex engineering.',
+        tagline: 'Instrumental electronic momentum for deep concentration',
+        themeColor: 'emerald',
+        tracks: [
+          { title: 'Awake', artist: 'Tycho', genre: 'Ambient Electronic', vibeReason: 'Intricate warm rhythm for continuous code flow' },
+          { title: 'Cirrus', artist: 'Bonobo', genre: 'Downtempo', vibeReason: 'Hypnotic bell arpeggios that stimulate problem solving' },
+          { title: 'Roygbiv', artist: 'Boards of Canada', genre: 'IDM / Electronic', vibeReason: 'Timeless melodic synth bassline' },
+          { title: 'Looped', artist: 'Kiasmos', genre: 'Minimal Techno', vibeReason: 'Subtle percussive drive that clears distraction' },
+          { title: 'Says', artist: 'Nils Frahm', genre: 'Modern Classical', vibeReason: 'Building modular arpeggios for complex architectures' },
+          { title: 'Open Eye Signal', artist: 'Jon Hopkins', genre: 'Microhouse / IDM', vibeReason: 'Deep analog synthesizer momentum' },
+          { title: 'Odyssey', artist: 'Rival Consoles', genre: 'Electronic / IDM', vibeReason: 'Rhythmic textures for deep analytical thinking' },
+          { title: 'Waves', artist: 'Max Cooper', genre: 'Electronica', vibeReason: 'Mathematical electronic patterns' },
+          { title: 'Contact', artist: 'Daft Punk', genre: 'Electronic', vibeReason: 'Accelerating progressive build' },
+          { title: 'Emerald and Lime', artist: 'Brian Eno & Jon Hopkins', genre: 'Ambient', vibeReason: 'Calm piano textures that reset focus' },
+        ],
+      },
+      meditation: {
+        vibe: 'meditation',
+        title: 'Still Waters // Deep Zen',
+        description: 'Ethereal ambient drones, soothing neo-classical piano, and slow breathing soundscapes.',
+        tagline: 'Zero distractions for mindfulness and calm',
+        themeColor: 'blue',
+        tracks: [
+          { title: 'Weightless', artist: 'Marconi Union', genre: 'Ambient', vibeReason: 'Scientifically engineered for deep relaxation' },
+          { title: 'An Ending (Ascent)', artist: 'Brian Eno', genre: 'Ambient', vibeReason: 'Timeless floating soundscape' },
+          { title: 'saman', artist: 'Ólafur Arnalds', genre: 'Neo-Classical', vibeReason: 'Gentle piano notes and quiet breathing space' },
+          { title: 'On the Nature of Daylight', artist: 'Max Richter', genre: 'Modern Classical', vibeReason: 'Deep evocative strings that center the mind' },
+          { title: 'Avril 14th', artist: 'Aphex Twin', genre: 'Piano Instrumental', vibeReason: 'Peaceful acoustic piano simplicity' },
+          { title: 'Stone in Focus', artist: 'Aphex Twin', genre: 'Ambient', vibeReason: 'Infinite meditative warm drones' },
+          { title: 'Path 5 (delta)', artist: 'Max Richter', genre: 'Ambient / Classical', vibeReason: 'Hypnotic sleep and deep stillness' },
+          { title: 'Silencia', artist: 'Hammock', genre: 'Post-Rock / Ambient', vibeReason: 'Gentle atmospheric waves of sound' },
+          { title: 'Intro', artist: 'The xx', genre: 'Indie Instrumental', vibeReason: 'Minimal soothing melodic loop' },
+          { title: 'Spiegel im Spiegel', artist: 'Arvo Pärt', genre: 'Minimalism', vibeReason: 'Pure contemplative serenity' },
+        ],
+      },
+      nostalgia: {
+        vibe: 'nostalgia',
+        title: 'Golden Decades // Nostalgia Trip',
+        description: 'Iconic 80s synth-pop, vintage disco funk, and timeless indie anthems from across the years.',
+        tagline: 'Timeless classics that defined eras',
+        themeColor: 'rose',
+        tracks: [
+          { title: 'Dreams', artist: 'Fleetwood Mac', genre: 'Classic Rock', vibeReason: 'Timeless breezy groove and vintage warmth' },
+          { title: 'Africa', artist: 'Toto', genre: '80s Pop Rock', vibeReason: 'Legendary melodic singalong chorus' },
+          { title: 'Everybody Wants to Rule the World', artist: 'Tears for Fears', genre: 'New Wave', vibeReason: 'Infectious 80s synth-pop nostalgia' },
+          { title: 'September', artist: 'Earth, Wind & Fire', genre: 'Disco / Funk', vibeReason: 'Unmatched joyful celebration and brass' },
+          { title: 'Billie Jean', artist: 'Michael Jackson', genre: 'Pop', vibeReason: 'The ultimate golden-era bassline' },
+          { title: 'Friday I\'m In Love', artist: 'The Cure', genre: 'Post-Punk / Pop', vibeReason: 'Warm jangle-pop euphoria' },
+          { title: 'Blue Monday', artist: 'New Order', genre: 'Synth-Pop', vibeReason: 'Groundbreaking 80s dance classic' },
+          { title: 'Don\'t Stop Me Now', artist: 'Queen', genre: 'Glam Rock', vibeReason: 'Pure feel-good soaring vocals' },
+          { title: 'Mr. Brightside', artist: 'The Killers', genre: 'Indie Rock', vibeReason: 'Millennial anthem of anthems' },
+          { title: 'Wonderwall', artist: 'Oasis', genre: 'Britpop', vibeReason: 'Acoustic 90s pub singalong nostalgia' },
+        ],
+      },
+    };
+
+    if (customVibes && customVibes.length > 0) {
+      return customVibes.map((cv) => {
+        const key = cv.id.toLowerCase();
+        if (catalog[key]) {
+          const item = catalog[key];
+          return {
+            ...item,
+            vibe: cv.id,
+            title: cv.label ? `${cv.label} Mix` : item.title,
+            description: cv.prompt || item.description,
+            themeColor: cv.themeColor || item.themeColor,
+          };
+        }
+
+        // Custom vibe: construct from working / chilling pool
+        const basePool = key.includes('up') || key.includes('hype') || key.includes('gym') ? catalog.workout.tracks : catalog.working.tracks;
+        return {
+          vibe: cv.id,
+          title: `${cv.label} Soundscape`,
+          description: cv.prompt || `Tailored ${cv.label} music flow matching your taste.`,
+          tagline: `Curated for ${cv.label}`,
+          themeColor: cv.themeColor || this.getDefaultColorForVibe(cv.id),
+          tracks: basePool.slice(0, 15),
+        };
+      });
+    }
+
+    return [
+      catalog.gaming,
+      catalog.working,
+      catalog.partying,
+      catalog.chilling,
+      catalog.workout,
     ];
   }
 }

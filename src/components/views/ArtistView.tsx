@@ -6,7 +6,7 @@ import { TrackTable } from '../common/TrackTable';
 import {
   Play,
   Radio,
-  Sparkles,
+  Library,
   ArrowLeft,
   Users,
   Disc3,
@@ -197,7 +197,7 @@ export const ArtistView: React.FC = () => {
 
           {profile.isSynthetic && (
             <span className="px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] font-medium flex items-center gap-1.5 backdrop-blur-sm">
-              <Sparkles size={12} />
+              <Library size={12} />
               <span>Library Profile · Synthesized from your collection</span>
             </span>
           )}

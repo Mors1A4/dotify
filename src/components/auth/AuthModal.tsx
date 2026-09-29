@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../store/authStore';
-import { X, Loader2, Sparkles, User as UserIcon } from 'lucide-react';
+import { X, Loader2, Zap, User as UserIcon } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen?: boolean;
@@ -100,7 +100,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen: propIsOpen, onClos
                 : 'text-secondary hover:text-primary'
             }`}
           >
-            <Sparkles size={13} />
+            <Zap size={13} />
             <span>1-Click Account</span>
           </button>
           <button
@@ -167,7 +167,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen: propIsOpen, onClos
                 </>
               ) : (
                 <>
-                  <Sparkles size={16} />
+                  <Zap size={16} />
                   <span>Connect & Sync</span>
                 </>
               )}

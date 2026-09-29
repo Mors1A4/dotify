@@ -20,7 +20,7 @@ import {
   Users,
   Music2,
   RefreshCw,
-  Sparkles,
+  FolderDown,
   Trash2,
 } from 'lucide-react';
 import { useUpdateStore } from '../../store/updateStore';
@@ -291,7 +291,7 @@ export const Sidebar: React.FC = () => {
                   title="Import Spotify Playlist"
                   className="p-1.5 rounded-lg text-secondary hover:text-accent hover:bg-elevated transition-colors cursor-pointer"
                 >
-                  <Sparkles size={15} />
+                  <FolderDown size={15} />
                 </button>
 
                 <button

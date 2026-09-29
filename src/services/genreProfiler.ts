@@ -386,61 +386,19 @@ export class GenreProfiler {
   }
 
   /**
-   * Deterministic starter profile for new users or fresh installs.
+   * Cold start profile for new listeners with no recorded plays or likes yet.
+   * Strictly avoids hardcoding fake artists or genre assumptions.
    */
   private getColdStartTasteProfile(): UserTasteProfile {
-    const starterGroups: GenreGroupAffinity[] = [
-      {
-        group: 'Pop & Anthems',
-        affinityScore: 65,
-        playCount: 0,
-        totalTimePlayedMs: 0,
-        percentage: 35.0,
-        topSubgenres: ['Pop', 'Synthpop', 'Dance-Pop'],
-        sampleArtists: ['Dua Lipa', 'The Weeknd'],
-      },
-      {
-        group: 'Electronic & Dance',
-        affinityScore: 50,
-        playCount: 0,
-        totalTimePlayedMs: 0,
-        percentage: 25.0,
-        topSubgenres: ['House', 'EDM', 'Synthwave'],
-        sampleArtists: ['Daft Punk', 'Calvin Harris'],
-      },
-      {
-        group: 'Chill & Lo-Fi',
-        affinityScore: 40,
-        playCount: 0,
-        totalTimePlayedMs: 0,
-        percentage: 20.0,
-        topSubgenres: ['Lo-Fi', 'Chillhop', 'Ambient'],
-        sampleArtists: ['Lofi Fruits', 'Kavinsky'],
-      },
-      {
-        group: 'Rock & Alternative',
-        affinityScore: 35,
-        playCount: 0,
-        totalTimePlayedMs: 0,
-        percentage: 20.0,
-        topSubgenres: ['Indie Rock', 'Alternative'],
-        sampleArtists: ['Arctic Monkeys', 'The Strokes'],
-      },
-    ];
-
     return {
-      topGenreGroups: starterGroups,
-      dominantGenre: 'Pop & Anthems',
-      topArtists: [
-        { name: 'The Weeknd', playCount: 0, genreGroup: 'Pop & Anthems' },
-        { name: 'Daft Punk', playCount: 0, genreGroup: 'Electronic & Dance' },
-      ],
+      topGenreGroups: [],
+      dominantGenre: undefined,
+      topArtists: [],
       topTracks: [],
       totalPlays: 0,
       totalListeningTimeMs: 0,
       isColdStart: true,
-      summaryText:
-        'New listener (Cold Start). Taste profile initialized with a balanced mix of Pop, Electronic, Chill Lo-Fi, and Alternative Rock.',
+      summaryText: 'New listener with no recorded listening history.',
     };
   }
 }

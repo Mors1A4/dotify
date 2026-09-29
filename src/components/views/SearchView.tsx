@@ -4,7 +4,7 @@ import { searchCharts, searchArtists, searchAlbums, SearchAlbum } from '../../se
 import { isSpotifyLink, resolveSpotifyUrl } from '../../services/spotifyApi';
 import { Track } from '../../types/track';
 import { prefetchTrack } from '../../utils/prefetch';
-import { Search, Play, Heart, Disc3, Sparkles, Loader2, X, Plus, ListMusic } from 'lucide-react';
+import { Search, Play, Heart, Disc3, Music2, Loader2, X, Plus, ListMusic } from 'lucide-react';
 import {
   DEFAULT_MUSIC_ARTWORK,
   getTrackArtwork,
@@ -538,7 +538,7 @@ export const SearchView: React.FC = () => {
                 className={`relative h-28 md:h-36 rounded-xl p-4 bg-gradient-to-br ${g.color} cursor-pointer overflow-hidden shadow-lg transition-transform hover:scale-[1.02] active:scale-[0.98]`}
               >
                 <h3 className="text-sm md:text-base font-extrabold text-white">{g.name}</h3>
-                <Sparkles className="absolute -bottom-2 -right-2 text-white/20 w-16 h-16 pointer-events-none" />
+                <Music2 className="absolute -bottom-2 -right-2 text-white/20 w-16 h-16 pointer-events-none" />
               </div>
             ))}
           </div>

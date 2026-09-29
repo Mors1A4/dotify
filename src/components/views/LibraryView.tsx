@@ -14,7 +14,8 @@ import {
   X,
   ChevronUp,
   ChevronDown,
-  Sparkles,
+  Cloud,
+  Copy,
   ShieldCheck,
   Download,
   Upload,
@@ -166,7 +167,7 @@ export const LibraryView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-gradient-to-r from-accent/15 via-surface to-elevated border border-accent/20 shadow-md">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-accent/20 text-accent flex items-center justify-center font-bold flex-shrink-0">
-              <Sparkles size={18} />
+              <Cloud size={18} />
             </div>
             <div>
               <h3 className="text-sm font-bold text-primary">Sync your library across devices</h3>
@@ -282,7 +283,7 @@ export const LibraryView: React.FC = () => {
             onClick={() => openCreatePlaylistModal('spotify')}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#1DB954] hover:bg-[#1ed760] text-black font-extrabold text-xs shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer"
           >
-            <Sparkles size={14} />
+            <Download size={14} />
             <span>Import from Spotify</span>
           </button>
 
@@ -329,7 +330,7 @@ export const LibraryView: React.FC = () => {
             >
               <div className="w-full aspect-square rounded-xl bg-elevated/80 border border-dashed border-[#1DB954]/40 flex flex-col items-center justify-center gap-2 mb-3 group-hover:scale-[1.02] transition-transform">
                 <div className="w-12 h-12 rounded-full bg-[#1DB954] text-black flex items-center justify-center shadow-lg">
-                  <Sparkles size={22} />
+                  <Copy size={22} />
                 </div>
                 <span className="text-[11px] font-bold text-[#1DB954]">1:1 Cloner</span>
               </div>

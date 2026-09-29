@@ -315,13 +315,24 @@ fn acquire_ytdlp_slot(is_preload: bool) -> YtdlpSlotGuard {
 }
 
 #[cfg(target_os = "windows")]
-fn ensure_ytdlp_binary() -> Option<std::path::PathBuf> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
+const EMBEDDED_YTDLP: &[u8] = include_bytes!("../../node_modules/youtube-dl-exec/bin/yt-dlp.exe");
 
+#[cfg(target_os = "windows")]
+fn ensure_ytdlp_binary() -> Option<std::path::PathBuf> {
     let dotify_dir = get_dotify_local_dir();
+    let _ = std::fs::create_dir_all(&dotify_dir);
     let local_ytdlp = dotify_dir.join("yt-dlp.exe");
+
     if local_ytdlp.exists() {
+        if let Ok(meta) = std::fs::metadata(&local_ytdlp) {
+            if meta.len() > 10_000_000 {
+                return Some(local_ytdlp);
+            }
+        }
+    }
+
+    // Write embedded yt-dlp.exe directly from memory in ~40ms (zero network dependency)
+    if std::fs::write(&local_ytdlp, EMBEDDED_YTDLP).is_ok() {
         return Some(local_ytdlp);
     }
 
@@ -336,44 +347,7 @@ fn ensure_ytdlp_binary() -> Option<std::path::PathBuf> {
 
     let dev_ytdlp = std::path::PathBuf::from("node_modules/youtube-dl-exec/bin/yt-dlp.exe");
     if dev_ytdlp.exists() {
-        let _ = std::fs::copy(&dev_ytdlp, &local_ytdlp);
         return Some(dev_ytdlp);
-    }
-
-    static DOWNLOADING: AtomicBool = AtomicBool::new(false);
-    if !DOWNLOADING.swap(true, Ordering::SeqCst) {
-        let target_path = local_ytdlp.clone();
-        thread::spawn(move || {
-            let tmp_path = target_path.with_extension("exe.tmp");
-            let status = std::process::Command::new("curl.exe")
-                .args([
-                    "-L",
-                    "-s",
-                    "--fail",
-                    "-o",
-                    &tmp_path.to_string_lossy(),
-                    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
-                ])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
-            if let Ok(s) = status {
-                if s.success() && tmp_path.exists() {
-                    let _ = std::fs::rename(&tmp_path, &target_path);
-                }
-            }
-            let _ = std::fs::remove_file(&tmp_path);
-            DOWNLOADING.store(false, Ordering::SeqCst);
-        });
-    }
-
-    for _ in 0..100 {
-        if local_ytdlp.exists() {
-            return Some(local_ytdlp);
-        }
-        if !DOWNLOADING.load(Ordering::SeqCst) {
-            break;
-        }
-        thread::sleep(Duration::from_millis(250));
     }
 
     if local_ytdlp.exists() {
@@ -451,7 +425,7 @@ fn resolve_ytdlp_stream_url(
     let match_filter = format!("duration >= {} & duration <= 900 & !is_live", min_dur);
     let search_arg = format!("ytsearch4:{} official audio", query.trim());
 
-    let output = std::process::Command::new(ytdlp_path)
+    let output = std::process::Command::new(&ytdlp_path)
         .args([
             "--get-url",
             "-i",
@@ -466,22 +440,58 @@ fn resolve_ytdlp_stream_url(
             &search_arg,
         ])
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
+        .output();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let clean = line.trim();
-        if clean.starts_with("http")
-            && !clean.contains(".m3u8")
-            && !clean.contains("/manifest/")
-        {
-            if let Ok(mut guard) = get_stream_cache().lock() {
-                guard.insert(key, (clean.to_string(), Instant::now()));
+    if let Ok(out) = output {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for line in stdout.lines() {
+            let clean = line.trim();
+            if clean.starts_with("http")
+                && !clean.contains(".m3u8")
+                && !clean.contains("/manifest/")
+            {
+                if let Ok(mut guard) = get_stream_cache().lock() {
+                    guard.insert(key.clone(), (clean.to_string(), Instant::now()));
+                }
+                return Some(clean.to_string());
             }
-            return Some(clean.to_string());
         }
     }
+
+    // Secondary fallback without 'official audio' suffix
+    let fallback_arg = format!("ytsearch3:{}", query.trim());
+    if let Ok(out2) = std::process::Command::new(&ytdlp_path)
+        .args([
+            "--get-url",
+            "-i",
+            "--match-filter",
+            &match_filter,
+            "--max-downloads",
+            "1",
+            "-f",
+            "140/251/250/249/139/ba[ext=m4a][protocol^=http][protocol!*=m3u8][protocol!*=dash]/ba[protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[ext=mp4][protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[protocol^=http][protocol!*=m3u8][protocol!*=dash]",
+            "--no-playlist",
+            "--no-warnings",
+            &fallback_arg,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        let stdout2 = String::from_utf8_lossy(&out2.stdout);
+        for line in stdout2.lines() {
+            let clean = line.trim();
+            if clean.starts_with("http")
+                && !clean.contains(".m3u8")
+                && !clean.contains("/manifest/")
+            {
+                if let Ok(mut guard) = get_stream_cache().lock() {
+                    guard.insert(key, (clean.to_string(), Instant::now()));
+                }
+                return Some(clean.to_string());
+            }
+        }
+    }
+
     None
 }
 
@@ -782,16 +792,14 @@ fn handle_embedded_backend_client(mut stream: TcpStream) {
                     }
                 }
 
-                if !preview.is_empty() {
-                    let _ = proxy_audio_stream_via_curl(
-                        &mut stream,
-                        &preview,
-                        range_header.as_deref(),
-                        true,
-                        true,
-                    );
-                    return;
-                }
+                let err_body = "{\"error\":\"Stream resolution failed\"}";
+                let fail_resp = format!(
+                    "HTTP/1.1 502 Bad Gateway\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    err_body.len(),
+                    err_body
+                );
+                let _ = stream.write_all(fail_resp.as_bytes());
+                return;
             }
         }
     }

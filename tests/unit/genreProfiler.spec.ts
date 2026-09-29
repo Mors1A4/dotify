@@ -119,10 +119,12 @@ describe('GenreProfiler & Taste Profiling Engine', () => {
     expect(profile.summaryText).toContain('Rock & Alternative');
   });
 
-  it('handles cold-start new users gracefully with a balanced starter profile', () => {
+  it('handles cold-start new users without hardcoding fake artists or genre assumptions', () => {
     const profile = profiler.profileUserGenres([], [], []);
     expect(profile.isColdStart).toBe(true);
-    expect(profile.topGenreGroups.length).toBeGreaterThanOrEqual(4);
-    expect(profile.summaryText).toContain('Cold Start');
+    expect(profile.topGenreGroups).toEqual([]);
+    expect(profile.topArtists).toEqual([]);
+    expect(profile.topTracks).toEqual([]);
+    expect(profile.summaryText).toContain('New listener');
   });
 });

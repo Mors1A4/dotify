@@ -4,7 +4,9 @@ import { useUpgradeStore } from '../../store/upgradeStore';
 import { UpgradeType, UpgradeAttachment } from '../../types/upgrade';
 import { compressImageFile } from '../../services/upgradeService';
 import {
-  Sparkles,
+  Wand2,
+  Lightbulb,
+  Plus,
   Bug,
   UploadCloud,
   X,
@@ -427,7 +429,7 @@ export const HelpUpgradeModal: React.FC = () => {
         <div className="px-5 py-3.5 border-b border-customBorder/60 flex items-center justify-between gap-4 bg-surface shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-8 h-8 rounded-xl bg-accent/15 border border-accent/30 flex items-center justify-center text-accent shrink-0 shadow-sm">
-              <Sparkles size={16} />
+              <Wand2 size={16} />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -510,7 +512,7 @@ export const HelpUpgradeModal: React.FC = () => {
                     : 'bg-elevated hover:bg-highlight text-primary border border-customBorder/60'
                 }`}
               >
-                <Sparkles size={13} />
+                <Plus size={13} />
                 <span>New Request</span>
               </button>
             </div>
@@ -559,7 +561,7 @@ export const HelpUpgradeModal: React.FC = () => {
                             </span>
                           ) : (
                             <span className="text-accent flex items-center gap-1">
-                              <Sparkles size={10} /> Feature
+                              <Lightbulb size={10} /> Feature
                             </span>
                           )}
                         </span>
@@ -615,7 +617,7 @@ export const HelpUpgradeModal: React.FC = () => {
                           : 'text-secondary hover:text-primary'
                       }`}
                     >
-                      <Sparkles size={13} />
+                      <Lightbulb size={13} />
                       <span>Feature Upgrade</span>
                     </button>
 

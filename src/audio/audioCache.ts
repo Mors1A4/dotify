@@ -37,18 +37,13 @@ const QUOTA_WARNING_RATIO = 0.8;
 function resolveBackendFullUrl(track: Track): string {
   const rawUrl = track.streamUrl || '';
   if (!rawUrl || rawUrl.includes('dzcdn.net')) {
-    const hasBackend = !isAndroidApp();
-    if (hasBackend && track.artist && track.title) {
-      const preview =
-        track.sourceMetadata?.previewUrl ||
-        track.sourceMetadata?.fallbackUrl ||
-        (rawUrl.includes('dzcdn.net') ? rawUrl : '');
+    if (track.artist && track.title) {
       const rawId = String(track.id || '').replace(/^(charts|audius|archive|radio|p2p):/, '');
       const expectedDuration = track.duration && isFinite(track.duration) ? track.duration : 210;
       return getApiUrl(
         `/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(
           track.title
-        )}&preview=${encodeURIComponent(preview)}&id=${encodeURIComponent(rawId)}&duration=${expectedDuration}`
+        )}&id=${encodeURIComponent(rawId)}&duration=${expectedDuration}`
       );
     }
   }

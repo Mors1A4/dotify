@@ -147,4 +147,52 @@ describe('DailyVibeManager & Caching Lifecycle', () => {
       }
     }
   });
+
+  it('manages user curated vibe preferences (selection and custom prompts)', () => {
+    // 1. Fresh accounts start unconfigured
+    expect(manager.hasUserConfiguredVibes('test-user-vibes')).toBe(false);
+    expect(manager.getUserVibes('test-user-vibes')).toEqual([]);
+
+    // 2. Custom 5 vibe selection
+    const customSelection = [
+      { id: 'coding', label: 'Deep Code', prompt: 'Modular ambient techno for engineering' },
+      { id: 'nightdrive', label: 'Midnight Cruiser', prompt: 'Atmospheric neo-noir synthwave' },
+      { id: 'coffee', label: 'Morning Acoustic', prompt: 'Gentle acoustic guitars and jazz' },
+      { id: 'workout', label: 'Gym Beast', prompt: 'Heavy energetic bangers' },
+      { id: 'custom_123', label: 'Rainy Cafe', prompt: 'Rain sounds and gentle piano' },
+    ];
+
+    manager.saveUserVibes(customSelection, 'test-user-vibes');
+    const retrieved = manager.getUserVibes('test-user-vibes');
+    expect(retrieved).toHaveLength(5);
+    expect(retrieved[0].label).toBe('Deep Code');
+    expect(retrieved[4].label).toBe('Rainy Cafe');
+
+    // 3. Fallback engine generates exactly the 5 configured vibes
+    const customFallback = geminiVibeService.generateAlgorithmicFallback(
+      {
+        topGenreGroups: [],
+        dominantGenre: 'Electronic & Dance',
+        topArtists: [],
+        topTracks: [],
+        totalPlays: 0,
+        totalListeningTimeMs: 0,
+        isColdStart: true,
+        summaryText: '',
+      },
+      retrieved
+    );
+
+    expect(customFallback).toHaveLength(5);
+    expect(customFallback.map((p) => p.vibe)).toEqual([
+      'coding',
+      'nightdrive',
+      'coffee',
+      'workout',
+      'custom_123',
+    ]);
+    expect(customFallback[0].title).toBe('Deep Code Mix');
+    expect(customFallback[4].title).toBe('Rainy Cafe Soundscape');
+    expect(customFallback[4].description).toBe('Rain sounds and gentle piano');
+  });
 });

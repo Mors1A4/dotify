@@ -2,7 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import {
   Download,
-  Sparkles,
+  ArrowUpCircle,
   RefreshCw,
   CheckCircle2,
   ExternalLink,
@@ -79,7 +79,7 @@ export const UpdateModal: React.FC = () => {
 
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-accent/20 border border-accent/40 flex items-center justify-center text-accent shrink-0 shadow-inner">
-              {updateAvailable ? <Sparkles size={22} /> : <CheckCircle2 size={22} />}
+              {updateAvailable ? <ArrowUpCircle size={22} /> : <CheckCircle2 size={22} />}
             </div>
             <div>
               <div className="flex items-center gap-2">

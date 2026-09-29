@@ -13,7 +13,7 @@ import {
   Clock,
   Disc3,
   Loader2,
-  Sparkles,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   DEFAULT_MUSIC_ARTWORK,
@@ -143,7 +143,7 @@ export const AlbumView: React.FC = () => {
       {/* Toast Notification */}
       {toastMsg && (
         <div className="fixed top-16 right-4 z-50 bg-accent text-accent-content font-bold text-xs px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-          <Sparkles size={14} />
+          <CheckCircle2 size={14} />
           <span>{toastMsg}</span>
         </div>
       )}

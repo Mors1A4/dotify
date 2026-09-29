@@ -84,6 +84,86 @@ class MainActivity : TauriActivity() {
 
     webView.addJavascriptInterface(object {
       @JavascriptInterface
+      fun searchYouTubeCandidates(query: String): String {
+        return try {
+          val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+          val url = URL("https://www.youtube.com/results?search_query=$encoded")
+          val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 7000
+            readTimeout = 7000
+            setRequestProperty(
+              "User-Agent",
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+            )
+            setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+          }
+
+          val html = conn.inputStream.bufferedReader().use { it.readText() }
+          conn.disconnect()
+
+          val match = Regex("""ytInitialData\s*=\s*(\{.+?\});(?:var|\s*</script>)""").find(html)
+          if (match != null) {
+            val jsonStr = match.groupValues[1]
+            val root = org.json.JSONObject(jsonStr)
+            val contents = root.optJSONObject("contents")
+              ?.optJSONObject("twoColumnSearchResultsRenderer")
+              ?.optJSONObject("primaryContents")
+              ?.optJSONObject("sectionListRenderer")
+              ?.optJSONArray("contents")
+
+            val array = org.json.JSONArray()
+            if (contents != null) {
+              for (i in 0 until contents.length()) {
+                val section = contents.optJSONObject(i)?.optJSONObject("itemSectionRenderer")?.optJSONArray("contents")
+                if (section != null) {
+                  for (j in 0 until section.length()) {
+                    val vr = section.optJSONObject(j)?.optJSONObject("videoRenderer")
+                    if (vr != null && vr.has("videoId")) {
+                      val item = org.json.JSONObject()
+                      val vid = vr.getString("videoId")
+                      item.put("videoId", vid)
+
+                      val runs = vr.optJSONObject("title")?.optJSONArray("runs")
+                      var title = ""
+                      if (runs != null) {
+                        for (k in 0 until runs.length()) {
+                          title += runs.getJSONObject(k).optString("text", "")
+                        }
+                      } else {
+                        title = vr.optJSONObject("title")?.optString("simpleText", "") ?: ""
+                      }
+                      item.put("title", title)
+
+                      val durStr = vr.optJSONObject("lengthText")?.optString("simpleText", "") ?: ""
+                      var durSec = 0L
+                      if (durStr.isNotEmpty()) {
+                        val parts = durStr.split(":").mapNotNull { it.trim().toLongOrNull() }
+                        if (parts.size == 2) {
+                          durSec = parts[0] * 60 + parts[1]
+                        } else if (parts.size == 3) {
+                          durSec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                        }
+                      }
+                      item.put("duration", durSec)
+                      array.put(item)
+                    }
+                  }
+                }
+              }
+            }
+            return array.toString()
+          }
+          "[]"
+        } catch (e: Exception) {
+          e.printStackTrace()
+          "[]"
+        }
+      }
+    }, "AndroidNativeYouTube")
+
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface
       fun getVersionName(): String {
         return try {
           packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"

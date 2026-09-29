@@ -19,7 +19,7 @@ import {
 } from '../../services/artworkService';
 import {
   X,
-  Sparkles,
+  Download,
   Loader2,
   Check,
   Plus,
@@ -409,7 +409,7 @@ export const CreatePlaylistModal: React.FC = () => {
                     : 'bg-accent/20 text-accent border border-accent/30'
                 }`}
               >
-                {activeTab === 'spotify' ? <Sparkles size={20} /> : <ListMusic size={20} />}
+                {activeTab === 'spotify' ? <Download size={20} /> : <ListMusic size={20} />}
               </div>
               <div>
                 <h2 className="text-lg sm:text-xl font-extrabold text-primary tracking-tight">
@@ -589,7 +589,7 @@ export const CreatePlaylistModal: React.FC = () => {
                   {detectedSpotifyInName.isValid && (
                     <div className="p-3 rounded-xl bg-[#1DB954]/15 border border-[#1DB954]/40 flex items-center justify-between gap-3 animate-in fade-in">
                       <div className="flex items-center gap-2 text-xs text-primary">
-                        <Sparkles size={16} className="text-[#1DB954] shrink-0" />
+                        <Download size={16} className="text-[#1DB954] shrink-0" />
                         <span>Spotify link detected! Want to copy all tracks & artwork 1:1?</span>
                       </div>
                       <button
@@ -869,7 +869,7 @@ export const CreatePlaylistModal: React.FC = () => {
                       </>
                     ) : (
                       <>
-                        <Sparkles size={15} />
+                        <Download size={15} />
                         <span>Fetch Playlist</span>
                       </>
                     )}

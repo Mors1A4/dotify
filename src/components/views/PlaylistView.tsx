@@ -28,7 +28,9 @@ import {
   ListMusic,
   ChevronUp,
   ChevronDown,
-  Sparkles,
+  Wand2,
+  Copy,
+  Download,
   Search,
   Plus,
   Upload,
@@ -315,7 +317,7 @@ export const PlaylistView: React.FC = () => {
       {/* Toast Notification */}
       {toastMsg && (
         <div className="fixed top-16 right-4 z-50 bg-accent text-accent-content font-bold text-xs px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-          <Sparkles size={14} />
+          <CheckCircle2 size={14} />
           <span>{toastMsg}</span>
         </div>
       )}
@@ -372,13 +374,13 @@ export const PlaylistView: React.FC = () => {
             </span>
             {((playlist as any)?.isAIGenerated || vibePlaylist) && (
               <span className="text-[11px] font-bold text-accent px-2.5 py-0.5 rounded-full bg-accent/15 border border-accent/30 flex items-center gap-1 shadow-sm">
-                <Sparkles size={11} />
+                <Wand2 size={11} />
                 <span>Curated by Gemini 3.8 Flash</span>
               </span>
             )}
             {playlist.sourceSpotifyUrl && (
               <span className="text-[11px] font-bold text-[#1DB954] px-2.5 py-0.5 rounded-full bg-[#1DB954]/15 border border-[#1DB954]/30 flex items-center gap-1">
-                <Sparkles size={11} />
+                <Copy size={11} />
                 <span>Cloned 1:1 from Spotify</span>
               </span>
             )}
@@ -502,7 +504,7 @@ export const PlaylistView: React.FC = () => {
                 }`}
                 title="Import tracks from a Spotify link into this playlist"
               >
-                <Sparkles size={14} />
+                <Download size={14} />
                 <span>Import from Spotify</span>
               </button>
             )}
@@ -683,7 +685,7 @@ export const PlaylistView: React.FC = () => {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Sparkles size={16} className="text-[#1DB954]" />
+              <Download size={16} className="text-[#1DB954]" />
               <span className="text-xs font-extrabold text-primary">
                 Copy Songs from a Spotify Playlist or Album into "{playlist.name}"
               </span>

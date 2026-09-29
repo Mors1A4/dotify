@@ -108,7 +108,7 @@ export class RecommendationEngine {
     return catalogueMap;
   }
 
-  // Shelf 1: "Made For You" - Blends high-affinity favorites, followed artists, and unplayed related discovery
+  // Shelf 1: "Made For You" - Curated songs prioritizing unplayed songs from recently listened artists, followed artists, and high-affinity favorites
   public generateMadeForYou(
     plays: TrackPlayRecord[],
     catalogue: Track[],
@@ -120,18 +120,44 @@ export class RecommendationEngine {
     }
 
     const likedIds = new Set(likedTracks.map((t) => t.id));
-    const followedNames = new Set(followedArtists.map((a) => a.name.toLowerCase()));
+    const followedNames = new Set(followedArtists.map((a) => a.name.toLowerCase().trim()));
+    const playedIds = new Set(plays.map((p) => p.trackId));
     const trackScores = new Map<string, number>();
+
+    // 1. Compute recency-decayed scores for artists the user recently listened to
+    const recentArtistScores = new Map<string, number>();
+    const halfLifeDays = 7;
+    const lambda = Math.LN2 / (halfLifeDays * 86400 * 1000);
+    const now = Date.now();
+
+    for (const play of plays) {
+      const rawArtist = (play.artist || '').trim();
+      const primary = extractPrimaryArtist(rawArtist).toLowerCase().trim();
+      if (!primary) continue;
+
+      const ageMs = Math.max(0, now - play.startTime);
+      const recencyWeight = Math.exp(-lambda * ageMs);
+      const completion =
+        typeof play.completionRate === 'number'
+          ? Math.max(0, Math.min(1, play.completionRate))
+          : 0.5;
+      const replayBonus = play.replayed ? 0.5 : 0;
+      const skipPenalty = play.skipped ? 1.5 : 0;
+      const playScore = recencyWeight * (completion * (1.0 + replayBonus) - skipPenalty);
+
+      recentArtistScores.set(primary, (recentArtistScores.get(primary) || 0) + Math.max(0, playScore));
+    }
+
+    // Boost tracks by followed artists
+    for (const catTrack of catalogue) {
+      const primary = extractPrimaryArtist(catTrack.artist || '').toLowerCase().trim();
+      if (primary && followedNames.has(primary)) {
+        trackScores.set(catTrack.id, (trackScores.get(catTrack.id) || 0) + 4.5);
+      }
+    }
 
     for (const liked of likedTracks) {
       trackScores.set(liked.id, (trackScores.get(liked.id) || 0) + 5.0);
-    }
-
-    // Boost tracks by followed artists with high affinity
-    for (const catTrack of catalogue) {
-      if (catTrack.artist && followedNames.has(catTrack.artist.toLowerCase())) {
-        trackScores.set(catTrack.id, (trackScores.get(catTrack.id) || 0) + 4.5);
-      }
     }
 
     for (const play of plays) {
@@ -144,34 +170,89 @@ export class RecommendationEngine {
 
     const catalogueMap = this.buildEnrichedCatalogueMap(catalogue, likedTracks, plays);
 
-    // Top familiar tracks (sorted by score descending)
+    // 2. High-affinity familiar tracks the user already played (capped so repeats don't flood the shelf)
     const familiarTracks = Array.from(trackScores.entries())
       .filter(([_, score]) => score > 0)
       .sort((a, b) => b[1] - a[1])
       .map(([id]) => catalogueMap.get(id))
       .filter(Boolean) as Track[];
 
-    // Top genres from history supplemented with followed artists' genres
+    // 3. Unplayed tracks by recently listened artists & followed artists
+    const recentArtistTracks: Track[] = [];
+    const seenArtistCount = new Map<string, number>();
+
+    for (const catTrack of catalogue) {
+      if (playedIds.has(catTrack.id)) continue; // Curate songs the user hasn't played before!
+      const primaryArtist = extractPrimaryArtist(catTrack.artist || '').toLowerCase().trim();
+      const hasRecentListening = recentArtistScores.has(primaryArtist);
+      const isFollowed = followedNames.has(primaryArtist);
+
+      if (hasRecentListening || isFollowed) {
+        const count = seenArtistCount.get(primaryArtist) || 0;
+        if (count < 2) { // Anti-clumping: max 2 songs per artist
+          seenArtistCount.set(primaryArtist, count + 1);
+          recentArtistTracks.push(catTrack);
+        }
+      }
+    }
+
+    // Sort recent artist discovery songs by artist recency score descending
+    recentArtistTracks.sort((a, b) => {
+      const scoreA =
+        (recentArtistScores.get(extractPrimaryArtist(a.artist || '').toLowerCase().trim()) || 0) +
+        (followedNames.has(extractPrimaryArtist(a.artist || '').toLowerCase().trim()) ? 3 : 0);
+      const scoreB =
+        (recentArtistScores.get(extractPrimaryArtist(b.artist || '').toLowerCase().trim()) || 0) +
+        (followedNames.has(extractPrimaryArtist(b.artist || '').toLowerCase().trim()) ? 3 : 0);
+      return scoreB - scoreA;
+    });
+
+    // 4. Genre & catalogue discoveries
     const historyGenres = this.getTopGenres(plays);
     const followedGenres = followedArtists.flatMap((a) => a.genres || []);
     const topGenres = Array.from(new Set([...historyGenres, ...followedGenres])).filter(Boolean);
     const playedOrLikedIds = new Set([...trackScores.keys()]);
+    const recentArtistTrackIds = new Set(recentArtistTracks.map((t) => t.id));
 
-    // Discovered tracks from catalogue matching top genres
     const discoveredTracks = catalogue
-      .filter((t) => !playedOrLikedIds.has(t.id))
-      .filter((t) => topGenres.length === 0 || topGenres.some((g) => (t.sourceMetadata?.genre || '').toLowerCase().includes(g.toLowerCase())))
+      .filter((t) => !playedOrLikedIds.has(t.id) && !recentArtistTrackIds.has(t.id))
+      .filter(
+        (t) =>
+          topGenres.length === 0 ||
+          topGenres.some((g) => (t.sourceMetadata?.genre || '').toLowerCase().includes(g.toLowerCase()))
+      )
       .slice(0, 10);
 
-    // Interleave familiar and discovered
+    // 5. Interleave: Prioritize unplayed songs by recently listened artists, balance with 2-4 familiar favorites, and fill with discoveries
     const result: Track[] = [];
-    const maxLen = Math.max(familiarTracks.length, discoveredTracks.length);
-    for (let i = 0; i < maxLen; i++) {
-      if (i < familiarTracks.length && result.length < 15) {
-        result.push(familiarTracks[i]);
+    const maxFamiliar = Math.min(familiarTracks.length, recentArtistTracks.length > 0 ? 3 : familiarTracks.length);
+    const topFamiliar = familiarTracks.slice(0, maxFamiliar);
+
+    // Interleave recent artist tracks, familiar favorites, and discoveries
+    const maxLen = Math.max(recentArtistTracks.length, topFamiliar.length, discoveredTracks.length);
+    for (let i = 0; i < maxLen && result.length < 18; i++) {
+      if (i < recentArtistTracks.length && result.length < 18) {
+        result.push(recentArtistTracks[i]);
       }
-      if (i < discoveredTracks.length && result.length < 15) {
+      if (i < topFamiliar.length && result.length < 18) {
+        result.push(topFamiliar[i]);
+      }
+      if (i < discoveredTracks.length && result.length < 18) {
         result.push(discoveredTracks[i]);
+      }
+    }
+
+    // Fallback if needed
+    if (result.length < 10) {
+      for (const t of familiarTracks) {
+        if (!result.some((r) => r.id === t.id) && result.length < 15) {
+          result.push(t);
+        }
+      }
+      for (const t of catalogue) {
+        if (!result.some((r) => r.id === t.id) && result.length < 15) {
+          result.push(t);
+        }
       }
     }
 

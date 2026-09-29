@@ -70,6 +70,26 @@ export async function testServerConnection(targetUrl?: string): Promise<{
   }
 }
 
+export function getDiscoveredDesktopPeer(): { ip: string; port: number } | null {
+  try {
+    if (typeof window !== 'undefined') {
+      const w = window as any;
+      if (Array.isArray(w.__DOTIFY_PEERS__)) {
+        const p = w.__DOTIFY_PEERS__.find((item: any) => item.deviceType === 'desktop' && item.ip);
+        if (p) return { ip: p.ip, port: p.port || 3001 };
+      }
+    }
+    if (typeof localStorage !== 'undefined') {
+      const cached = localStorage.getItem('dotify_last_desktop_peer');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.ip) return { ip: parsed.ip, port: parsed.port || 3001 };
+      }
+    }
+  } catch {}
+  return null;
+}
+
 /**
  * Returns the effective base URL for backend API requests.
  * E.g., '' (relative) or 'http://localhost:3001'
@@ -91,14 +111,25 @@ export function getApiBaseUrl(): string {
   // Relative '/api' would fail unless routed to a live server.
   if (isTauriEnvironment()) {
     if (isAndroidApp()) {
-      // On Android APK, default to empty (allowing client-side fallbacks)
-      return '';
+      const desktopPeer = getDiscoveredDesktopPeer();
+      if (desktopPeer) {
+        return `http://${desktopPeer.ip}:${desktopPeer.port || 3001}`;
+      }
+      return 'http://127.0.0.1:3001';
     }
     // On Desktop Tauri, localhost:3001 is where the desktop daemon runs
     return 'http://localhost:3001';
   }
 
-  // 3. Standard browser: empty prefix uses relative proxy (/api -> :3001)
+  // 3. Standard browser on LAN (e.g. mobile browser or Dad's PC hitting Monty's IP)
+  if (typeof window !== 'undefined' && window.location) {
+    const loc = window.location;
+    if (loc.hostname && loc.hostname !== 'localhost' && loc.hostname !== '127.0.0.1') {
+      return `${loc.protocol}//${loc.hostname}:3001`;
+    }
+  }
+
+  // 4. Standard local dev browser: empty prefix uses relative proxy (/api -> :3001)
   return '';
 }
 

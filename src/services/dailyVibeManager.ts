@@ -1,5 +1,5 @@
 import { safeStorage } from '../utils/storage';
-import { DailyVibePlaylist, DailyVibesCache, VibeCategory, VibePlaylistTrack } from '../types/vibes';
+import { DailyVibePlaylist, DailyVibesCache, UserVibeConfig, VibeCategory, VibePlaylistTrack } from '../types/vibes';
 import { TrackPlayRecord } from '../types/telemetry';
 import { genreProfiler } from './genreProfiler';
 import { geminiVibeService, RawVibePlaylist } from './geminiVibeService';
@@ -8,8 +8,81 @@ import { usePlayerStore } from '../store/playerStore';
 import { getApiUrl, isAndroidApp } from './apiConfig';
 import { getTrackArtwork, resolveTrackArtwork, isUglyPlaceholder } from './artworkService';
 
+export const DEFAULT_VIBE_PRESETS: UserVibeConfig[] = [
+  {
+    id: 'gaming',
+    label: 'Gaming',
+    prompt: 'High focus, fast-paced energy, and flow state for gaming sessions',
+    themeColor: 'purple',
+    defaultCover: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'working',
+    label: 'Working',
+    prompt: 'Deep concentration, steady productivity, and minimal distraction',
+    themeColor: 'emerald',
+    defaultCover: 'https://images.unsplash.com/photo-1499750310107-5fef28a66643?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'partying',
+    label: 'Partying',
+    prompt: 'High energy, celebration, danceable rhythms, and weekend party momentum',
+    themeColor: 'rose',
+    defaultCover: 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'chilling',
+    label: 'Chilling',
+    prompt: 'Laid back, sunset relaxation, and mellow evening downtime',
+    themeColor: 'blue',
+    defaultCover: 'https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'workout',
+    label: 'Workout',
+    prompt: 'High-intensity motivation, heavy momentum, and physical endurance',
+    themeColor: 'amber',
+    defaultCover: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'nightdrive',
+    label: 'Night Drive',
+    prompt: 'Late-night journey, open highway, and atmospheric reflection',
+    themeColor: 'purple',
+    defaultCover: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'coffee',
+    label: 'Morning Coffee',
+    prompt: 'Warm morning routine, easy wake-up, and positive start to the day',
+    themeColor: 'amber',
+    defaultCover: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'coding',
+    label: 'Coding Flow',
+    prompt: 'Deep technical immersion and uninterrupted problem solving',
+    themeColor: 'emerald',
+    defaultCover: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'meditation',
+    label: 'Meditation',
+    prompt: 'Calm mindfulness, peaceful breathing, and restorative stillness',
+    themeColor: 'blue',
+    defaultCover: 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=800&auto=format&fit=crop&q=80',
+  },
+  {
+    id: 'nostalgia',
+    label: 'Nostalgia',
+    prompt: 'Timeless favorites, emotional memories, and classic comfort',
+    themeColor: 'rose',
+    defaultCover: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=80',
+  },
+];
+
 const VIBE_META: Record<
-  VibeCategory,
+  string,
   {
     label: string;
     icon: string;
@@ -20,38 +93,73 @@ const VIBE_META: Record<
 > = {
   gaming: {
     label: 'Gaming',
-    icon: '🎮',
+    icon: '',
     themeGradient: 'from-purple-900/80 via-slate-900 to-indigo-950 border-purple-700/50',
     accentColor: '#a855f7',
     defaultCover: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop&q=80',
   },
   working: {
     label: 'Working',
-    icon: '💼',
+    icon: '',
     themeGradient: 'from-emerald-950/80 via-slate-900 to-teal-950 border-emerald-700/50',
     accentColor: '#10b981',
     defaultCover: 'https://images.unsplash.com/photo-1499750310107-5fef28a66643?w=800&auto=format&fit=crop&q=80',
   },
   partying: {
     label: 'Partying',
-    icon: '🎉',
+    icon: '',
     themeGradient: 'from-rose-950/80 via-slate-900 to-pink-950 border-rose-700/50',
     accentColor: '#f43f5e',
     defaultCover: 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=800&auto=format&fit=crop&q=80',
   },
   chilling: {
     label: 'Chilling',
-    icon: '☕',
+    icon: '',
     themeGradient: 'from-blue-950/80 via-slate-900 to-cyan-950 border-blue-700/50',
     accentColor: '#0ea5e9',
     defaultCover: 'https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=800&auto=format&fit=crop&q=80',
   },
   workout: {
     label: 'Workout',
-    icon: '⚡',
+    icon: '',
     themeGradient: 'from-amber-950/80 via-slate-900 to-orange-950 border-amber-700/50',
     accentColor: '#f59e0b',
     defaultCover: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800&auto=format&fit=crop&q=80',
+  },
+  nightdrive: {
+    label: 'Night Drive',
+    icon: '',
+    themeGradient: 'from-indigo-950/80 via-slate-900 to-purple-950 border-indigo-700/50',
+    accentColor: '#818cf8',
+    defaultCover: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=800&auto=format&fit=crop&q=80',
+  },
+  coffee: {
+    label: 'Morning Coffee',
+    icon: '',
+    themeGradient: 'from-amber-950/80 via-slate-900 to-yellow-950 border-amber-700/50',
+    accentColor: '#f59e0b',
+    defaultCover: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&auto=format&fit=crop&q=80',
+  },
+  coding: {
+    label: 'Coding Flow',
+    icon: '',
+    themeGradient: 'from-emerald-950/80 via-slate-900 to-cyan-950 border-teal-700/50',
+    accentColor: '#14b8a6',
+    defaultCover: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=800&auto=format&fit=crop&q=80',
+  },
+  meditation: {
+    label: 'Meditation',
+    icon: '',
+    themeGradient: 'from-blue-950/80 via-slate-900 to-indigo-950 border-blue-700/50',
+    accentColor: '#38bdf8',
+    defaultCover: 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?w=800&auto=format&fit=crop&q=80',
+  },
+  nostalgia: {
+    label: 'Nostalgia',
+    icon: '',
+    themeGradient: 'from-pink-950/80 via-slate-900 to-rose-950 border-pink-700/50',
+    accentColor: '#f43f5e',
+    defaultCover: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=80',
   },
 };
 
@@ -124,7 +232,12 @@ export class DailyVibeManager {
       }
     }
 
-    // 3. Prevent duplicate concurrent generations in the current process
+    // 3. If user has not onboarded and configured their 5 vibes, do NOT auto-curate behind their back
+    if (!this.hasUserConfiguredVibes(accountId) && !forceRegenerate) {
+      return [];
+    }
+
+    // 4. Prevent duplicate concurrent generations in the current process
     if (this.activeGenerationPromise) {
       return this.activeGenerationPromise;
     }
@@ -136,6 +249,65 @@ export class DailyVibeManager {
     } finally {
       this.activeGenerationPromise = null;
     }
+  }
+
+  /**
+   * Checks whether the user has explicitly selected/typed and saved their 5 daily vibes.
+   */
+  public hasUserConfiguredVibes(accountId: string = 'guest'): boolean {
+    const cleanId = (accountId || 'guest').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const storageKey = `dotify_user_vibes_${cleanId}`;
+    const saved = safeStorage.getItem<UserVibeConfig[] | null>(storageKey, null);
+    return Boolean(
+      saved &&
+        Array.isArray(saved) &&
+        saved.length === 5 &&
+        saved.every((v) => typeof v?.label === 'string' && v.label.trim().length > 0)
+    );
+  }
+
+  /**
+   * Returns the user's saved 5 custom vibes. If unconfigured, returns an empty array.
+   */
+  public getUserVibes(accountId: string = 'guest'): UserVibeConfig[] {
+    const cleanId = (accountId || 'guest').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const storageKey = `dotify_user_vibes_${cleanId}`;
+    const saved = safeStorage.getItem<UserVibeConfig[] | null>(storageKey, null);
+    if (
+      saved &&
+      Array.isArray(saved) &&
+      saved.length === 5 &&
+      saved.every((v) => typeof v?.label === 'string' && v.label.trim().length > 0)
+    ) {
+      return saved;
+    }
+    return [];
+  }
+
+  /**
+   * Returns suggested inspiration presets for the user to pick from if desired.
+   */
+  public getDefaultPresetSuggestions(): UserVibeConfig[] {
+    return DEFAULT_VIBE_PRESETS;
+  }
+
+  public saveUserVibes(vibes: UserVibeConfig[], accountId: string = 'guest'): void {
+    const cleanId = (accountId || 'guest').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const storageKey = `dotify_user_vibes_${cleanId}`;
+    const sanitized: UserVibeConfig[] = vibes.slice(0, 5).map((v, idx) => {
+      const cleanLabel = (v.label || `Vibe ${idx + 1}`).trim();
+      const cleanId = v.id || `custom_${cleanLabel.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${idx}`;
+      return {
+        id: cleanId,
+        label: cleanLabel,
+        prompt: v.prompt && v.prompt.trim().length > 0
+          ? v.prompt.trim()
+          : `Music soundscape for ${cleanLabel} matching your personal taste.`,
+        themeColor: v.themeColor || (['purple', 'emerald', 'rose', 'blue', 'amber'][idx % 5] as any),
+        defaultCover: v.defaultCover || DEFAULT_VIBE_PRESETS[idx % DEFAULT_VIBE_PRESETS.length].defaultCover,
+      };
+    });
+    safeStorage.setItem(storageKey, sanitized);
   }
 
   private async generateAndSaveDailyVibes(
@@ -162,17 +334,22 @@ export class DailyVibeManager {
       // B. Profile user genres
       const tasteProfile = genreProfiler.profileUserGenres(plays, likedTracks, followedArtists);
 
-      // C. Call Gemini 3.8 Flash with Search Grounding
-      const geminiResult = await geminiVibeService.generateDailyVibePlaylists(tasteProfile, today);
+      // C. Retrieve user selected/customized vibes (5 vibes)
+      const userVibes = this.getUserVibes(accountId);
+      const effectiveVibes = userVibes.length === 5 ? userVibes : DEFAULT_VIBE_PRESETS.slice(0, 5);
 
-      // D. Hydrate raw tracks into full Dotify playable tracks
+      // D. Call Gemini 3.8 Flash with Search Grounding
+      const geminiResult = await geminiVibeService.generateDailyVibePlaylists(tasteProfile, today, effectiveVibes);
+
+      // E. Hydrate raw tracks into full Dotify playable tracks
       const hydratedPlaylists = this.hydratePlaylists(
         geminiResult.playlists,
         today,
-        geminiResult.modelUsed
+        geminiResult.modelUsed,
+        effectiveVibes
       );
 
-      // E. Save to safeStorage
+      // F. Save to safeStorage
       const cacheRecord: DailyVibesCache = {
         date: today,
         accountId,
@@ -201,21 +378,28 @@ export class DailyVibeManager {
   private hydratePlaylists(
     rawPlaylists: RawVibePlaylist[],
     dateString: string,
-    modelUsed: string
+    modelUsed: string,
+    userVibes?: UserVibeConfig[]
   ): DailyVibePlaylist[] {
     return rawPlaylists.map((raw) => {
+      const matchingVibe =
+        userVibes?.find((v) => v.id.toLowerCase() === raw.vibe.toLowerCase()) ||
+        DEFAULT_VIBE_PRESETS.find((v) => v.id.toLowerCase() === raw.vibe.toLowerCase());
+
       const meta = VIBE_META[raw.vibe] || VIBE_META.gaming;
       const playlistId = `daily-vibe-${raw.vibe}-${dateString}`;
+      const label = matchingVibe?.label || meta?.label || (raw.vibe.charAt(0).toUpperCase() + raw.vibe.slice(1));
+      const coverArt = matchingVibe?.defaultCover || meta?.defaultCover || DEFAULT_VIBE_PRESETS[0].defaultCover;
+      const themeGradient = meta?.themeGradient || 'from-purple-900/80 via-slate-900 to-indigo-950 border-purple-700/50';
+      const accentColor = meta?.accentColor || '#a855f7';
 
       const tracks: VibePlaylistTrack[] = raw.tracks.map((t, idx) => {
         const trackId = `vibe:${raw.vibe}:${dateString}:${idx}`;
-        const hasBackend = !isAndroidApp();
-        const backendStreamUrl = getApiUrl(
+        const streamUrl = getApiUrl(
           `/api/stream/track?artist=${encodeURIComponent(t.artist)}&title=${encodeURIComponent(
             t.title
           )}&duration=210&id=${encodeURIComponent(trackId)}`
         );
-        const streamUrl = hasBackend ? backendStreamUrl : backendStreamUrl;
 
         const defaultArt = getTrackArtwork({ artist: t.artist, title: t.title });
 
@@ -228,10 +412,10 @@ export class DailyVibeManager {
           duration: 210, // ~3.5 min standard estimated duration
           streamUrl,
           artworkUrl: defaultArt,
-          vibeReason: t.vibeReason || `Curated for ${meta.label} vibe`,
+          vibeReason: t.vibeReason || `Curated for ${label} vibe`,
           isWebDiscovery: true,
           sourceMetadata: {
-            genre: t.genre || meta.label,
+            genre: t.genre || label,
             format: 'mp3',
             vibe: raw.vibe,
             license: 'Dotify Multi-Source Stream',
@@ -256,15 +440,15 @@ export class DailyVibeManager {
         id: playlistId,
         name: raw.title,
         description: raw.description,
-        coverArt: meta.defaultCover,
+        coverArt,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         vibe: raw.vibe,
-        vibeLabel: meta.label,
-        vibeIcon: meta.icon,
+        vibeLabel: label,
+        vibeIcon: '', // Strictly no emojis
         vibeTagline: raw.tagline,
-        themeGradient: meta.themeGradient,
-        accentColor: meta.accentColor,
+        themeGradient,
+        accentColor,
         generatedDate: dateString,
         isAIGenerated: true,
         modelUsed,

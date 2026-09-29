@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { usePlayerStore } from '../../store/playerStore';
 import { useAudioActive } from '../../hooks/useAudioActive';
-import { ListMusic, GripVertical, Sparkles, Play, Pause, X } from 'lucide-react';
+import { ListMusic, GripVertical, Radio, Play, Pause, X } from 'lucide-react';
 import {
   DEFAULT_MUSIC_ARTWORK,
   getTrackArtwork,
@@ -217,7 +217,7 @@ export const QueueDrawer: React.FC = () => {
                   : 'Autoplay off'
               }
             >
-              <Sparkles size={11} />
+              <Radio size={12} />
               <span>Autoplay</span>
             </button>
 
@@ -241,7 +241,7 @@ export const QueueDrawer: React.FC = () => {
           <div className="flex flex-col items-center justify-center h-full text-center px-4 py-10 text-muted">
             {autoplayEnabled && currentTrack ? (
               <>
-                <Sparkles size={22} className="text-accent/60 mb-2" />
+                <Radio size={22} className="text-accent/60 mb-2" />
                 <p className="text-xs font-medium text-secondary">No upcoming tracks</p>
                 <p className="text-[11px] text-muted mt-1 max-w-[200px]">
                   Similar tracks will play automatically when this song ends

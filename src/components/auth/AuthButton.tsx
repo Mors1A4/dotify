@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useUpgradeStore } from '../../store/upgradeStore';
-import { LogOut, Cloud, Loader2, User as UserIcon, Sparkles } from 'lucide-react';
+import { LogOut, Cloud, Loader2, User as UserIcon, Wand2 } from 'lucide-react';
 
 export const AuthButton: React.FC = () => {
   const { user, isLoading, isSyncing, signOut, openAuthModal } = useAuthStore();
@@ -89,7 +89,7 @@ export const AuthButton: React.FC = () => {
               className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-xl transition-colors text-left group cursor-pointer"
             >
               <div className="flex items-center gap-2.5">
-                <Sparkles
+                <Wand2
                   size={15}
                   className={hasProcessingUpgrade ? 'text-accent animate-spin' : 'text-accent group-hover:rotate-12 transition-transform'}
                 />
@@ -174,7 +174,7 @@ export const AuthButton: React.FC = () => {
             className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-xl transition-colors text-left group cursor-pointer"
           >
             <div className="flex items-center gap-2.5">
-              <Sparkles
+              <Wand2
                 size={15}
                 className={hasProcessingUpgrade ? 'text-accent animate-spin' : 'text-accent group-hover:rotate-12 transition-transform'}
               />

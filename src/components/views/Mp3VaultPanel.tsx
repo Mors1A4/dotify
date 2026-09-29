@@ -13,7 +13,6 @@ import {
   CheckCircle2,
   Smartphone,
   Monitor,
-  Sparkles,
   Plus,
   Loader2,
   ShieldAlert,
@@ -399,7 +398,7 @@ export const Mp3VaultPanel: React.FC = () => {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold transition-colors cursor-pointer"
               title="Delete all saved MP3s that are not in your Liked Songs"
             >
-              <Sparkles size={13} />
+              <Trash2 size={13} />
               <span>Clean Up Unliked ({unlikedSavedCount})</span>
             </button>
           )}

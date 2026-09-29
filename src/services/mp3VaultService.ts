@@ -212,6 +212,17 @@ export const useMp3VaultStore = create<Mp3VaultState>((set, get) => {
             safeStorage.setItem(STORAGE_LOCAL_MP3_FALLBACK, tracks);
             safeStorage.setItem(STORAGE_DELETED_MP3_IDS, deletedIds);
 
+            (window as any).__DOTIFY_PEERS__ = peers;
+            const desktopPeer = peers.find((p) => p.deviceType === 'desktop' && p.ip);
+            if (desktopPeer) {
+              try {
+                localStorage.setItem(
+                  'dotify_last_desktop_peer',
+                  JSON.stringify({ ip: desktopPeer.ip, port: desktopPeer.port || 3001 })
+                );
+              } catch {}
+            }
+
             set({
               savedTracks: tracks,
               peers,
@@ -274,6 +285,16 @@ export const useMp3VaultStore = create<Mp3VaultState>((set, get) => {
         if (res.ok) {
           const data = await res.json();
           const peers: WifiPeerDevice[] = Array.isArray(data.peers) ? data.peers : [];
+          (window as any).__DOTIFY_PEERS__ = peers;
+          const desktopPeer = peers.find((p) => p.deviceType === 'desktop' && p.ip);
+          if (desktopPeer) {
+            try {
+              localStorage.setItem(
+                'dotify_last_desktop_peer',
+                JSON.stringify({ ip: desktopPeer.ip, port: desktopPeer.port || 3001 })
+              );
+            } catch {}
+          }
           set({ peers });
           await get().refreshVault();
           if (peers.length > 0 && get().autoWifiSync) {
@@ -369,16 +390,10 @@ export const useMp3VaultStore = create<Mp3VaultState>((set, get) => {
         if (!fullBlob && !effectiveSourceUrl && isAndroidApp()) {
           const desktopPeer = get().peers.find((p) => p.deviceType === 'desktop');
           if (desktopPeer && track.artist && track.title) {
-            const preview =
-              track.sourceMetadata?.previewUrl ||
-              track.sourceMetadata?.fallbackUrl ||
-              '';
             const dur = track.duration && isFinite(track.duration) ? track.duration : 210;
             effectiveSourceUrl = `http://${desktopPeer.ip}:${desktopPeer.port || 3001}/api/stream/track?artist=${encodeURIComponent(
               track.artist
-            )}&title=${encodeURIComponent(track.title)}&preview=${encodeURIComponent(
-              preview
-            )}&duration=${dur}`;
+            )}&title=${encodeURIComponent(track.title)}&duration=${dur}`;
           }
         }
 

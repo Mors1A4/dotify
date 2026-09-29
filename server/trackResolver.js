@@ -129,7 +129,11 @@ async function resolveAudioStreamUrl(
     try {
       const query = `${searchWords} official audio`.trim();
       const searchRes = await ytSearch(query);
-      const candidates = selectBestCandidates(searchRes?.videos, expectedDurationSec);
+      let candidates = selectBestCandidates(searchRes?.videos, expectedDurationSec);
+      if (candidates.length === 0) {
+        const fallbackSearch = await ytSearch(searchWords);
+        candidates = selectBestCandidates(fallbackSearch?.videos, expectedDurationSec);
+      }
 
       for (const video of candidates) {
         if (!video?.url) continue;
@@ -220,17 +224,10 @@ export async function handleTrackStream(req, res) {
         );
         if (freshUrl) {
           req.query.url = freshUrl;
-          if (preview) req.query.fallbackUrl = preview;
           return handleStreamProxy(req, res);
         }
       } catch (reErr) {
         console.warn(`[TrackResolver] Re-resolution failed for "${cacheKey}":`, reErr.message);
-      }
-      if (preview) {
-        res.setHeader('X-Dotify-Preview-Fallback', 'true');
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-        req.query.url = preview;
-        return handleStreamProxy(req, res);
       }
       if (!res.headersSent) {
         return res.status(502).json({ error: 'Upstream stream error', upstreamStatus: statusCode });
@@ -266,24 +263,11 @@ export async function handleTrackStream(req, res) {
       return handleStreamProxy(req, res);
     }
 
-    if (preview) {
-      if (isPreload) return res.json({ cached: false, fallback: true });
-      res.setHeader('X-Dotify-Preview-Fallback', 'true');
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      req.query.url = preview;
-      return handleStreamProxy(req, res);
-    }
-
+    if (isPreload) return res.json({ cached: false });
     return res.status(404).json({ error: 'Track audio stream not found' });
   } catch (err) {
-    console.warn(`[TrackResolver] Audio extraction fallback for "${artist} - ${title}":`, err.message);
-    if (preview) {
-      if (isPreload) return res.json({ cached: false, fallback: true });
-      res.setHeader('X-Dotify-Preview-Fallback', 'true');
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      req.query.url = preview;
-      return handleStreamProxy(req, res);
-    }
+    console.warn(`[TrackResolver] Audio extraction failed for "${artist} - ${title}":`, err.message);
+    if (isPreload) return res.json({ cached: false });
     return res.status(502).json({ error: 'Audio resolution error', message: err.message });
   }
 }

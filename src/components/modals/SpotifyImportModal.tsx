@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { fetchSpotifyPreview, saveSpotifyPlaylistToStore } from '../../services/spotifyImporter';
 import { SpotifyImportPreview } from '../../types/playlist';
-import { X, Sparkles, Loader2, Check } from 'lucide-react';
+import { X, Download, Loader2, Check } from 'lucide-react';
 import { DEFAULT_MUSIC_ARTWORK } from '../../services/artworkService';
 import { usePlayerStore } from '../../store/playerStore';
 
@@ -58,7 +58,7 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
         <div className="flex items-center justify-between border-b border-customBorder/50 pb-3">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-[#1DB954]/20 flex items-center justify-center text-[#1DB954]">
-              <Sparkles size={18} />
+              <Download size={18} />
             </div>
             <div>
               <h3 className="font-bold text-base text-primary">Import Spotify Playlist</h3>

@@ -183,8 +183,9 @@
       Connect your account to sync your playlists and liked tracks across all your devices.
     </p>
 
+    <!-- Exactly ONE Clean Google Button -->
     <div id="btn-container">
-      <button id="google-btn" class="btn" onclick="startSignIn(true)">
+      <button id="google-btn" class="btn" onclick="startSignIn()">
         <svg width="20" height="20" viewBox="0 0 24 24">
           <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
           <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -196,10 +197,10 @@
     </div>
 
     <div id="status" class="status-box">
-      Tap <b>Continue with Google</b> to connect in 1 click.
+      Tap <b>Continue with Google</b> to connect.
     </div>
 
-    <!-- 1-Click Fast Connect without password (no password needed!) -->
+    <!-- 1-Click Fast Connect without password -->
     <div id="quick-section">
       <div class="divider"><span>or fast connect</span></div>
       <form onsubmit="handleFastConnect(event)" class="quick-input-group">
@@ -207,7 +208,7 @@
           id="fast-input"
           type="text"
           class="quick-input"
-          placeholder="Enter your name or email"
+          placeholder="Enter username or email"
           autocomplete="email"
           required
         />
@@ -216,7 +217,7 @@
         </button>
       </form>
       <p style="color: #64748b; font-size: 11px; margin-top: 8px;">
-        No password needed — syncs your playlists instantly.
+        No password needed — syncs playlists instantly across devices.
       </p>
     </div>
   </div>
@@ -240,7 +241,7 @@
     let authCompleted = false;
     let watchdogTimer = null;
 
-    function resetGoogleButton(message = 'Tap <b>Continue with Google</b> to connect in 1 click.') {
+    function resetGoogleButton(message = 'Tap <b>Continue with Google</b> to connect.') {
       isSigningIn = false;
       if (watchdogTimer) {
         clearTimeout(watchdogTimer);
@@ -371,7 +372,7 @@
       }
     }
 
-    async function startSignIn(isUserClick = false) {
+    async function startSignIn() {
       if (authCompleted) return;
       if (isSigningIn) return;
       isSigningIn = true;
@@ -384,33 +385,16 @@
       if (btnText) btnText.textContent = 'Connecting to Google...';
 
       statusEl.className = 'status-box';
-      statusEl.innerHTML = '<span class="spinner"></span> Opening Google Sign-In prompt...';
+      statusEl.innerHTML = '<span class="spinner"></span> Opening Google Sign-In...';
 
-      // 20-second safety watchdog: ensures button is NEVER left frozen/disabled
       watchdogTimer = setTimeout(() => {
         if (!authCompleted && isSigningIn) {
           resetGoogleButton('Sign-in prompt timed out. Tap <b>Continue with Google</b> to retry.');
         }
-      }, 20000);
+      }, 30000);
 
-      // 1. Mobile devices: directly use signInWithRedirect (Chrome on mobile blocks window popups)
-      const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
-      if (isMobile) {
-        console.log('[Auth] Mobile device detected, opening Google Sign-In directly...');
-        statusEl.className = 'status-box';
-        statusEl.innerHTML = '<span class="spinner"></span> Opening Google Sign-In...';
-        try {
-          sessionStorage.setItem('dotify_auth_redirecting', 'true');
-          await auth.signInWithRedirect(provider);
-          return;
-        } catch (mobileErr) {
-          console.warn('[Auth] Mobile redirect error, attempting popup fallback:', mobileErr);
-        }
-      }
-
-      // 2. Desktop: try popup first for smooth in-window completion
       try {
-        console.log('[Auth] Attempting signInWithPopup...');
+        console.log('[Auth] Opening Google popup sign-in...');
         const result = await auth.signInWithPopup(provider);
         if (result && result.user) {
           await handleAuthSuccess(result);
@@ -420,38 +404,19 @@
         console.warn('[Auth] Popup error:', popupErr);
 
         if (popupErr.code === 'auth/popup-closed-by-user') {
-          resetGoogleButton('Sign-in was cancelled. Tap <b>Continue with Google</b> above to try again.');
+          resetGoogleButton('Sign-in was cancelled. Tap <b>Continue with Google</b> to try again.');
           return;
         }
         if (popupErr.code === 'auth/cancelled-popup-request') {
           resetGoogleButton();
           return;
         }
-
-        // Popup blocked or not supported: immediately proceed to redirect
-        console.log('[Auth] Falling back to redirect...');
-        statusEl.className = 'status-box';
-        statusEl.innerHTML = '<span class="spinner"></span> Redirecting to Google Sign-In...';
-        try {
-          sessionStorage.setItem('dotify_auth_redirecting', 'true');
-          await auth.signInWithRedirect(provider);
+        if (popupErr.code === 'auth/popup-blocked') {
+          resetGoogleButton('⚠️ Popups were blocked by your browser. Please allow popups or use Fast Connect below.');
           return;
-        } catch (redirectErr) {
-          console.error('[Auth] Redirect error:', redirectErr);
-          resetGoogleButton('Sign-in failed: ' + (redirectErr.message || redirectErr));
         }
-      }
-    }
 
-    async function forceRedirect() {
-      const statusEl = document.getElementById('status');
-      statusEl.className = 'status-box';
-      statusEl.innerHTML = '<span class="spinner"></span> Redirecting to Google...';
-      try {
-        sessionStorage.setItem('dotify_auth_redirecting', 'true');
-        await auth.signInWithRedirect(provider);
-      } catch (err) {
-        resetGoogleButton('Redirect failed: ' + (err.message || err));
+        resetGoogleButton('Google note: ' + (popupErr.message || popupErr) + '<br>Or use Fast Connect below.');
       }
     }
 
@@ -486,55 +451,14 @@
       });
     }
 
-    async function init() {
-      const statusEl = document.getElementById('status');
-      const wasRedirecting = sessionStorage.getItem('dotify_auth_redirecting') === 'true';
-
-      if (wasRedirecting) {
-        sessionStorage.removeItem('dotify_auth_redirecting');
-        statusEl.className = 'status-box';
-        statusEl.innerHTML = '<span class="spinner"></span> Connecting Google account...';
-
-        const btn = document.getElementById('google-btn');
-        const btnText = document.getElementById('google-btn-text');
-        if (btn) btn.disabled = true;
-        if (btnText) btnText.textContent = 'Verifying with Google...';
-      }
-
-      // 1. Listen for auth state change
+    window.addEventListener('load', () => {
       auth.onAuthStateChanged(async (user) => {
         if (user && !authCompleted) {
-          console.log('[Auth] onAuthStateChanged user detected:', user.email);
+          console.log('[Auth] Existing session detected:', user.email);
           await handleAuthSuccess({ user });
         }
       });
-
-      // 2. Check getRedirectResult in case returning from full-page redirect
-      try {
-        const result = await auth.getRedirectResult();
-        if (result && result.user && !authCompleted) {
-          console.log('[Auth] getRedirectResult user detected:', result.user.email);
-          await handleAuthSuccess(result);
-          return;
-        }
-      } catch (err) {
-        console.warn('[Auth] Redirect result check error:', err);
-      }
-
-      // 3. Status prompt
-      if (!wasRedirecting) {
-        statusEl.className = 'status-box';
-        statusEl.innerHTML = 'Tap <b>Continue with Google</b> to connect in 1 click.';
-      } else {
-        setTimeout(() => {
-          if (!authCompleted) {
-            resetGoogleButton('Tap <b>Continue with Google</b> above to complete sign in.');
-          }
-        }, 12000);
-      }
-    }
-
-    window.addEventListener('load', init);
+    });
   </script>
 </body>
 </html>

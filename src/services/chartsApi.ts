@@ -374,14 +374,12 @@ export async function fetchAlbumTracks(
     const trackTitle = item.title || 'Untitled Track';
     const preview = item.preview || '';
 
-    const hasBackend = !isAndroidApp() || Boolean(getCustomApiUrl());
     const expectedDuration = item.duration || 210;
-    const backendStreamUrl = getApiUrl(
+    const streamUrl = getApiUrl(
       `/api/stream/track?artist=${encodeURIComponent(artistName)}&title=${encodeURIComponent(
         trackTitle
-      )}&preview=${encodeURIComponent(preview)}&id=${item.id}&duration=${expectedDuration}`
+      )}&id=${item.id}&duration=${expectedDuration}`
     );
-    const streamUrl = hasBackend ? backendStreamUrl : preview || backendStreamUrl;
 
     return {
       id: `charts:${item.id}`,
@@ -402,9 +400,7 @@ export async function fetchAlbumTracks(
       }),
       sourceMetadata: {
         format: 'mp3',
-        license: 'Commercial Streaming / Deezer Preview',
-        previewUrl: preview,
-        fallbackUrl: preview,
+        license: 'Commercial Streaming / YouTube Audio Stream',
       },
     };
   });
@@ -502,16 +498,12 @@ export async function searchAlbums(query: string, limit = 12): Promise<SearchAlb
 export function formatChartTrack(item: any): Track {
   const artistName = item.artist?.name || 'Unknown Artist';
   const trackTitle = item.title || 'Untitled Track';
-  const preview = item.preview || '';
-
-  const hasBackend = !isAndroidApp();
   const expectedDuration = item.duration || 210;
-  const backendStreamUrl = getApiUrl(
+  const streamUrl = getApiUrl(
     `/api/stream/track?artist=${encodeURIComponent(artistName)}&title=${encodeURIComponent(
       trackTitle
-    )}&preview=${encodeURIComponent(preview)}&id=${item.id}&duration=${expectedDuration}`
+    )}&id=${item.id}&duration=${expectedDuration}`
   );
-  const streamUrl = hasBackend ? backendStreamUrl : preview || backendStreamUrl;
 
   const rawArtwork =
     item.album?.cover_big ||
@@ -537,8 +529,6 @@ export function formatChartTrack(item: any): Track {
     sourceMetadata: {
       format: 'mp3',
       license: 'Commercial Streaming / YouTube Audio Stream',
-      previewUrl: preview,
-      fallbackUrl: preview,
     },
   };
 }
