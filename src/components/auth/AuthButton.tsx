@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useUpgradeStore } from '../../store/upgradeStore';
 import { LogOut, Cloud, Loader2, User as UserIcon, Wand2 } from 'lucide-react';
+import { ColourSchemeSection } from '../theme/ColourSchemeSection';
 
 export const AuthButton: React.FC = () => {
   const { user, isLoading, isSyncing, signOut, openAuthModal } = useAuthStore();
@@ -77,6 +78,9 @@ export const AuthButton: React.FC = () => {
                 <span>Sign In with Google</span>
               </button>
             </div>
+
+            {/* Colour scheme (moved from TopBar to save title space) */}
+            <ColourSchemeSection />
 
             {/* Help & AI Studio */}
             <button
@@ -162,6 +166,9 @@ export const AuthButton: React.FC = () => {
               <span>Personal library cloud synced</span>
             </div>
           </div>
+
+          {/* Colour scheme (moved from TopBar to save title space) */}
+          <ColourSchemeSection />
 
           {/* Help & AI Studio item */}
           <button

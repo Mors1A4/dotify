@@ -140,7 +140,12 @@ export function getApiBaseUrl(): string {
 export function getApiUrl(path: string): string {
   const base = getApiBaseUrl();
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  if (!base) return cleanPath;
+  if (!base) {
+    if (typeof window === 'undefined') {
+      return `http://127.0.0.1:3001${cleanPath}`;
+    }
+    return cleanPath;
+  }
   return `${base}${cleanPath}`;
 }
 
@@ -151,14 +156,32 @@ export function getWsUrl(customPath = '/ws/connect'): string {
   const envWs = (import.meta as any).env?.VITE_WS_URL;
   if (envWs) return envWs;
 
+  // 1. If an explicit or dynamic API base URL is resolved (e.g. from discovered desktop peer or custom setting)
+  const apiBase = getApiBaseUrl();
+  if (apiBase) {
+    try {
+      const url = new URL(apiBase);
+      const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsHost = url.hostname;
+      const wsPort = url.port || '3001';
+      return `${wsProtocol}//${wsHost}:${wsPort}${customPath}`;
+    } catch {}
+  }
+
   if (typeof window !== 'undefined') {
     if (isTauriEnvironment()) {
+      if (isAndroidApp()) {
+        const desktopPeer = getDiscoveredDesktopPeer();
+        if (desktopPeer) {
+          return `ws://${desktopPeer.ip}:${desktopPeer.port || 3001}${customPath}`;
+        }
+      }
       return `ws://localhost:3001${customPath}`;
     }
     const loc = window.location;
     const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = loc.host || 'localhost:3001';
-    return `${protocol}//${host}${customPath}`;
+    const hostname = loc.hostname || 'localhost';
+    return `${protocol}//${hostname}:3001${customPath}`;
   }
 
   return `ws://localhost:3001${customPath}`;

@@ -65,6 +65,7 @@ export interface HandoffPayload {
 export type RemoteCommandAction =
   | 'play'
   | 'pause'
+  | 'stop'
   | 'toggle_play'
   | 'togglePlay'
   | 'seek'

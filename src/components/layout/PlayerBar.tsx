@@ -18,7 +18,6 @@ import {
   Radio,
 } from 'lucide-react';
 import { ActiveDeviceBadge } from '../connect/ActiveDeviceBadge';
-import { DevicePickerModal } from '../connect/DevicePickerModal';
 import { DeviceIcon } from '../connect/DeviceIcon';
 import { VisualizerIcon } from '../common/VisualizerIcon';
 import {
@@ -342,9 +341,6 @@ export const PlayerBar: React.FC = () => {
           />
         </div>
       </div>
-
-      {/* Global Spotify Connect Device Picker Modal */}
-      <DevicePickerModal />
     </footer>
   );
 };

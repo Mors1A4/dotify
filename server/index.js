@@ -15,7 +15,8 @@ import { startUpgradeWorker } from './upgradeWorker.js';
 // Prevent unhandled network socket/TLS/stream errors from terminating backend
 process.on('uncaughtException', (err) => {
   if (err && err.code === 'EADDRINUSE') {
-    process.exit(0);
+    console.warn('[dotify server] Port already in use. HTTP listener skipped, background worker remains active.');
+    return;
   }
   console.error('[dotify server] Uncaught exception safely intercepted:', err.message);
 });
@@ -322,6 +323,14 @@ app.get('*', (req, res, next) => {
 
 const server = http.createServer(app);
 setupConnectHub(server);
+
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.warn(`[dotify server] Port ${PORT} already bound by another process. Background services and UpgradeWorker remain fully active.`);
+    return;
+  }
+  console.error('[dotify server] Server error:', err.message);
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[dotify] Streaming, Connect & WiFi MP3 Sync backend active at http://0.0.0.0:${PORT}`);

@@ -1,16 +1,82 @@
 import { Track } from '../types/track';
 import { getTrackArtwork } from '../services/artworkService';
 
+export interface MediaActionHandlers {
+  onPlay: () => void;
+  onPause: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onSeekTo?: (time: number) => void;
+}
+
+let activeHandlers: MediaActionHandlers | null = null;
+
+// Initialize global dispatcher for Android native callbacks
+if (typeof window !== 'undefined') {
+  (window as any).__dotifyNativeMediaAction = (action: string, data?: number) => {
+    if (!activeHandlers) return;
+    try {
+      switch (action) {
+        case 'play':
+          activeHandlers.onPlay();
+          break;
+        case 'pause':
+          activeHandlers.onPause();
+          break;
+        case 'next':
+          activeHandlers.onNext();
+          break;
+        case 'prev':
+          activeHandlers.onPrevious();
+          break;
+        case 'seek':
+          if (activeHandlers.onSeekTo && typeof data === 'number') {
+            activeHandlers.onSeekTo(data / 1000);
+          }
+          break;
+        case 'stop':
+          activeHandlers.onPause();
+          break;
+      }
+    } catch (err) {
+      console.warn('[DotifyMediaSession] Action dispatch error:', action, err);
+    }
+  };
+}
+
 export function updateMediaSession(
   track: Track | null,
-  handlers: {
-    onPlay: () => void;
-    onPause: () => void;
-    onPrevious: () => void;
-    onNext: () => void;
-    onSeekTo?: (time: number) => void;
-  }
+  handlers: MediaActionHandlers,
+  isPlaying: boolean = true,
+  positionSec: number = 0
 ) {
+  activeHandlers = handlers;
+
+  // Android Native Notification Bridge
+  if (typeof window !== 'undefined' && (window as any).AndroidNativeMediaSession) {
+    try {
+      if (track) {
+        const artworkSrc = getTrackArtwork(track);
+        const durationMs = Math.round((track.duration && isFinite(track.duration) ? track.duration : 0) * 1000);
+        const positionMs = Math.round((positionSec || 0) * 1000);
+        (window as any).AndroidNativeMediaSession.updateTrack(
+          track.title || 'Unknown Title',
+          track.artist || 'Unknown Artist',
+          track.album || 'Dotify',
+          artworkSrc || '',
+          durationMs,
+          positionMs,
+          isPlaying
+        );
+      } else {
+        (window as any).AndroidNativeMediaSession.stop();
+      }
+    } catch (err) {
+      console.warn('[DotifyMediaSession] AndroidNativeMediaSession update failed:', err);
+    }
+  }
+
+  // Standard Web MediaSession API
   if (!('mediaSession' in navigator)) return;
 
   if (!track) {
@@ -53,13 +119,33 @@ export function updateMediaSession(
         }
       });
     }
-  } catch (err) {
+  } catch {
     // Action handlers might be unsupported on certain platforms
   }
 }
 
-export function updateMediaSessionPlaybackState(isPlaying: boolean) {
+export function updateMediaSessionPlaybackState(isPlaying: boolean, positionSec?: number) {
+  if (typeof window !== 'undefined' && (window as any).AndroidNativeMediaSession) {
+    try {
+      const positionMs = positionSec !== undefined ? Math.round(positionSec * 1000) : 0;
+      (window as any).AndroidNativeMediaSession.updatePlaybackState(isPlaying, positionMs);
+    } catch (err) {
+      console.warn('[DotifyMediaSession] AndroidNativeMediaSession state update failed:', err);
+    }
+  }
+
   if ('mediaSession' in navigator) {
     navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  }
+}
+
+export function clearMediaSession() {
+  if (typeof window !== 'undefined' && (window as any).AndroidNativeMediaSession) {
+    try {
+      (window as any).AndroidNativeMediaSession.stop();
+    } catch {}
+  }
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = 'none';
   }
 }

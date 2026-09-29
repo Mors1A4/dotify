@@ -1,23 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../../store/playerStore';
 import { DeviceIcon } from './DeviceIcon';
 import { castService } from '../../services/castService';
+import { connectClient } from '../../services/connectClient';
+import { isAndroidApp } from '../../services/apiConfig';
 import { X, Volume2, Loader2, Wifi, Check, RefreshCw } from 'lucide-react';
 
 export const DevicePickerModal: React.FC = () => {
   const [isScanning, setIsScanning] = useState(false);
-
-  useEffect(() => {
-    castService.fetchCastDevices();
-    castService.scanForDevices();
-  }, []);
-
-  const handleScanClick = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsScanning(true);
-    await castService.scanForDevices();
-    setIsScanning(false);
-  };
 
   const {
     isDevicePickerOpen,
@@ -33,14 +24,30 @@ export const DevicePickerModal: React.FC = () => {
     setVolume,
   } = usePlayerStore();
 
+  useEffect(() => {
+    if (isDevicePickerOpen) {
+      castService.fetchCastDevices();
+      castService.scanForDevices();
+      connectClient.reconnect();
+    }
+  }, [isDevicePickerOpen]);
+
+  const handleScanClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsScanning(true);
+    await castService.scanForDevices();
+    setIsScanning(false);
+  };
+
   if (!isDevicePickerOpen) return null;
 
   // Determine local and active devices
   const localIsActive = connectMode !== 'remote_controller';
+  const localDev = connectClient.getLocalDevice();
   const currentActiveDevice = activeDevice || (localIsActive ? {
-    deviceId: 'local_device',
-    deviceName: 'This Computer',
-    deviceType: 'desktop' as const,
+    deviceId: localDev.deviceId || 'local_device',
+    deviceName: localDev.deviceName || (isAndroidApp() ? 'This Phone' : 'This Computer'),
+    deviceType: localDev.deviceType || (isAndroidApp() ? ('mobile' as const) : ('desktop' as const)),
     role: 'active_host' as const,
     isCurrentDevice: true,
     isActive: true,
@@ -54,10 +61,10 @@ export const DevicePickerModal: React.FC = () => {
     await transferPlaybackTo(targetDeviceId);
   };
 
-  return (
+  const modalContent = (
     <div
       data-testid="device-picker-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-base/80 backdrop-blur-md animate-in fade-in select-none"
+      className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-base/80 backdrop-blur-md animate-in fade-in select-none"
       onClick={() => toggleDevicePicker(false)}
     >
       <div
@@ -226,4 +233,10 @@ export const DevicePickerModal: React.FC = () => {
       </div>
     </div>
   );
+
+  if (typeof document !== 'undefined' && document.body) {
+    return createPortal(modalContent, document.body);
+  }
+
+  return modalContent;
 };

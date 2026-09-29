@@ -508,6 +508,7 @@ pub fn scan_lan_subnet() -> Vec<PeerInfo> {
                 let ip_clone = ip.clone();
                 handles.push(thread::spawn(move || {
                     let _ = probe_peer_ip(&ip_clone, HTTP_PORT, 320);
+                    let _ = probe_cast_device(&ip_clone, 320);
                 }));
             }
             for h in handles {
@@ -1181,4 +1182,102 @@ where
     }
 
     false
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct DiscoveredCastDevice {
+    pub deviceId: String,
+    pub deviceName: String,
+    pub deviceType: String,
+    pub role: String,
+    pub isCurrentDevice: bool,
+    pub isActive: bool,
+    pub volume: f32,
+    pub lastSeen: u64,
+    pub capabilities: serde_json::Value,
+    pub castDetails: serde_json::Value,
+}
+
+static DISCOVERED_CAST_DEVICES: OnceLock<Mutex<HashMap<String, DiscoveredCastDevice>>> = OnceLock::new();
+
+fn get_cast_devices_map() -> &'static Mutex<HashMap<String, DiscoveredCastDevice>> {
+    DISCOVERED_CAST_DEVICES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn get_discovered_cast_devices() -> Vec<DiscoveredCastDevice> {
+    get_cast_devices_map()
+        .lock()
+        .map(|m| m.values().cloned().collect())
+        .unwrap_or_default()
+}
+
+pub fn probe_cast_device(ip: &str, timeout_ms: u64) -> Option<DiscoveredCastDevice> {
+    let (status, body) = http_get_raw(ip, 8008, "/setup/eureka_info?params=name,device_info", timeout_ms)?;
+    if status != 200 {
+        return None;
+    }
+    let val: serde_json::Value = serde_json::from_slice(&body).ok()?;
+    let name = val.get("name").and_then(|v| v.as_str())?;
+    let model = val
+        .get("device_info")
+        .and_then(|di| di.get("model_name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Google Cast Speaker");
+    let udn = val.get("ssdp_udn").and_then(|v| v.as_str()).unwrap_or("");
+
+    let dev_id = format!("cast:{}:8009", ip);
+    let dev = DiscoveredCastDevice {
+        deviceId: dev_id.clone(),
+        deviceName: name.to_string(),
+        deviceType: "speaker".to_string(),
+        role: "active_host".to_string(),
+        isCurrentDevice: false,
+        isActive: false,
+        volume: 0.7,
+        lastSeen: now_ms(),
+        capabilities: serde_json::json!({
+            "canPlayAudio": true,
+            "isController": false
+        }),
+        castDetails: serde_json::json!({
+            "ip": ip,
+            "port": 8009,
+            "model": model,
+            "udn": udn
+        }),
+    };
+
+    if let Ok(mut map) = get_cast_devices_map().lock() {
+        map.insert(dev_id, dev.clone());
+    }
+    Some(dev)
+}
+
+pub fn scan_for_cast_devices() -> Vec<DiscoveredCastDevice> {
+    let my_ip = get_local_lan_ip();
+    let parts: Vec<&str> = my_ip.split('.').collect();
+    if parts.len() == 4 && my_ip != "127.0.0.1" {
+        let prefix = format!("{}.{}.{}", parts[0], parts[1], parts[2]);
+        let my_host: u16 = parts[3].parse().unwrap_or(0);
+        let mut all_ips = Vec::with_capacity(254);
+        for i in 1..=254 {
+            if i != my_host {
+                all_ips.push(format!("{}.{}", prefix, i));
+            }
+        }
+        for chunk in all_ips.chunks(48) {
+            let mut handles = Vec::with_capacity(chunk.len());
+            for ip in chunk {
+                let ip_clone = ip.clone();
+                handles.push(thread::spawn(move || {
+                    let _ = probe_cast_device(&ip_clone, 1200);
+                }));
+            }
+            for h in handles {
+                let _ = h.join();
+            }
+        }
+    }
+    get_discovered_cast_devices()
 }

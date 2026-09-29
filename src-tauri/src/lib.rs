@@ -671,6 +671,30 @@ fn handle_embedded_backend_client(mut stream: TcpStream) {
         return;
     }
 
+    if path_and_query.starts_with("/api/cast/devices") {
+        let devices = mp3_sync::get_discovered_cast_devices();
+        let body = serde_json::json!({ "devices": devices }).to_string();
+        let res = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(res.as_bytes());
+        return;
+    }
+
+    if path_and_query.starts_with("/api/cast/scan") {
+        let devices = mp3_sync::scan_for_cast_devices();
+        let body = serde_json::json!({ "ok": true, "devices": devices }).to_string();
+        let res = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(res.as_bytes());
+        return;
+    }
+
     if mp3_sync::try_handle_mp3_route(
         &mut stream,
         &req_str,
@@ -823,33 +847,43 @@ fn spawn_backend_server() {
                     use std::os::windows::process::CommandExt;
                     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-                    let mut candidates = vec![std::path::PathBuf::from("server/index.js")];
+                    let mut candidates = vec![
+                        std::path::PathBuf::from("server/server.bundle.mjs"),
+                        std::path::PathBuf::from("server/index.js"),
+                    ];
                     if let Ok(exe) = std::env::current_exe() {
                         if let Some(parent) = exe.parent() {
+                            candidates.push(parent.join("server/server.bundle.mjs"));
                             candidates.push(parent.join("server/index.js"));
                         }
                     }
+                    candidates.push(get_dotify_local_dir().join("server/server.bundle.mjs"));
                     candidates.push(get_dotify_local_dir().join("server/index.js"));
+                    candidates.push(std::path::PathBuf::from("C:\\Users\\monty\\Documents\\AB\\notify\\server\\server.bundle.mjs"));
+                    candidates.push(std::path::PathBuf::from("C:\\Users\\monty\\Documents\\AB\\notify\\server\\index.js"));
 
                     for path in &candidates {
                         if path.exists() {
-                            let root_opt = path.parent().and_then(|p| p.parent());
-                            let has_node_modules = root_opt
-                                .map(|r| r.join("node_modules").exists())
-                                .unwrap_or_else(|| std::path::Path::new("node_modules").exists());
-                            if !has_node_modules {
-                                continue;
+                            let is_bundle = path.to_string_lossy().contains("bundle");
+                            if !is_bundle {
+                                let root_opt = path.parent().and_then(|p| p.parent());
+                                let has_node_modules = root_opt
+                                    .map(|r| r.join("node_modules").exists())
+                                    .unwrap_or_else(|| std::path::Path::new("node_modules").exists());
+                                if !has_node_modules {
+                                    continue;
+                                }
                             }
                             let mut cmd = std::process::Command::new("node");
                             cmd.arg(path);
-                            if let Some(parent) = root_opt {
+                            if let Some(parent) = path.parent() {
                                 if !parent.as_os_str().is_empty() {
                                     cmd.current_dir(parent);
                                 }
                             }
                             cmd.creation_flags(CREATE_NO_WINDOW);
                             if cmd.spawn().is_ok() {
-                                thread::sleep(Duration::from_millis(800));
+                                thread::sleep(Duration::from_millis(1000));
                                 break;
                             }
                         }

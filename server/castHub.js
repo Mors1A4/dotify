@@ -74,7 +74,7 @@ export async function probeEurekaDevice(ip) {
   return new Promise((resolve) => {
     const req = http.get(
       `http://${ip}:8008/setup/eureka_info?params=name,device_info`,
-      { timeout: 2000 },
+      { timeout: 1200 },
       (res) => {
         if (res.statusCode !== 200) {
           return resolve(null);
@@ -208,7 +208,7 @@ export async function scanSubnetForEureka() {
     }
   }
 
-  const batchSize = 30;
+  const batchSize = 64;
   for (let i = 0; i < targets.length; i += batchSize) {
     const batch = targets.slice(i, i + batchSize);
     await Promise.allSettled(batch.map((ip) => probeEurekaDevice(ip)));
@@ -252,7 +252,11 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
 
   const { ip } = speaker.castDetails;
   const rawStreamUrl = track.streamUrl || '';
-  const streamUrl = makeLanStreamUrl(rawStreamUrl);
+  let streamUrl = makeLanStreamUrl(rawStreamUrl);
+  if (!streamUrl && track.title && track.artist) {
+    const lanIp = getLocalLanIp();
+    streamUrl = `http://${lanIp}:3001/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(track.title)}`;
+  }
   const positionSeconds = Math.max(0, (options.positionMs || 0) / 1000);
   const targetVolume = options.volume ?? speaker.volume ?? 0.7;
 

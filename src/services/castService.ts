@@ -31,7 +31,7 @@ class CastService {
   public async fetchCastDevices(): Promise<ConnectedDevice[]> {
     try {
       const url = getApiUrl('/api/cast/devices');
-      const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         const data = await res.json();
         if (data && Array.isArray(data.devices)) {
@@ -56,12 +56,15 @@ class CastService {
       return Array.from(this.discoveredCastDevices.values());
     }
 
+    // Immediately fetch known / cached / mDNS devices first
+    await this.fetchCastDevices();
+
     this.isScanning = true;
     try {
       const url = getApiUrl('/api/cast/scan');
       const res = await fetch(url, {
         method: 'POST',
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(15000),
       });
 
       if (res.ok) {

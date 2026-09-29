@@ -239,6 +239,19 @@ export class ConnectClient {
     }, delay);
   }
 
+  public reconnect() {
+    if (this.isDestroyed || !this.enableWebSocket) return;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    const WS = typeof WebSocket !== 'undefined' ? WebSocket : (globalThis as any).WebSocket;
+    if (this.ws && WS && (this.ws.readyState === WS.OPEN || this.ws.readyState === WS.CONNECTING)) {
+      return;
+    }
+    this.initWebSocket();
+  }
+
   private handleIncomingMessage(msg: any) {
     if (!msg || typeof msg !== 'object') return;
 

@@ -891,6 +891,42 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
     transferPlaybackTo: async (targetDeviceId: string): Promise<boolean> => {
       const store = get();
+      const localDevice = connectClient.getLocalDevice();
+      const isSwitchingToLocal = targetDeviceId === localDevice.deviceId || targetDeviceId === 'local_device';
+
+      if (isSwitchingToLocal) {
+        set({ isTransferringPlayback: true, transferringToId: targetDeviceId });
+
+        // If previously controlling a remote device, stop remote playback
+        if (store.connectMode === 'remote_controller') {
+          if (store.activeDevice?.deviceId?.startsWith('cast:')) {
+            connectClient.sendRemoteCommand('stop', {}, store.activeDevice.deviceId);
+          } else {
+            connectClient.sendRemoteCommand('pause', {}, store.activeDevice?.deviceId);
+          }
+        }
+
+        // Return to local host mode
+        audioEngine.setControllerMode(false);
+        remoteProgressInterpolator.stop();
+        connectClient.unpair();
+
+        const currentPosSec = audioEngine.getCurrentTime();
+        if (store.currentTrack && store.isPlaying) {
+          audioEngine.playTrackAtPosition(store.currentTrack, Math.round(currentPosSec * 1000), true).catch(() => {});
+        }
+
+        set({
+          connectMode: 'standalone',
+          activeDevice: { ...localDevice, isActive: true },
+          isTransferringPlayback: false,
+          transferringToId: null,
+        });
+
+        broadcastCurrentState();
+        return true;
+      }
+
       if (!store.currentTrack) {
         return false;
       }
@@ -915,14 +951,51 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         connectClient.sendRemoteCommand(action as any, data);
       });
       remoteProgressInterpolator.start();
-      set({ connectMode: 'remote_controller' });
+
+      const targetDev = store.remoteDevices.find((d) => d.deviceId === targetDeviceId);
 
       try {
         const success = await connectClient.transferPlayback(targetDeviceId, snapshot);
-        set({ isTransferringPlayback: false, transferringToId: null });
+        if (success) {
+          set({
+            connectMode: 'remote_controller',
+            activeDevice: targetDev || {
+              deviceId: targetDeviceId,
+              deviceName: targetDeviceId.startsWith('cast:') ? 'Google Cast Speaker' : 'Remote Device',
+              deviceType: targetDeviceId.startsWith('cast:') ? 'speaker' : 'desktop',
+              role: 'active_host',
+              isCurrentDevice: false,
+              isActive: true,
+              volume: store.volume,
+              lastSeen: Date.now(),
+            },
+            isTransferringPlayback: false,
+            transferringToId: null,
+          });
+        } else {
+          audioEngine.setControllerMode(false);
+          remoteProgressInterpolator.stop();
+          set({
+            connectMode: 'standalone',
+            isTransferringPlayback: false,
+            transferringToId: null,
+          });
+          if (store.isPlaying) {
+            audioEngine.resume();
+          }
+        }
         return success;
       } catch (err) {
-        set({ isTransferringPlayback: false, transferringToId: null });
+        audioEngine.setControllerMode(false);
+        remoteProgressInterpolator.stop();
+        set({
+          connectMode: 'standalone',
+          isTransferringPlayback: false,
+          transferringToId: null,
+        });
+        if (store.isPlaying) {
+          audioEngine.resume();
+        }
         return false;
       }
     },

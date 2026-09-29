@@ -25,8 +25,15 @@ class MainActivity : TauriActivity() {
   private var pendingUpdateApkFile: File? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    activeInstance = this
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1002)
+      }
+    }
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
       window.attributes.layoutInDisplayCutoutMode =
@@ -37,6 +44,13 @@ class MainActivity : TauriActivity() {
       if (uri.scheme == "dotify") {
         pendingAuthUri = uri.toString()
       }
+    }
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    if (activeInstance == this) {
+      activeInstance = null
     }
   }
 
@@ -288,6 +302,69 @@ class MainActivity : TauriActivity() {
       }
     }, "AndroidNativeUpdater")
 
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface
+      fun updateTrack(
+        title: String,
+        artist: String,
+        album: String,
+        artworkUrl: String,
+        durationMs: Long,
+        positionMs: Long,
+        isPlaying: Boolean
+      ) {
+        try {
+          val intent = Intent(this@MainActivity, DotifyMediaService::class.java).apply {
+            action = DotifyMediaService.ACTION_UPDATE_TRACK
+            putExtra(DotifyMediaService.EXTRA_TITLE, title)
+            putExtra(DotifyMediaService.EXTRA_ARTIST, artist)
+            putExtra(DotifyMediaService.EXTRA_ALBUM, album)
+            putExtra(DotifyMediaService.EXTRA_ARTWORK, artworkUrl)
+            putExtra(DotifyMediaService.EXTRA_DURATION, durationMs)
+            putExtra(DotifyMediaService.EXTRA_POSITION, positionMs)
+            putExtra(DotifyMediaService.EXTRA_IS_PLAYING, isPlaying)
+          }
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+          } else {
+            startService(intent)
+          }
+        } catch (e: Exception) {
+          e.printStackTrace()
+        }
+      }
+
+      @JavascriptInterface
+      fun updatePlaybackState(isPlaying: Boolean, positionMs: Long) {
+        try {
+          val intent = Intent(this@MainActivity, DotifyMediaService::class.java).apply {
+            action = DotifyMediaService.ACTION_UPDATE_PLAYBACK_STATE
+            putExtra(DotifyMediaService.EXTRA_IS_PLAYING, isPlaying)
+            putExtra(DotifyMediaService.EXTRA_POSITION, positionMs)
+          }
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+          } else {
+            startService(intent)
+          }
+        } catch (e: Exception) {
+          e.printStackTrace()
+        }
+      }
+
+      @JavascriptInterface
+      fun stop() {
+        try {
+          val intent = Intent(this@MainActivity, DotifyMediaService::class.java).apply {
+            action = DotifyMediaService.ACTION_STOP
+          }
+          startService(intent)
+        } catch (e: Exception) {
+          e.printStackTrace()
+        }
+      }
+    }, "AndroidNativeMediaSession")
+
     pendingAuthUri?.let { uri ->
       deliverAuthUri(uri)
       pendingAuthUri = null
@@ -351,6 +428,21 @@ class MainActivity : TauriActivity() {
   }
 
   companion object {
+    private var activeInstance: MainActivity? = null
+
+    fun dispatchMediaAction(action: String, data: Long? = null) {
+      activeInstance?.let { activity ->
+        activity.currentWebView?.post {
+          val js = if (data != null) {
+            "if (window.__dotifyNativeMediaAction) { window.__dotifyNativeMediaAction('$action', $data); }"
+          } else {
+            "if (window.__dotifyNativeMediaAction) { window.__dotifyNativeMediaAction('$action'); }"
+          }
+          activity.currentWebView?.evaluateJavascript(js, null)
+        }
+      }
+    }
+
     private val ALIAS_MAP = mapOf(
       "green" to "MainActivityDefault",
       "cyan" to "MainActivityCyan",
