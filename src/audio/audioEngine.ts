@@ -952,6 +952,51 @@ export class AudioEngine {
     return this.analyserNode;
   }
 
+  /**
+   * Returns current peak audio frequency energy (0 to 255).
+   * Returns 0 if silent, paused, buffering, seeking, or audio context suspended.
+   */
+  public getAudioEnergy(): number {
+    this.initWebAudio();
+    const el = this.activeAudio;
+    if (!el || el.paused || el.ended || el.seeking || el.muted || this.currentVolume <= 0.001) {
+      return 0;
+    }
+
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      return 0;
+    }
+
+    if (this.analyserNode) {
+      try {
+        const buffer = new Uint8Array(32);
+        this.analyserNode.getByteFrequencyData(buffer);
+        let max = 0;
+        // Start from index 1 to skip DC offset / sub-audible ground bias on bin 0
+        for (let i = 1; i < buffer.length; i++) {
+          if (buffer[i] > max) max = buffer[i];
+        }
+        return max;
+      } catch {
+        return 0;
+      }
+    }
+
+    // Fallback if AnalyserNode is not connected or on restricted mobile WebView:
+    // Only return active energy if audio is genuinely playing past intro pre-roll
+    if ((el.currentTime || 0) > 0.8 && el.readyState >= 3) {
+      return 40;
+    }
+    return 0;
+  }
+
+  /**
+   * Checks whether the audio is actively producing audible sound (not silent).
+   */
+  public isAudioActive(threshold = 4): boolean {
+    return this.getAudioEnergy() >= threshold;
+  }
+
   // 10-Band Equalizer Controls
   public setEqualizerPreset(preset: EqualizerPreset): void {
     const gains = EQ_PRESET_GAINS[preset] || EQ_PRESET_GAINS.flat;

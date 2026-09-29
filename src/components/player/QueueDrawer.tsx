@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { usePlayerStore } from '../../store/playerStore';
+import { useAudioActive } from '../../hooks/useAudioActive';
 import { ListMusic, GripVertical, Sparkles, Play, Pause, X } from 'lucide-react';
 import {
   DEFAULT_MUSIC_ARTWORK,
@@ -33,6 +34,7 @@ export const QueueDrawer: React.FC = () => {
     enableAutoplay,
   } = usePlayerStore();
 
+  const isAudioActive = useAudioActive(5, 75);
   const [draggedQueueIndex, setDraggedQueueIndex] = useState<number | null>(null);
   const [dragOverQueueIndex, setDragOverQueueIndex] = useState<number | null>(null);
 
@@ -150,33 +152,33 @@ export const QueueDrawer: React.FC = () => {
                 </p>
               </div>
 
-              {/* Equalizer Playing Indicator */}
+              {/* Equalizer Playing Indicator (Silence-aware) */}
               <div
                 className="flex items-end gap-[2.5px] h-3.5 px-1 shrink-0"
-                title={isPlaying ? 'Playing' : 'Paused'}
+                title={isPlaying ? (isAudioActive ? 'Playing' : 'Audio silent') : 'Paused'}
               >
                 <span
                   className="w-[2.5px] bg-accent rounded-full origin-bottom transition-transform"
                   style={{
                     height: '100%',
-                    animation: isPlaying ? 'eq-bar 0.8s ease-in-out infinite' : 'none',
-                    transform: isPlaying ? undefined : 'scaleY(0.35)',
+                    animation: isAudioActive ? 'eq-bar 0.8s ease-in-out infinite' : 'none',
+                    transform: isAudioActive ? undefined : 'scaleY(0.35)',
                   }}
                 />
                 <span
                   className="w-[2.5px] bg-accent rounded-full origin-bottom transition-transform"
                   style={{
                     height: '100%',
-                    animation: isPlaying ? 'eq-bar 0.6s ease-in-out infinite 0.2s' : 'none',
-                    transform: isPlaying ? undefined : 'scaleY(0.65)',
+                    animation: isAudioActive ? 'eq-bar 0.6s ease-in-out infinite 0.2s' : 'none',
+                    transform: isAudioActive ? undefined : 'scaleY(0.65)',
                   }}
                 />
                 <span
                   className="w-[2.5px] bg-accent rounded-full origin-bottom transition-transform"
                   style={{
                     height: '100%',
-                    animation: isPlaying ? 'eq-bar 0.9s ease-in-out infinite 0.4s' : 'none',
-                    transform: isPlaying ? undefined : 'scaleY(0.45)',
+                    animation: isAudioActive ? 'eq-bar 0.9s ease-in-out infinite 0.4s' : 'none',
+                    transform: isAudioActive ? undefined : 'scaleY(0.45)',
                   }}
                 />
               </div>
