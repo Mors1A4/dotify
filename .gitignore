@@ -1,0 +1,26 @@
+# Dependencies & build outputs
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/local.properties
+
+# Binaries & Installers
+dotify.exe
+dotify-setup.exe
+dotify-windows-setup.exe
+dotify.apk
+dotify.apk.idsig
+
+# Logs & temporary files
+*.log
+*-base.js
+!t.id.includes('mock')
+temp/
+scratch/
+playwright-report/
+test-results/
+server/data/
+inbox/
+forks/

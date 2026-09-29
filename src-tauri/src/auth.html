@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dotify - Sign In</title>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #090d16;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+    .card {
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 24px;
+      padding: 36px 28px;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    }
+    .logo {
+      width: 56px;
+      height: 56px;
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      border-radius: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4);
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      margin-bottom: 8px;
+    }
+    p.desc {
+      color: #94a3b8;
+      font-size: 14px;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .btn {
+      background: #ffffff;
+      color: #0f172a;
+      font-weight: 700;
+      font-size: 15px;
+      border: none;
+      border-radius: 9999px;
+      padding: 15px 28px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      width: 100%;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);
+      text-decoration: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:hover {
+      background: #f1f5f9;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(255, 255, 255, 0.2);
+    }
+    .btn:active {
+      transform: translateY(1px);
+    }
+    .btn:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+    .status-box {
+      margin-top: 20px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 13px;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      color: #94a3b8;
+      line-height: 1.4;
+    }
+    .success {
+      background: rgba(16, 185, 129, 0.1);
+      border-color: rgba(16, 185, 129, 0.3);
+      color: #34d399;
+    }
+    .error {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: rgba(239, 68, 68, 0.3);
+      color: #f87171;
+    }
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(148, 163, 184, 0.3);
+      border-radius: 50%;
+      border-top-color: #38bdf8;
+      animation: spin 0.8s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      margin: 24px 0 18px;
+      color: #64748b;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+    .divider::before, .divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: #1e293b;
+    }
+    .divider span {
+      padding: 0 12px;
+    }
+
+    .quick-input-group {
+      display: flex;
+      gap: 8px;
+    }
+    .quick-input {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 9999px;
+      padding: 11px 16px;
+      color: #f8fafc;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .quick-input:focus {
+      border-color: #10b981;
+    }
+    .quick-btn {
+      background: #1e293b;
+      color: #f8fafc;
+      border: 1px solid #334155;
+      border-radius: 9999px;
+      padding: 11px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .quick-btn:hover {
+      background: #334155;
+      border-color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🎵</div>
+    <h1>Sign In to Dotify</h1>
+    <p class="desc">
+      Connect your account to sync your playlists and liked tracks across all your devices.
+    </p>
+
+    <div id="btn-container">
+      <button id="google-btn" class="btn" onclick="startSignIn(true)">
+        <svg width="20" height="20" viewBox="0 0 24 24">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+        </svg>
+        <span id="google-btn-text">Continue with Google</span>
+      </button>
+    </div>
+
+    <div id="status" class="status-box">
+      Tap <b>Continue with Google</b> to connect in 1 click.
+    </div>
+
+    <!-- 1-Click Fast Connect without password (no password needed!) -->
+    <div id="quick-section">
+      <div class="divider"><span>or fast connect</span></div>
+      <form onsubmit="handleFastConnect(event)" class="quick-input-group">
+        <input
+          id="fast-input"
+          type="text"
+          class="quick-input"
+          placeholder="Enter your name or email"
+          autocomplete="email"
+          required
+        />
+        <button type="submit" id="fast-btn" class="quick-btn">
+          Connect ⚡
+        </button>
+      </form>
+      <p style="color: #64748b; font-size: 11px; margin-top: 8px;">
+        No password needed — syncs your playlists instantly.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBRlXTMDnpFBsbas9Gl4ECUZTbzF3NLfmE",
+      authDomain: "dotify-11e01.firebaseapp.com",
+      projectId: "dotify-11e01",
+      storageBucket: "dotify-11e01.firebasestorage.app",
+      messagingSenderId: "533066775942",
+      appId: "1:533066775942:web:6ef28405b556f261960007"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    let isSigningIn = false;
+    let authCompleted = false;
+    let watchdogTimer = null;
+
+    function resetGoogleButton(message = 'Tap <b>Continue with Google</b> to connect in 1 click.') {
+      isSigningIn = false;
+      if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+        watchdogTimer = null;
+      }
+      const btn = document.getElementById('google-btn');
+      const btnText = document.getElementById('google-btn-text');
+      const statusEl = document.getElementById('status');
+
+      if (btn) btn.disabled = false;
+      if (btnText) btnText.textContent = 'Continue with Google';
+      if (statusEl) {
+        statusEl.className = 'status-box';
+        statusEl.innerHTML = message;
+      }
+    }
+
+    async function handleAuthSuccess(result) {
+      if (authCompleted) return;
+      authCompleted = true;
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+
+      const user = (result && result.user) ? result.user : result;
+      if (!user || !user.uid) return;
+
+      const credential = result ? result.credential : null;
+      const statusEl = document.getElementById('status');
+      const displayName = user.displayName || user.email || 'Dotify Listener';
+
+      statusEl.className = 'status-box success';
+      statusEl.innerHTML = '✓ Signed in as <b>' + displayName + '</b>!<br>Returning to Dotify...';
+
+      let firebaseIdToken = '';
+      try {
+        if (typeof user.getIdToken === 'function') {
+          firebaseIdToken = await user.getIdToken();
+        }
+      } catch (e) {}
+
+      const googleIdToken = (credential && credential.idToken) ? credential.idToken : '';
+      const googleAccessToken = (credential && credential.accessToken) ? credential.accessToken : '';
+
+      const payload = {
+        googleIdToken: googleIdToken,
+        idToken: googleIdToken || firebaseIdToken,
+        accessToken: googleAccessToken,
+        firebaseIdToken: firebaseIdToken,
+        uid: user.uid,
+        email: user.email || '',
+        displayName: displayName,
+        photoURL: user.photoURL || ''
+      };
+
+      // 1. Post to local loopback server callback
+      try {
+        await fetch('/callback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (e) {
+        console.debug('Callback post error:', e);
+      }
+
+      // 2. Fallback GET /callback
+      const qs = 'idToken=' + encodeURIComponent(payload.idToken) +
+                 '&googleIdToken=' + encodeURIComponent(payload.googleIdToken) +
+                 '&accessToken=' + encodeURIComponent(payload.accessToken) +
+                 '&uid=' + encodeURIComponent(payload.uid || '') +
+                 '&email=' + encodeURIComponent(payload.email || '') +
+                 '&displayName=' + encodeURIComponent(payload.displayName || '') +
+                 '&photoURL=' + encodeURIComponent(payload.photoURL || '');
+      try {
+        await fetch('/callback?' + qs);
+      } catch (e) {
+        console.debug('Callback GET error:', e);
+      }
+
+      // 3. Android Intent & Deep link
+      const deepLink = 'dotify://auth?' + qs;
+      const intentUri = 'intent://auth?' + qs + '#Intent;scheme=dotify;package=com.dotify.music;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end;';
+
+      const isAndroid = /android/i.test(navigator.userAgent);
+      if (isAndroid) {
+        try {
+          window.location.href = intentUri;
+        } catch (e) {}
+        setTimeout(() => {
+          try {
+            window.location.href = deepLink;
+          } catch (e) {}
+        }, 400);
+
+        document.getElementById('btn-container').innerHTML =
+          '<div style="margin-top: 8px;">' +
+            '<a id="return-app-btn" href="' + intentUri + '" class="btn" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; font-size: 16px; font-weight: 800; padding: 16px 24px; border-radius: 9999px; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.5); cursor: pointer;">' +
+              '<span>🚀 Return to Dotify App</span>' +
+            '</a>' +
+            '<p style="color: #94a3b8; font-size: 13px; margin-top: 12px; line-height: 1.4;">' +
+              'Tap the green button above to switch back to your music.' +
+            '</p>' +
+          '</div>';
+
+        const quickSec = document.getElementById('quick-section');
+        if (quickSec) quickSec.style.display = 'none';
+
+        const returnBtn = document.getElementById('return-app-btn');
+        if (returnBtn) {
+          returnBtn.onclick = function(e) {
+            try { window.location.href = intentUri; } catch (err) {}
+            setTimeout(() => {
+              try { window.location.href = deepLink; } catch (err) {}
+            }, 250);
+          };
+        }
+      } else {
+        document.getElementById('btn-container').innerHTML =
+          '<div style="margin-top: 16px; color: #34d399; font-weight: 700; font-size: 15px;">' +
+            '✓ Authentication completed! Switch back to the Dotify app.' +
+          '</div>';
+
+        const quickSec = document.getElementById('quick-section');
+        if (quickSec) quickSec.style.display = 'none';
+
+        setTimeout(() => {
+          try { window.close(); } catch(e) {}
+        }, 1500);
+      }
+    }
+
+    async function startSignIn(isUserClick = false) {
+      if (authCompleted) return;
+      if (isSigningIn) return;
+      isSigningIn = true;
+
+      const statusEl = document.getElementById('status');
+      const btn = document.getElementById('google-btn');
+      const btnText = document.getElementById('google-btn-text');
+
+      if (btn) btn.disabled = true;
+      if (btnText) btnText.textContent = 'Connecting to Google...';
+
+      statusEl.className = 'status-box';
+      statusEl.innerHTML = '<span class="spinner"></span> Opening Google Sign-In prompt...';
+
+      // 20-second safety watchdog: ensures button is NEVER left frozen/disabled
+      watchdogTimer = setTimeout(() => {
+        if (!authCompleted && isSigningIn) {
+          resetGoogleButton('Sign-in prompt timed out. Tap <b>Continue with Google</b> to retry.');
+        }
+      }, 20000);
+
+      // 1. Mobile devices: directly use signInWithRedirect (Chrome on mobile blocks window popups)
+      const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+      if (isMobile) {
+        console.log('[Auth] Mobile device detected, opening Google Sign-In directly...');
+        statusEl.className = 'status-box';
+        statusEl.innerHTML = '<span class="spinner"></span> Opening Google Sign-In...';
+        try {
+          sessionStorage.setItem('dotify_auth_redirecting', 'true');
+          await auth.signInWithRedirect(provider);
+          return;
+        } catch (mobileErr) {
+          console.warn('[Auth] Mobile redirect error, attempting popup fallback:', mobileErr);
+        }
+      }
+
+      // 2. Desktop: try popup first for smooth in-window completion
+      try {
+        console.log('[Auth] Attempting signInWithPopup...');
+        const result = await auth.signInWithPopup(provider);
+        if (result && result.user) {
+          await handleAuthSuccess(result);
+          return;
+        }
+      } catch (popupErr) {
+        console.warn('[Auth] Popup error:', popupErr);
+
+        if (popupErr.code === 'auth/popup-closed-by-user') {
+          resetGoogleButton('Sign-in was cancelled. Tap <b>Continue with Google</b> above to try again.');
+          return;
+        }
+        if (popupErr.code === 'auth/cancelled-popup-request') {
+          resetGoogleButton();
+          return;
+        }
+
+        // Popup blocked or not supported: immediately proceed to redirect
+        console.log('[Auth] Falling back to redirect...');
+        statusEl.className = 'status-box';
+        statusEl.innerHTML = '<span class="spinner"></span> Redirecting to Google Sign-In...';
+        try {
+          sessionStorage.setItem('dotify_auth_redirecting', 'true');
+          await auth.signInWithRedirect(provider);
+          return;
+        } catch (redirectErr) {
+          console.error('[Auth] Redirect error:', redirectErr);
+          resetGoogleButton('Sign-in failed: ' + (redirectErr.message || redirectErr));
+        }
+      }
+    }
+
+    async function forceRedirect() {
+      const statusEl = document.getElementById('status');
+      statusEl.className = 'status-box';
+      statusEl.innerHTML = '<span class="spinner"></span> Redirecting to Google...';
+      try {
+        sessionStorage.setItem('dotify_auth_redirecting', 'true');
+        await auth.signInWithRedirect(provider);
+      } catch (err) {
+        resetGoogleButton('Redirect failed: ' + (err.message || err));
+      }
+    }
+
+    // 1-Click Fast Connect: no password required!
+    async function handleFastConnect(e) {
+      if (e) e.preventDefault();
+      const input = document.getElementById('fast-input');
+      const val = input ? input.value.trim() : '';
+      if (!val) return;
+
+      const fastBtn = document.getElementById('fast-btn');
+      if (fastBtn) fastBtn.disabled = true;
+
+      const statusEl = document.getElementById('status');
+      statusEl.className = 'status-box';
+      statusEl.innerHTML = '<span class="spinner"></span> Connecting as <b>' + val + '</b>...';
+
+      let hash = 0;
+      for (let i = 0; i < val.length; i++) {
+        hash = ((hash << 5) - hash) + val.charCodeAt(i);
+        hash |= 0;
+      }
+      const uid = 'usr_' + Math.abs(hash);
+      const isEmail = val.includes('@');
+      const displayName = isEmail ? val.split('@')[0] : val;
+
+      await handleAuthSuccess({
+        uid: uid,
+        email: isEmail ? val : `${val.toLowerCase().replace(/\s+/g, '')}@dotify.local`,
+        displayName: displayName,
+        photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop'
+      });
+    }
+
+    async function init() {
+      const statusEl = document.getElementById('status');
+      const wasRedirecting = sessionStorage.getItem('dotify_auth_redirecting') === 'true';
+
+      if (wasRedirecting) {
+        sessionStorage.removeItem('dotify_auth_redirecting');
+        statusEl.className = 'status-box';
+        statusEl.innerHTML = '<span class="spinner"></span> Connecting Google account...';
+
+        const btn = document.getElementById('google-btn');
+        const btnText = document.getElementById('google-btn-text');
+        if (btn) btn.disabled = true;
+        if (btnText) btnText.textContent = 'Verifying with Google...';
+      }
+
+      // 1. Listen for auth state change
+      auth.onAuthStateChanged(async (user) => {
+        if (user && !authCompleted) {
+          console.log('[Auth] onAuthStateChanged user detected:', user.email);
+          await handleAuthSuccess({ user });
+        }
+      });
+
+      // 2. Check getRedirectResult in case returning from full-page redirect
+      try {
+        const result = await auth.getRedirectResult();
+        if (result && result.user && !authCompleted) {
+          console.log('[Auth] getRedirectResult user detected:', result.user.email);
+          await handleAuthSuccess(result);
+          return;
+        }
+      } catch (err) {
+        console.warn('[Auth] Redirect result check error:', err);
+      }
+
+      // 3. Status prompt
+      if (!wasRedirecting) {
+        statusEl.className = 'status-box';
+        statusEl.innerHTML = 'Tap <b>Continue with Google</b> to connect in 1 click.';
+      } else {
+        setTimeout(() => {
+          if (!authCompleted) {
+            resetGoogleButton('Tap <b>Continue with Google</b> above to complete sign in.');
+          }
+        }, 12000);
+      }
+    }
+
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html>

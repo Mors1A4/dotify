@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #000000;
+  --bg-surface: #121212;
+  --bg-elevated: #1e1e1e;
+  --bg-highlight: #2a2a2a;
+  --text-primary: #ffffff;
+  --text-secondary: #b3b3b3;
+  --text-muted: #6b6b6b;
+  --accent: #1db954;
+  --accent-hover: #1ed760;
+  --accent-content: #ffffff;
+  --border: #282828;
+  --player-bg: #0f0f0f;
+  --seekbar-bg: #4d4d4d;
+  --seekbar-buffered: #666666;
+  --seekbar-fill: #1db954;
+}
+
+html,
+body,
+#root {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+}
+
+*,
+::before,
+::after {
+  border-color: var(--border);
+}
+
+/* Custom smooth scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+@keyframes eq-bar {
+  0%, 100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes seekbar-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.seekbar-shimmer::after {
+  content: '';
+  display: block;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.65) 50%,
+    transparent 100%
+  );
+  animation: seekbar-shimmer 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Minimalist, rigid, clean sliders with no spherical handle */
+input[type='range']:not(.vertical-eq-slider) {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 0px;
+  height: 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type='range']:not(.vertical-eq-slider)::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 4px;
+  height: 12px;
+  border-radius: 0px;
+  background-color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  transition: width 0.1s ease, height 0.1s ease;
+}
+
+input[type='range']:not(.vertical-eq-slider):hover::-webkit-slider-thumb {
+  width: 6px;
+  height: 14px;
+  background-color: #ffffff;
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 4px;
+  height: 12px;
+  border: none;
+  border-radius: 0px;
+  background-color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+}
+
+input[type='range']:hover::-moz-range-thumb {
+  width: 6px;
+  height: 14px;
+  background-color: #ffffff;
+}
+
+/* Firefox left progress fill */
+input[type='range']::-moz-range-progress {
+  background-color: #ffffff;
+  border-radius: 0px;
+}
+
+/* Ensure inputs, textareas, and editable controls always allow text selection & proper Android IME handling */
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+/* Ensure mobile safe-areas */
+.safe-pb {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 16px);
+}
+
+.safe-pt {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.is-android .safe-pt,
+.mobile-safe-top {
+  padding-top: max(env(safe-area-inset-top, 0px), 2rem);
+}
