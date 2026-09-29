@@ -98,6 +98,9 @@ export class DailyVibeManager {
       return mem;
     }
 
+    const lockKey = `${storageKey}_lock`;
+    const lockExpiryMs = 90000;
+
     // 2. Check persistent safeStorage
     if (!forceRegenerate) {
       const cached = safeStorage.getItem<DailyVibesCache | null>(storageKey, null);
@@ -105,9 +108,23 @@ export class DailyVibeManager {
         this.inMemoryCache.set(storageKey, cached.playlists);
         return cached.playlists;
       }
+
+      // Check cross-instance persistent lock (e.g., user opening multiple windows simultaneously)
+      const activeLock = safeStorage.getItem<number | null>(lockKey, null);
+      if (activeLock && Date.now() - activeLock < lockExpiryMs) {
+        console.log(`[DailyVibeManager] Another instance is currently curating daily vibes. Awaiting cache...`);
+        for (let i = 0; i < 30; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          const freshlyCached = safeStorage.getItem<DailyVibesCache | null>(storageKey, null);
+          if (freshlyCached && Array.isArray(freshlyCached.playlists) && freshlyCached.playlists.length >= 4) {
+            this.inMemoryCache.set(storageKey, freshlyCached.playlists);
+            return freshlyCached.playlists;
+          }
+        }
+      }
     }
 
-    // 3. Prevent duplicate concurrent generations
+    // 3. Prevent duplicate concurrent generations in the current process
     if (this.activeGenerationPromise) {
       return this.activeGenerationPromise;
     }
@@ -126,48 +143,55 @@ export class DailyVibeManager {
     today: string,
     storageKey: string
   ): Promise<DailyVibePlaylist[]> {
-    console.log(`[DailyVibeManager] Generating daily vibe playlists for account "${accountId}" on ${today}...`);
+    const lockKey = `${storageKey}_lock`;
+    safeStorage.setItem(lockKey, Date.now());
 
-    // A. Gather listening history & library
-    let plays: TrackPlayRecord[] = [];
     try {
-      plays = await telemetryDb.getAllPlays();
-    } catch (e) {
-      console.warn('[DailyVibeManager] Failed to read telemetry DB, continuing with empty plays:', e);
+      console.log(`[DailyVibeManager] Generating daily vibe playlists for account "${accountId}" on ${today}...`);
+
+      // A. Gather listening history & library
+      let plays: TrackPlayRecord[] = [];
+      try {
+        plays = await telemetryDb.getAllPlays();
+      } catch (e) {
+        console.warn('[DailyVibeManager] Failed to read telemetry DB, continuing with empty plays:', e);
+      }
+
+      const { likedTracks, followedArtists } = usePlayerStore.getState();
+
+      // B. Profile user genres
+      const tasteProfile = genreProfiler.profileUserGenres(plays, likedTracks, followedArtists);
+
+      // C. Call Gemini 3.8 Flash with Search Grounding
+      const geminiResult = await geminiVibeService.generateDailyVibePlaylists(tasteProfile, today);
+
+      // D. Hydrate raw tracks into full Dotify playable tracks
+      const hydratedPlaylists = this.hydratePlaylists(
+        geminiResult.playlists,
+        today,
+        geminiResult.modelUsed
+      );
+
+      // E. Save to safeStorage
+      const cacheRecord: DailyVibesCache = {
+        date: today,
+        accountId,
+        generatedAt: Date.now(),
+        playlists: hydratedPlaylists,
+        tasteProfileSummary: tasteProfile.summaryText,
+      };
+
+      safeStorage.setItem(storageKey, cacheRecord);
+      this.inMemoryCache.set(storageKey, hydratedPlaylists);
+
+      console.log(
+        `[DailyVibeManager] Saved ${hydratedPlaylists.length} daily vibe playlists to storage key "${storageKey}".`
+      );
+
+      return hydratedPlaylists;
+    } finally {
+      safeStorage.removeItem(lockKey);
     }
-
-    const { likedTracks, followedArtists } = usePlayerStore.getState();
-
-    // B. Profile user genres
-    const tasteProfile = genreProfiler.profileUserGenres(plays, likedTracks, followedArtists);
-
-    // C. Call Gemini 3.8 Flash with Search Grounding
-    const geminiResult = await geminiVibeService.generateDailyVibePlaylists(tasteProfile, today);
-
-    // D. Hydrate raw tracks into full Dotify playable tracks
-    const hydratedPlaylists = this.hydratePlaylists(
-      geminiResult.playlists,
-      today,
-      geminiResult.modelUsed
-    );
-
-    // E. Save to safeStorage
-    const cacheRecord: DailyVibesCache = {
-      date: today,
-      accountId,
-      generatedAt: Date.now(),
-      playlists: hydratedPlaylists,
-      tasteProfileSummary: tasteProfile.summaryText,
-    };
-
-    safeStorage.setItem(storageKey, cacheRecord);
-    this.inMemoryCache.set(storageKey, hydratedPlaylists);
-
-    console.log(
-      `[DailyVibeManager] Saved ${hydratedPlaylists.length} daily vibe playlists to storage key "${storageKey}".`
-    );
-
-    return hydratedPlaylists;
   }
 
   /**

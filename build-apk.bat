@@ -25,13 +25,13 @@ echo [2/3] Building Tauri Android Release APK...
 if exist "src-tauri\gen\android\gradlew.bat" (
     call "src-tauri\gen\android\gradlew.bat" --project-dir "src-tauri\gen\android" --stop >nul 2>&1
 )
-if exist "src-tauri\gen\android\app\build\intermediates" (
-    echo [CLEAN] Clearing stale Gradle intermediates...
-    rd /s /q "src-tauri\gen\android\app\build\intermediates" >nul 2>&1
+if exist "src-tauri\gen\android\buildSrc\build" (
+    echo [CLEAN] Clearing stale buildSrc cache...
+    rd /s /q "src-tauri\gen\android\buildSrc\build" >nul 2>&1
 )
-if exist "src-tauri\gen\android\app\build\outputs" (
-    echo [CLEAN] Clearing stale Gradle outputs...
-    rd /s /q "src-tauri\gen\android\app\build\outputs" >nul 2>&1
+if exist "src-tauri\gen\android\app\build" (
+    echo [CLEAN] Clearing stale Android app build directory...
+    rd /s /q "src-tauri\gen\android\app\build" >nul 2>&1
 )
 call npx tauri android build --apk
 if %ERRORLEVEL% neq 0 (
