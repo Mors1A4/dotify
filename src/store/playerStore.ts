@@ -555,7 +555,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     const engineTrack = audioEngine.getCurrentTrack();
     const currentTrack = get().currentTrack || engineTrack;
     set({ isPlaying, isBuffering, currentTrack });
-    updateMediaSessionPlaybackState(isPlaying);
+    updateMediaSessionPlaybackState(isPlaying, audioEngine.getCurrentTime());
 
     if (get().connectMode !== 'remote_controller' && prevPlaying !== isPlaying) {
       broadcastCurrentState();
@@ -790,13 +790,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       });
 
       if (state.currentTrack) {
-        updateMediaSession(state.currentTrack, {
-          onPlay: () => get().togglePlay(),
-          onPause: () => get().togglePlay(),
-          onPrevious: () => get().previousTrack(),
-          onNext: () => get().nextTrack(),
-          onSeekTo: (time) => get().seekTo(time),
-        });
+        updateMediaSession(
+          state.currentTrack,
+          {
+            onPlay: () => get().togglePlay(),
+            onPause: () => get().togglePlay(),
+            onPrevious: () => get().previousTrack(),
+            onNext: () => get().nextTrack(),
+            onSeekTo: (time) => get().seekTo(time),
+          },
+          state.isPlaying,
+          (state.positionMs || 0) / 1000
+        );
       }
     },
 
@@ -1072,13 +1077,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       audioEngine.playTrack(track);
 
       // System media session integration
-      updateMediaSession(track, {
-        onPlay: () => get().togglePlay(),
-        onPause: () => get().togglePlay(),
-        onPrevious: () => get().previousTrack(),
-        onNext: () => get().nextTrack(),
-        onSeekTo: (time) => get().seekTo(time),
-      });
+      updateMediaSession(
+        track,
+        {
+          onPlay: () => get().togglePlay(),
+          onPause: () => get().togglePlay(),
+          onPrevious: () => get().previousTrack(),
+          onNext: () => get().nextTrack(),
+          onSeekTo: (time) => get().seekTo(time),
+        },
+        true,
+        0
+      );
 
       // Queue pre-warming & secondary element priming
       try {
@@ -1202,6 +1212,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return;
       }
       audioEngine.seekTo(seconds);
+      updateMediaSessionPlaybackState(get().isPlaying, seconds);
       broadcastCurrentState();
     },
 
