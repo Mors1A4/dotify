@@ -73,6 +73,91 @@ export function updateFaviconBadge(accentColor: string) {
   link.href = encoded;
 }
 
+const THEME_ACCENT_PALETTE: { key: string; color: [number, number, number] }[] = [
+  { key: 'green', color: [30, 215, 96] },      // #1ed760
+  { key: 'cyan', color: [0, 240, 255] },       // #00f0ff
+  { key: 'purple', color: [168, 85, 247] },    // #a855f7
+  { key: 'pink', color: [255, 42, 133] },      // #ff2a85
+  { key: 'orange', color: [255, 107, 53] },    // #ff6b35
+  { key: 'amber', color: [251, 191, 36] },     // #fbbf24
+  { key: 'red', color: [239, 68, 68] },        // #ef4444
+  { key: 'blue', color: [56, 189, 248] },      // #38bdf8
+];
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const clean = hex.replace('#', '').trim();
+  if (clean.length === 3) {
+    const r = parseInt(clean[0] + clean[0], 16);
+    const g = parseInt(clean[1] + clean[1], 16);
+    const b = parseInt(clean[2] + clean[2], 16);
+    return [r, g, b];
+  }
+  if (clean.length >= 6) {
+    const r = parseInt(clean.substring(0, 2), 16);
+    const g = parseInt(clean.substring(2, 4), 16);
+    const b = parseInt(clean.substring(4, 6), 16);
+    return [r, g, b];
+  }
+  return null;
+}
+
+export function resolveAndroidIconThemeKey(input: string): string {
+  if (!input) return 'green';
+  const norm = input.toLowerCase().trim();
+  if (norm.includes('cyan') || norm === 'electric-cyan') return 'cyan';
+  if (norm.includes('purple') || norm === 'neon-purple') return 'purple';
+  if (norm.includes('pink') || norm === 'hot-pink' || norm === 'cyberpunk-neon' || norm === 'rose-pine') return 'pink';
+  if (norm.includes('orange') || norm === 'sunset-orange') return 'orange';
+  if (norm.includes('amber') || norm === 'gold' || norm === 'amber-gold') return 'amber';
+  if (norm.includes('red') || norm === 'crimson-red') return 'red';
+  if (norm.includes('blue') || norm === 'sky-blue' || norm === 'nord-frost') return 'blue';
+  if (norm.includes('green') || norm === 'spotify-green' || norm === 'spotify-oled' || norm === 'retro-winamp') return 'green';
+
+  const rgb = hexToRgb(norm);
+  if (!rgb) return 'green';
+
+  let minDistance = Infinity;
+  let bestKey = 'green';
+  for (const item of THEME_ACCENT_PALETTE) {
+    const dr = rgb[0] - item.color[0];
+    const dg = rgb[1] - item.color[1];
+    const db = rgb[2] - item.color[2];
+    const dist = dr * dr + dg * dg + db * db;
+    if (dist < minDistance) {
+      minDistance = dist;
+      bestKey = item.key;
+    }
+  }
+  return bestKey;
+}
+
+export function updateAndroidAppIcon(accentColorOrPreset: string) {
+  if (typeof window === 'undefined') return;
+
+  const iconKey = resolveAndroidIconThemeKey(accentColorOrPreset);
+
+  // Method 1: Android Native WebView JavascriptInterface bridge
+  if ((window as any).AndroidNativeTheme?.setAppIcon) {
+    try {
+      (window as any).AndroidNativeTheme.setAppIcon(iconKey);
+      return;
+    } catch (e) {
+      console.warn('[Theme] AndroidNativeTheme.setAppIcon error:', e);
+    }
+  }
+
+  // Method 2: Tauri IPC fallback for Android
+  try {
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => {
+        invoke('set_android_app_icon', { theme: iconKey }).catch(() => {});
+      })
+      .catch(() => {});
+  } catch {
+    // In web browser environments, gracefully ignore
+  }
+}
+
 export function applyThemeToDOM(presetId: ThemePresetId, colors: ThemeColors) {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
@@ -100,12 +185,14 @@ export function applyThemeToDOM(presetId: ThemePresetId, colors: ThemeColors) {
 
   updateFaviconBadge(colors.accent);
   updateNativeWindowIcon(colors.accent);
+  updateAndroidAppIcon(colors.accent);
 }
 
 // Apply on startup
 if (typeof document !== 'undefined') {
   applyThemeToDOM(initialPreset, initialColors);
   setTimeout(() => updateNativeWindowIcon(initialColors.accent), 350);
+  setTimeout(() => updateAndroidAppIcon(initialColors.accent), 400);
 }
 
 export const useThemeStore = create<ThemeStoreState>((set, get) => ({
