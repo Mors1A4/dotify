@@ -86,6 +86,12 @@ export const PlaylistView: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const vibePlaylist = selectedPlaylistId ? dailyVibeManager.getVibePlaylistById(selectedPlaylistId) : null;
   const playlist = playlists.find((p) => p.id === selectedPlaylistId) || vibePlaylist || null;
+  const libraryPlaylist = playlist
+    ? playlists.find(
+        (p) => p.id === playlist.id || p.name.trim().toLowerCase() === playlist.name.trim().toLowerCase()
+      )
+    : null;
+  const isPlaylistInLibrary = Boolean(libraryPlaylist);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -229,8 +235,10 @@ export const PlaylistView: React.FC = () => {
   };
 
   const handleDeletePlaylist = () => {
+    if (!playlist) return;
+    const targetId = libraryPlaylist ? libraryPlaylist.id : playlist.id;
     if (confirm(`Are you sure you want to delete playlist "${playlist.name}"?`)) {
-      deletePlaylist(playlist.id);
+      deletePlaylist(targetId);
       navigateBack();
     }
   };
@@ -448,50 +456,68 @@ export const PlaylistView: React.FC = () => {
               <span>Shuffle</span>
             </button>
 
-            {vibePlaylist && !playlists.some((p) => p.id === vibePlaylist.id) && (
+            {vibePlaylist && (
               <button
                 onClick={() => {
-                  dailyVibeManager.saveVibeToLibrary(vibePlaylist);
-                  showToast('Saved daily vibe playlist to your library!');
+                  if (isPlaylistInLibrary && libraryPlaylist) {
+                    if (confirm(`Remove "${libraryPlaylist.name}" from your library?`)) {
+                      deletePlaylist(libraryPlaylist.id);
+                      showToast('Removed playlist from your library');
+                    }
+                  } else {
+                    dailyVibeManager.saveVibeToLibrary(vibePlaylist);
+                    showToast('Saved daily vibe playlist to your library!');
+                  }
                 }}
-                className="flex items-center gap-1.5 px-4 py-3 rounded-full bg-accent text-accent-content font-bold text-xs shadow-lg hover:scale-105 transition-all active:scale-95 cursor-pointer"
-                title="Save this daily vibe playlist permanently to your library"
+                className={`flex items-center gap-1.5 px-4 py-3 rounded-full font-bold text-xs shadow-lg hover:scale-105 transition-all active:scale-95 cursor-pointer ${
+                  isPlaylistInLibrary
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/40'
+                    : 'bg-accent text-accent-content'
+                }`}
+                title={isPlaylistInLibrary ? 'In your library (Click to remove)' : 'Save this daily vibe playlist permanently to your library'}
               >
-                <Plus size={14} />
-                <span>Save to Library</span>
+                {isPlaylistInLibrary ? <Check size={14} /> : <Plus size={14} />}
+                <span>{isPlaylistInLibrary ? 'In Library' : 'Save to Library'}</span>
               </button>
             )}
 
-            <button
-              onClick={openDetailsEditor}
-              className="flex items-center gap-1.5 px-4 py-3 rounded-full bg-elevated hover:bg-highlight border border-customBorder text-secondary hover:text-primary font-bold text-xs shadow transition-all active:scale-95 cursor-pointer"
-              title="Edit Playlist Cover, Title & Description"
-            >
-              <Edit2 size={14} />
-              <span className="hidden sm:inline">Edit Details</span>
-            </button>
+            {isPlaylistInLibrary && (
+              <button
+                onClick={openDetailsEditor}
+                className="flex items-center gap-1.5 px-4 py-3 rounded-full bg-elevated hover:bg-highlight border border-customBorder text-secondary hover:text-primary font-bold text-xs shadow transition-all active:scale-95 cursor-pointer"
+                title="Edit Playlist Cover, Title & Description"
+              >
+                <Edit2 size={14} />
+                <span className="hidden sm:inline">Edit Details</span>
+              </button>
+            )}
 
-            <button
-              onClick={() => setShowSpotifyAppender((prev) => !prev)}
-              className={`flex items-center gap-1.5 px-4 py-3 rounded-full border font-bold text-xs shadow transition-all active:scale-95 cursor-pointer ${
-                showSpotifyAppender
-                  ? 'bg-[#1DB954] text-white border-[#1DB954]'
-                  : 'bg-elevated hover:bg-[#1DB954]/15 border-customBorder hover:border-[#1DB954]/40 text-secondary hover:text-[#1DB954]'
-              }`}
-              title="Import tracks from a Spotify link into this playlist"
-            >
-              <Sparkles size={14} />
-              <span>Import from Spotify</span>
-            </button>
+            {isPlaylistInLibrary && (
+              <button
+                onClick={() => setShowSpotifyAppender((prev) => !prev)}
+                className={`flex items-center gap-1.5 px-4 py-3 rounded-full border font-bold text-xs shadow transition-all active:scale-95 cursor-pointer ${
+                  showSpotifyAppender
+                    ? 'bg-[#1DB954] text-white border-[#1DB954]'
+                    : 'bg-elevated hover:bg-[#1DB954]/15 border-customBorder hover:border-[#1DB954]/40 text-secondary hover:text-[#1DB954]'
+                }`}
+                title="Import tracks from a Spotify link into this playlist"
+              >
+                <Sparkles size={14} />
+                <span>Import from Spotify</span>
+              </button>
+            )}
 
-            <button
-              onClick={handleDeletePlaylist}
-              className="flex items-center gap-1.5 px-3.5 py-3 rounded-full bg-elevated hover:bg-red-500/10 hover:border-red-500/40 border border-customBorder text-secondary hover:text-red-400 font-bold text-xs shadow transition-all active:scale-95 cursor-pointer"
-              title="Delete Playlist"
-            >
-              <Trash2 size={15} />
-              <span className="hidden md:inline">Delete</span>
-            </button>
+            {isPlaylistInLibrary && (
+              <button
+                data-testid="delete-playlist-action-btn"
+                onClick={handleDeletePlaylist}
+                className="flex items-center gap-1.5 px-3.5 py-3 rounded-full bg-elevated hover:bg-red-500/10 hover:border-red-500/40 border border-customBorder text-secondary hover:text-red-400 font-bold text-xs shadow transition-all active:scale-95 cursor-pointer"
+                title="Delete Playlist from Library"
+              >
+                <Trash2 size={15} />
+                <span className="hidden md:inline">Delete</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

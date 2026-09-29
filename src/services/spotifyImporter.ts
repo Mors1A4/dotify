@@ -157,6 +157,19 @@ export function saveSpotifyPlaylistToStore(
     artworkUrl: upgradeArtworkUrl(t.artworkUrl),
   }));
 
+  const cleanUrl = preview.sourceUrl?.trim().toLowerCase();
+  const cleanName = finalName.toLowerCase();
+  const existing = store.playlists.find((p) => {
+    if (cleanUrl && p.sourceSpotifyUrl && p.sourceSpotifyUrl.trim().toLowerCase() === cleanUrl) {
+      return true;
+    }
+    return p.name.trim().toLowerCase() === cleanName;
+  });
+
+  if (existing) {
+    return existing.id;
+  }
+
   const playlistId = store.importCustomPlaylist({
     name: finalName,
     description: finalDesc,

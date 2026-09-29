@@ -75,3 +75,19 @@ export interface FollowedArtist {
   genres?: string[];
   followedAt: number;
 }
+
+/**
+ * Summary record for a recently listened artist in Made For You recommendations.
+ */
+export interface RecentArtistItem {
+  id: string;
+  name: string;
+  picture: string;
+  genres: string[];
+  lastPlayedAt: number;
+  playCount: number;
+  affinityScore: number;
+  isFollowed?: boolean;
+  recentTrackTitle?: string;
+}
+

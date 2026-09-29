@@ -152,6 +152,7 @@ export const CreatePlaylistModal: React.FC = () => {
     navigateToPlaylist,
     playTrack,
     likedTracks,
+    playlists,
   } = usePlayerStore();
 
   const [activeTab, setActiveTab] = useState<'custom' | 'spotify'>('custom');
@@ -242,6 +243,18 @@ export const CreatePlaylistModal: React.FC = () => {
   if (!isCreatePlaylistModalOpen) return null;
 
   const detectedSpotifyInName = validateSpotifyUrl(name);
+
+  const existingCustomPlaylist = name.trim()
+    ? (playlists || []).find((p) => p.name.trim().toLowerCase() === name.trim().toLowerCase())
+    : null;
+
+  const existingSpotifyPlaylist = spotifyPreview
+    ? (playlists || []).find(
+        (p) =>
+          (spotifyPreview.sourceUrl && p.sourceSpotifyUrl?.trim().toLowerCase() === spotifyPreview.sourceUrl.trim().toLowerCase()) ||
+          p.name.trim().toLowerCase() === (editableSpotifyTitle.trim().toLowerCase() || spotifyPreview.playlistTitle.trim().toLowerCase())
+      )
+    : null;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1112,26 +1125,37 @@ export const CreatePlaylistModal: React.FC = () => {
                   <span>Create & Play</span>
                 </button>
               )}
+              {existingCustomPlaylist && (
+                <span className="text-[11px] text-accent font-semibold hidden sm:inline">
+                  Already in library • adds songs to mix
+                </span>
+              )}
               <button
                 type="button"
                 data-testid="confirm-create-playlist-btn"
                 onClick={() => handleCreateCustomPlaylist()}
-                className="px-6 py-2.5 rounded-full bg-accent text-accent-content font-extrabold text-xs flex items-center gap-2 shadow-xl hover:scale-105 active:scale-95 transition-all"
+                className="px-6 py-2.5 rounded-full bg-accent text-accent-content font-extrabold text-xs flex items-center gap-2 shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer"
               >
                 <Check size={15} />
                 <span>
-                  Create Playlist
-                  {selectedTracks.length > 0 ? ` (${selectedTracks.length})` : ''}
+                  {existingCustomPlaylist
+                    ? 'Update Existing Playlist'
+                    : `Create Playlist${selectedTracks.length > 0 ? ` (${selectedTracks.length})` : ''}`}
                 </span>
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-2.5">
-              {spotifyPreview && includedSpotifyTracksCount > 0 && (
+              {existingSpotifyPlaylist && (
+                <span className="text-[11px] text-accent font-semibold hidden sm:inline">
+                  Already in library
+                </span>
+              )}
+              {spotifyPreview && includedSpotifyTracksCount > 0 && !existingSpotifyPlaylist && (
                 <button
                   type="button"
                   onClick={() => handleSaveSpotifyPlaylist(true)}
-                  className="px-4 py-2.5 rounded-full bg-elevated hover:bg-highlight border border-[#1DB954]/50 text-[#1DB954] text-xs font-bold flex items-center gap-1.5 transition-all"
+                  className="px-4 py-2.5 rounded-full bg-elevated hover:bg-highlight border border-[#1DB954]/50 text-[#1DB954] text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
                 >
                   <Play size={14} fill="currentColor" />
                   <span>Create & Play Now</span>
@@ -1142,11 +1166,13 @@ export const CreatePlaylistModal: React.FC = () => {
                 data-testid="save-spotify-playlist-btn"
                 disabled={!spotifyPreview || includedSpotifyTracksCount === 0}
                 onClick={() => handleSaveSpotifyPlaylist(false)}
-                className="px-6 py-2.5 rounded-full bg-[#1DB954] hover:bg-[#1ed760] text-black font-extrabold text-xs flex items-center gap-2 shadow-xl hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100 transition-all"
+                className="px-6 py-2.5 rounded-full bg-[#1DB954] hover:bg-[#1ed760] text-black font-extrabold text-xs flex items-center gap-2 shadow-xl hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100 transition-all cursor-pointer"
               >
                 <Check size={15} />
                 <span>
-                  {spotifyPreview
+                  {existingSpotifyPlaylist
+                    ? 'Already in Library • Open Playlist'
+                    : spotifyPreview
                     ? `Create Playlist (${includedSpotifyTracksCount} Songs)`
                     : 'Save as Dotify Playlist'}
                 </span>

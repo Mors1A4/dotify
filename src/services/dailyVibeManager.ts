@@ -303,6 +303,14 @@ export class DailyVibeManager {
    */
   public saveVibeToLibrary(playlist: DailyVibePlaylist): string {
     const store = usePlayerStore.getState();
+    const cleanName = playlist.name.trim().toLowerCase();
+    const existing = (store.playlists || []).find(
+      (p) => p.id === playlist.id || p.name.trim().toLowerCase() === cleanName
+    );
+    if (existing) {
+      return existing.id;
+    }
+
     const newId = store.importCustomPlaylist({
       name: playlist.name,
       description: `${playlist.description} (Curated by Dotify AI)`,

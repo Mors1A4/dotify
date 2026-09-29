@@ -3,6 +3,7 @@ import { fetchSpotifyPreview, saveSpotifyPlaylistToStore } from '../../services/
 import { SpotifyImportPreview } from '../../types/playlist';
 import { X, Sparkles, Loader2, Check } from 'lucide-react';
 import { DEFAULT_MUSIC_ARTWORK } from '../../services/artworkService';
+import { usePlayerStore } from '../../store/playerStore';
 
 interface SpotifyImportModalProps {
   isOpen: boolean;
@@ -15,6 +16,7 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
   onClose,
   onImportSuccess,
 }) => {
+  const { playlists } = usePlayerStore();
   const [urlInput, setUrlInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -141,15 +143,37 @@ export const SpotifyImportModal: React.FC<SpotifyImportModalProps> = ({
               )}
             </div>
 
-            {/* Save Button */}
-            <button
-              onClick={handleSave}
-              data-testid="save-spotify-playlist-btn"
-              className="w-full py-3 rounded-xl bg-[#1DB954] hover:bg-[#1ed760] text-black font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all"
-            >
-              <Check size={16} />
-              <span>Save as Dotify Playlist</span>
-            </button>
+            {/* Existing Playlist Notice & Save Button */}
+            {(() => {
+              const existingPlaylist = preview
+                ? playlists.find(
+                    (p) =>
+                      (preview.sourceUrl && p.sourceSpotifyUrl?.trim().toLowerCase() === preview.sourceUrl.trim().toLowerCase()) ||
+                      p.name.trim().toLowerCase() === preview.playlistTitle.trim().toLowerCase()
+                  )
+                : null;
+
+              return (
+                <div className="flex flex-col gap-2.5">
+                  {existingPlaylist && (
+                    <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-accent/15 border border-accent/30 text-accent text-xs font-semibold">
+                      <Check size={14} className="shrink-0" />
+                      <span>This playlist is already in your library</span>
+                    </div>
+                  )}
+                  <button
+                    onClick={handleSave}
+                    data-testid="save-spotify-playlist-btn"
+                    className="w-full py-3 rounded-xl bg-[#1DB954] hover:bg-[#1ed760] text-black font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
+                  >
+                    <Check size={16} />
+                    <span>
+                      {existingPlaylist ? 'Already in Library • Open Playlist' : 'Save as Dotify Playlist'}
+                    </span>
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

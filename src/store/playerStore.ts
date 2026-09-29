@@ -295,20 +295,50 @@ const isCleanTrack = (t: Track | null | undefined): boolean => {
   return true;
 };
 
+export const deduplicatePlaylists = (playlists: CustomPlaylist[]): CustomPlaylist[] => {
+  if (!Array.isArray(playlists)) return [];
+  const seenSpotifyUrls = new Set<string>();
+  const seenNames = new Set<string>();
+  const result: CustomPlaylist[] = [];
+
+  for (const pl of playlists) {
+    if (!pl || !pl.name) continue;
+    const cleanName = pl.name.trim().toLowerCase();
+    const cleanSpotifyUrl = pl.sourceSpotifyUrl?.trim().toLowerCase();
+
+    if (cleanSpotifyUrl && seenSpotifyUrls.has(cleanSpotifyUrl)) {
+      continue;
+    }
+    if (seenNames.has(cleanName)) {
+      continue;
+    }
+
+    if (cleanSpotifyUrl) {
+      seenSpotifyUrls.add(cleanSpotifyUrl);
+    }
+    seenNames.add(cleanName);
+    result.push(pl);
+  }
+
+  return result;
+};
+
 const initialLiked = safeStorage.getItem<Track[]>(STORAGE_LIKED, []).filter(isCleanTrack);
 const rawInitialPlaylists = safeStorage.getItem<CustomPlaylist[]>(STORAGE_PLAYLISTS, []);
-const initialPlaylists: CustomPlaylist[] = Array.isArray(rawInitialPlaylists)
-  ? rawInitialPlaylists.map((pl) => ({
-      ...pl,
-      coverArt: pl.coverArt ? upgradeArtworkUrl(pl.coverArt) : pl.coverArt,
-      tracks: Array.isArray(pl.tracks)
-        ? pl.tracks.filter(isCleanTrack).map((t) => ({
-            ...t,
-            artworkUrl: upgradeArtworkUrl(t.artworkUrl),
-          }))
-        : [],
-    }))
-  : [];
+const initialPlaylists: CustomPlaylist[] = deduplicatePlaylists(
+  Array.isArray(rawInitialPlaylists)
+    ? rawInitialPlaylists.map((pl) => ({
+        ...pl,
+        coverArt: pl.coverArt ? upgradeArtworkUrl(pl.coverArt) : pl.coverArt,
+        tracks: Array.isArray(pl.tracks)
+          ? pl.tracks.filter(isCleanTrack).map((t) => ({
+              ...t,
+              artworkUrl: upgradeArtworkUrl(t.artworkUrl),
+            }))
+          : [],
+      }))
+    : []
+);
 const initialHistory = safeStorage.getItem<Track[]>(STORAGE_HISTORY, []).filter(isCleanTrack);
 const initialFollowedArtists = safeStorage.getItem<FollowedArtist[]>(STORAGE_FOLLOWED_ARTISTS, []);
 const initialVolume = safeStorage.getItem<number>(STORAGE_VOLUME, 0.8);
@@ -1585,17 +1615,29 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     },
 
     createPlaylist: (name: string, description = '', coverArt = '', initialTracks: Track[] = []) => {
+      const cleanName = name.trim() || 'My Playlist';
+      const { playlists, addTracksToPlaylist } = get();
+      const existing = playlists.find(
+        (p) => p.name.trim().toLowerCase() === cleanName.toLowerCase()
+      );
+      if (existing) {
+        if (initialTracks && initialTracks.length > 0) {
+          addTracksToPlaylist(existing.id, initialTracks);
+        }
+        return existing.id;
+      }
+
       const id = `pl_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       const newPlaylist: CustomPlaylist = {
         id,
-        name: name.trim() || 'My Playlist',
+        name: cleanName,
         description: description.trim(),
         coverArt,
         tracks: Array.isArray(initialTracks) ? [...initialTracks] : [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const updated = [...get().playlists, newPlaylist];
+      const updated = [...playlists, newPlaylist];
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
@@ -1633,9 +1675,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     },
 
     deletePlaylist: (playlistId: string) => {
-      const updated = get().playlists.filter((p) => p.id !== playlistId);
+      const { playlists, selectedPlaylistId, activeView } = get();
+      const updated = playlists.filter((p) => p.id !== playlistId);
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
-      set({ playlists: updated });
+      const updates: any = { playlists: updated };
+      if (selectedPlaylistId === playlistId) {
+        updates.selectedPlaylistId = null;
+        if (activeView === 'playlist') {
+          updates.activeView = 'library';
+          updates.currentView = 'library';
+        }
+      }
+      set(updates);
       scheduleCloudLibrarySync();
     },
 
@@ -1699,18 +1750,34 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     },
 
     importCustomPlaylist: (pl) => {
+      const { playlists } = get();
+      const cleanName = (pl.name || '').trim().toLowerCase();
+      const cleanSpotifyUrl = pl.sourceSpotifyUrl?.trim().toLowerCase();
+
+      // Check if duplicate already exists in library
+      const existing = playlists.find((p) => {
+        if (cleanSpotifyUrl && p.sourceSpotifyUrl && p.sourceSpotifyUrl.trim().toLowerCase() === cleanSpotifyUrl) {
+          return true;
+        }
+        return p.name.trim().toLowerCase() === cleanName;
+      });
+
+      if (existing) {
+        return existing.id;
+      }
+
       const id = `pl_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       const newPlaylist: CustomPlaylist = {
         id,
         name: pl.name.trim() || 'Imported Playlist',
-        description: pl.description || 'Imported from Spotify',
+        description: pl.description || 'Imported Playlist',
         coverArt: pl.coverArt || '',
         sourceSpotifyUrl: pl.sourceSpotifyUrl,
         tracks: pl.tracks,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const updated = [...get().playlists, newPlaylist];
+      const updated = [...playlists, newPlaylist];
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
@@ -1725,11 +1792,12 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       followedArtists?: FollowedArtist[]
     ) => {
       const cleanLiked = liked.filter(isCleanTrack);
+      const cleanPlaylists = deduplicatePlaylists(playlists);
       const history = Array.isArray(historyOrUserId) ? historyOrUserId.filter(isCleanTrack) : undefined;
       const actualUserId = typeof historyOrUserId === 'string' ? historyOrUserId : maybeUserId || null;
 
       safeStorage.setItem(STORAGE_LIKED, cleanLiked);
-      safeStorage.setItem(STORAGE_PLAYLISTS, playlists);
+      safeStorage.setItem(STORAGE_PLAYLISTS, cleanPlaylists);
       if (history) {
         safeStorage.setItem(STORAGE_HISTORY, history);
       }
@@ -1738,7 +1806,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       }
       if (actualUserId) {
         safeStorage.setItem(`dotify_${actualUserId}_liked`, liked);
-        safeStorage.setItem(`dotify_${actualUserId}_playlists`, playlists);
+        safeStorage.setItem(`dotify_${actualUserId}_playlists`, cleanPlaylists);
         if (history) {
           safeStorage.setItem(`dotify_${actualUserId}_history`, history);
         }
@@ -1748,7 +1816,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       }
       set((state) => ({
         likedTracks: cleanLiked,
-        playlists,
+        playlists: cleanPlaylists,
         history: history || state.history,
         followedArtists: followedArtists !== undefined ? followedArtists : state.followedArtists,
       }));

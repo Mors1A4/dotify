@@ -344,10 +344,18 @@ export const LibraryView: React.FC = () => {
             </div>
 
             {/* User Playlists */}
+            {/* User Playlists */}
             {playlists.map((pl) => (
               <div
                 key={pl.id}
                 onClick={() => navigateToPlaylist(pl.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  if (confirm(`Delete playlist "${pl.name}"?`)) {
+                    deletePlaylist(pl.id);
+                    if (selectedPlaylistId === pl.id) setSelectedPlaylistId(null);
+                  }
+                }}
                 className="group relative flex flex-col justify-between p-3.5 rounded-2xl bg-elevated/45 hover:bg-elevated border border-customBorder/50 hover:border-accent/40 transition-all cursor-pointer shadow-sm hover:shadow-xl hover:-translate-y-1"
               >
                 <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-highlight mb-3 shadow-md">
@@ -359,54 +367,90 @@ export const LibraryView: React.FC = () => {
                     iconSize={36}
                   />
 
-                    {pl.tracks.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          playTrack(pl.tracks[0], pl.tracks);
-                        }}
-                        aria-label={`Play ${pl.name}`}
-                        className="absolute bottom-2.5 right-2.5 w-10 h-10 rounded-full bg-accent text-accent-content shadow-xl opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all flex items-center justify-center hover:scale-105 cursor-pointer"
-                      >
-                        <Play size={17} fill="currentColor" className="ml-0.5" />
-                      </button>
-                    )}
-                  </div>
+                  {/* Easy Delete Playlist Button on Card */}
+                  <button
+                    type="button"
+                    data-testid={`library-delete-playlist-${pl.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm(`Delete playlist "${pl.name}"?`)) {
+                        deletePlaylist(pl.id);
+                        if (selectedPlaylistId === pl.id) {
+                          setSelectedPlaylistId(null);
+                        }
+                      }
+                    }}
+                    aria-label={`Delete ${pl.name}`}
+                    title={`Delete "${pl.name}"`}
+                    className="absolute top-2.5 right-2.5 w-8 h-8 rounded-full bg-black/65 hover:bg-red-600 text-white/80 hover:text-white opacity-80 md:opacity-0 md:group-hover:opacity-100 transition-all flex items-center justify-center shadow-lg hover:scale-110 cursor-pointer z-10"
+                  >
+                    <Trash2 size={14} />
+                  </button>
 
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-bold text-primary truncate group-hover:text-accent transition-colors">
-                      {pl.name}
-                    </h3>
-                    <p className="text-[11px] text-secondary mt-0.5 truncate">
-                      {pl.tracks.length} {pl.tracks.length === 1 ? 'song' : 'songs'}
-                      {pl.description ? ` • ${pl.description}` : ''}
-                    </p>
-                  </div>
+                  {pl.tracks.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        playTrack(pl.tracks[0], pl.tracks);
+                      }}
+                      aria-label={`Play ${pl.name}`}
+                      className="absolute bottom-2.5 right-2.5 w-10 h-10 rounded-full bg-accent text-accent-content shadow-xl opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all flex items-center justify-center hover:scale-105 cursor-pointer"
+                    >
+                      <Play size={17} fill="currentColor" className="ml-0.5" />
+                    </button>
+                  )}
                 </div>
-              ))}
-            </div>
+
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-primary truncate group-hover:text-accent transition-colors">
+                    {pl.name}
+                  </h3>
+                  <p className="text-[11px] text-secondary mt-0.5 truncate">
+                    {pl.tracks.length} {pl.tracks.length === 1 ? 'song' : 'songs'}
+                    {pl.description ? ` • ${pl.description}` : ''}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
 
           {playlists.length > 0 && (
             <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-2 border-t border-customBorder/30">
               {playlists.map((pl) => (
-                <button
-                  key={pl.id}
-                  onClick={() => {
-                    setSelectedPlaylistId(pl.id);
-                    setIsRenaming(false);
-                  }}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-2 cursor-pointer ${
-                    selectedPlaylistId === pl.id
-                      ? 'bg-elevated text-primary font-bold border border-accent/40 shadow-sm'
-                      : 'bg-elevated/40 text-secondary hover:text-primary'
-                  }`}
-                >
-                  <span>{pl.name}</span>
-                  <span className="text-[10px] bg-highlight px-1.5 py-0.5 rounded-full text-muted">
-                    {pl.tracks.length}
-                  </span>
-                </button>
+                <div key={pl.id} className="relative group/pill flex items-center shrink-0">
+                  <button
+                    onClick={() => {
+                      setSelectedPlaylistId(pl.id);
+                      setIsRenaming(false);
+                    }}
+                    className={`px-3.5 py-1.5 pr-7 rounded-lg text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-2 cursor-pointer ${
+                      selectedPlaylistId === pl.id
+                        ? 'bg-elevated text-primary font-bold border border-accent/40 shadow-sm'
+                        : 'bg-elevated/40 text-secondary hover:text-primary'
+                    }`}
+                  >
+                    <span>{pl.name}</span>
+                    <span className="text-[10px] bg-highlight px-1.5 py-0.5 rounded-full text-muted">
+                      {pl.tracks.length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm(`Delete playlist "${pl.name}"?`)) {
+                        deletePlaylist(pl.id);
+                        if (selectedPlaylistId === pl.id) setSelectedPlaylistId(null);
+                      }
+                    }}
+                    title={`Delete "${pl.name}"`}
+                    aria-label={`Delete ${pl.name}`}
+                    className="absolute right-1.5 p-1 text-muted hover:text-red-400 opacity-60 hover:opacity-100 cursor-pointer"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
               ))}
             </div>
           )}

@@ -21,6 +21,7 @@ import {
   Music2,
   RefreshCw,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import { useUpdateStore } from '../../store/updateStore';
 
@@ -42,6 +43,7 @@ export const Sidebar: React.FC = () => {
     playlists,
     followedArtists,
     createPlaylist,
+    deletePlaylist,
     playTrack,
     currentTrack,
     isPlaying,
@@ -509,6 +511,12 @@ export const Sidebar: React.FC = () => {
                 <div
                   key={pl.id}
                   onClick={() => navigateToPlaylist(pl.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (confirm(`Delete playlist "${pl.name}"?`)) {
+                      deletePlaylist(pl.id);
+                    }
+                  }}
                   title={
                     isSidebarCollapsed
                       ? `${pl.name} (${pl.tracks.length} songs)`
@@ -558,8 +566,8 @@ export const Sidebar: React.FC = () => {
                   </div>
 
                   {!isSidebarCollapsed && (
-                    <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
-                      <div className="min-w-0 flex flex-col">
+                    <div className="flex-1 min-w-0 flex items-center justify-between gap-1.5">
+                      <div className="min-w-0 flex flex-col flex-1">
                         <span
                           className={`text-sm font-semibold truncate ${
                             isSelected || isPlaylistPlaying
@@ -575,12 +583,29 @@ export const Sidebar: React.FC = () => {
                         </span>
                       </div>
 
-                      {isPlaylistPlaying && isPlaying && (
-                        <Music2
-                          size={14}
-                          className="text-accent animate-pulse shrink-0"
-                        />
-                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isPlaylistPlaying && isPlaying && (
+                          <Music2
+                            size={14}
+                            className="text-accent animate-pulse shrink-0"
+                          />
+                        )}
+                        <button
+                          type="button"
+                          data-testid={`sidebar-delete-playlist-${pl.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Delete playlist "${pl.name}"?`)) {
+                              deletePlaylist(pl.id);
+                            }
+                          }}
+                          aria-label={`Delete playlist ${pl.name}`}
+                          title={`Delete "${pl.name}"`}
+                          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-muted hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0 cursor-pointer"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

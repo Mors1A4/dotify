@@ -1,6 +1,6 @@
 import { Track } from '../types/track';
-import { TrackPlayRecord } from '../types/telemetry';
-import { FollowedArtist } from '../types/artist';
+import { TrackPlayRecord, ArtistAffinityRecord } from '../types/telemetry';
+import { FollowedArtist, RecentArtistItem } from '../types/artist';
 import { artistService, extractPrimaryArtist } from './artistService';
 import { fetchTopCharts, searchCharts } from './chartsApi';
 import { telemetryDb } from './telemetryDb';
@@ -18,6 +18,7 @@ export interface DailyMix {
 
 export interface RecommendationShelves {
   madeForYou: Track[];
+  madeForYouArtists?: RecentArtistItem[];
   discoverWeekly: Track[];
   dailyMixes: DailyMix[];
   heavyRotation: Track[];
@@ -175,6 +176,209 @@ export class RecommendationEngine {
     }
 
     return result.length > 0 ? result : catalogue.slice(0, 10);
+  }
+
+  /**
+   * Generates a ranked list of recently listened & high-affinity artists for the "Made For You" section.
+   * Ranks artists using exponential half-life recency decay (7 days) + play completion quality +
+   * telemetry affinity score + followed artist boost.
+   */
+  public generateMadeForYouArtists(
+    plays: TrackPlayRecord[] = [],
+    artistAffinities: ArtistAffinityRecord[] = [],
+    followedArtists: FollowedArtist[] = [],
+    catalogue: Track[] = [],
+    limit = 10,
+    now = Date.now()
+  ): RecentArtistItem[] {
+    // 1. Cold-start fallback if zero plays and zero followed artists
+    if (plays.length === 0 && followedArtists.length === 0) {
+      const seenNames = new Set<string>();
+      const coldStartArtists: RecentArtistItem[] = [];
+
+      for (const t of catalogue) {
+        const name = extractPrimaryArtist(t.artist || '').trim();
+        if (!name || seenNames.has(name.toLowerCase())) continue;
+        seenNames.add(name.toLowerCase());
+
+        coldStartArtists.push({
+          id: `artist_cold_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
+          name,
+          picture: t.artworkUrl && !isUglyPlaceholder(t.artworkUrl) ? t.artworkUrl : getTrackArtwork(t),
+          genres: t.sourceMetadata?.genre ? [t.sourceMetadata.genre] : [],
+          lastPlayedAt: 0,
+          playCount: 0,
+          affinityScore: 0,
+          isFollowed: false,
+          recentTrackTitle: t.title,
+        });
+
+        if (coldStartArtists.length >= limit) break;
+      }
+      return coldStartArtists;
+    }
+
+    const halfLifeDays = 7;
+    const lambda = Math.LN2 / (halfLifeDays * 86400 * 1000); // decay per ms
+
+    // Index followed artists by lowercased name
+    const followedMap = new Map<string, FollowedArtist>();
+    for (const fa of followedArtists) {
+      if (fa.name) followedMap.set(fa.name.toLowerCase().trim(), fa);
+    }
+
+    // Index artist affinities by lowercased name
+    const affinityMap = new Map<string, ArtistAffinityRecord>();
+    for (const aff of artistAffinities) {
+      if (aff.artist) affinityMap.set(aff.artist.toLowerCase().trim(), aff);
+    }
+
+    // Map to aggregate artist play statistics
+    interface ArtistAgg {
+      name: string;
+      primaryName: string;
+      totalScore: number;
+      lastPlayedAt: number;
+      playCount: number;
+      recentTrackTitle: string;
+      artworkFallback: string;
+      genres: Set<string>;
+    }
+
+    const artistAggs = new Map<string, ArtistAgg>();
+
+    for (const play of plays) {
+      const rawArtist = (play.artist || '').trim();
+      const primary = extractPrimaryArtist(rawArtist).trim();
+      if (!primary) continue;
+
+      const normKey = primary.toLowerCase();
+      let agg = artistAggs.get(normKey);
+      if (!agg) {
+        agg = {
+          name: primary,
+          primaryName: primary,
+          totalScore: 0,
+          lastPlayedAt: 0,
+          playCount: 0,
+          recentTrackTitle: play.title || '',
+          artworkFallback: play.artworkUrl && !isUglyPlaceholder(play.artworkUrl) ? play.artworkUrl : '',
+          genres: new Set<string>(),
+        };
+        artistAggs.set(normKey, agg);
+      }
+
+      agg.playCount += 1;
+      if (play.startTime > agg.lastPlayedAt) {
+        agg.lastPlayedAt = play.startTime;
+        if (play.title) agg.recentTrackTitle = play.title;
+        if (play.artworkUrl && !isUglyPlaceholder(play.artworkUrl)) {
+          agg.artworkFallback = play.artworkUrl;
+        }
+      }
+
+      if (play.genre && play.genre !== 'Unknown') {
+        agg.genres.add(play.genre);
+      }
+
+      // Compute time-decayed score for this play
+      const ageMs = Math.max(0, now - play.startTime);
+      const recencyWeight = Math.exp(-lambda * ageMs);
+      const completion =
+        typeof play.completionRate === 'number'
+          ? Math.max(0, Math.min(1, play.completionRate))
+          : 0.5;
+      const replayBonus = play.replayed ? 0.5 : 0;
+      const skipPenalty = play.skipped ? 1.5 : 0;
+      const playScore = recencyWeight * (completion * (1.0 + replayBonus) - skipPenalty);
+
+      agg.totalScore += Math.max(0, playScore);
+    }
+
+    // Also include any followed artists who haven't been played yet
+    for (const [normName, fa] of followedMap.entries()) {
+      if (!artistAggs.has(normName)) {
+        artistAggs.set(normName, {
+          name: fa.name,
+          primaryName: fa.name,
+          totalScore: 2.5, // Base boost for followed artist
+          lastPlayedAt: fa.followedAt || 0,
+          playCount: 0,
+          recentTrackTitle: '',
+          artworkFallback: fa.imageUrl && !isUglyPlaceholder(fa.imageUrl) ? fa.imageUrl : '',
+          genres: new Set<string>(fa.genres || []),
+        });
+      }
+    }
+
+    // Blend affinity scores and followed boosts
+    const artistScores: Array<{
+      agg: ArtistAgg;
+      finalScore: number;
+      isFollowed: boolean;
+      affinityScore: number;
+    }> = [];
+
+    for (const [normKey, agg] of artistAggs.entries()) {
+      const isFollowed = followedMap.has(normKey);
+      const affRecord = affinityMap.get(normKey);
+      const affScore = affRecord ? affRecord.affinityScore : 0;
+
+      // Followed bonus: +3.0
+      const followBonus = isFollowed ? 3.0 : 0;
+      // Affinity bonus: up to 2.5 points from affinity score
+      const affinityBonus = (affScore / 100) * 2.5;
+
+      const finalScore = agg.totalScore + followBonus + affinityBonus;
+
+      artistScores.push({
+        agg,
+        finalScore,
+        isFollowed,
+        affinityScore: Math.round(affScore),
+      });
+    }
+
+    // Sort by finalScore descending, then by lastPlayedAt descending
+    artistScores.sort((a, b) => {
+      if (Math.abs(b.finalScore - a.finalScore) > 0.001) {
+        return b.finalScore - a.finalScore;
+      }
+      return b.agg.lastPlayedAt - a.agg.lastPlayedAt;
+    });
+
+    // Build the enriched catalogue index for artwork fallback if needed
+    const catalogueByArtist = new Map<string, Track>();
+    for (const t of catalogue) {
+      const key = extractPrimaryArtist(t.artist || '').toLowerCase().trim();
+      if (!catalogueByArtist.has(key) && t.artworkUrl && !isUglyPlaceholder(t.artworkUrl)) {
+        catalogueByArtist.set(key, t);
+      }
+    }
+
+    return artistScores.slice(0, limit).map(({ agg, affinityScore, isFollowed }) => {
+      const normKey = agg.primaryName.toLowerCase();
+      const catTrack = catalogueByArtist.get(normKey);
+      const followed = followedMap.get(normKey);
+
+      const picture =
+        (followed?.imageUrl && !isUglyPlaceholder(followed.imageUrl) ? followed.imageUrl : '') ||
+        agg.artworkFallback ||
+        (catTrack?.artworkUrl && !isUglyPlaceholder(catTrack.artworkUrl) ? catTrack.artworkUrl : '') ||
+        getTrackArtwork({ artist: agg.name, title: agg.recentTrackTitle || 'Top Hits' });
+
+      return {
+        id: `recent_artist_${normKey.replace(/[^a-z0-9]/g, '_')}`,
+        name: agg.name,
+        picture,
+        genres: Array.from(agg.genres).filter(Boolean),
+        lastPlayedAt: agg.lastPlayedAt,
+        playCount: agg.playCount,
+        affinityScore,
+        isFollowed,
+        recentTrackTitle: agg.recentTrackTitle,
+      };
+    });
   }
 
   // Shelf 2: "Discover Weekly" - MMR (Maximal Marginal Relevance) novelty scoring with strict completionRate > 0.5 exclusion

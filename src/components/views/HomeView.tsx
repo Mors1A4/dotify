@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { usePlayerStore } from '../../store/playerStore';
-import { fetchTopCharts, fetchTopArtists, TopArtist } from '../../services/chartsApi';
+import { fetchTopCharts, fetchTopArtists, TopArtist, searchCharts } from '../../services/chartsApi';
 import { Track } from '../../types/track';
+import { RecentArtistItem } from '../../types/artist';
 import { prefetchTrack, prefetchTracks } from '../../utils/prefetch';
 import {
   Play,
@@ -13,14 +14,6 @@ import {
   Users,
   Compass,
   Clock,
-  Gamepad2,
-  Briefcase,
-  PartyPopper,
-  Coffee,
-  Dumbbell,
-  ExternalLink,
-  Plus,
-  Check,
   Loader2,
 } from 'lucide-react';
 import { recommendationEngine, DailyMix } from '../../services/recommendationEngine';
@@ -28,6 +21,7 @@ import { telemetryDb } from '../../services/telemetryDb';
 import { dailyVibeManager } from '../../services/dailyVibeManager';
 import { DailyVibePlaylist, VibeCategory } from '../../types/vibes';
 import { useAuthStore } from '../../store/authStore';
+import { artistService } from '../../services/artistService';
 import {
   DEFAULT_MUSIC_ARTWORK,
   getTrackArtwork,
@@ -77,6 +71,97 @@ const ShelfTrackImage: React.FC<{ track: Track }> = ({ track }) => {
   );
 };
 
+const RecentArtistCard: React.FC<{
+  artist: RecentArtistItem;
+  onPlayArtist: (artist: RecentArtistItem) => void;
+  isPlayingArtist: boolean;
+  onArtistClick: (artist: RecentArtistItem) => void;
+}> = ({ artist, onPlayArtist, isPlayingArtist, onArtistClick }) => {
+  const [imgSrc, setImgSrc] = useState(artist.picture || DEFAULT_MUSIC_ARTWORK);
+
+  useEffect(() => {
+    let mounted = true;
+    if (artist.picture && !isUglyPlaceholder(artist.picture)) {
+      setImgSrc(artist.picture);
+    } else {
+      artistService
+        .getArtistProfile(artist.name)
+        .then((profile) => {
+          if (mounted && profile?.imageUrl && !isUglyPlaceholder(profile.imageUrl)) {
+            artist.picture = profile.imageUrl;
+            setImgSrc(profile.imageUrl);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [artist.name, artist.picture]);
+
+  return (
+    <div
+      data-testid="recent-artist-card"
+      onClick={() => onArtistClick(artist)}
+      className="group relative flex-shrink-0 w-32 sm:w-36 p-3 rounded-2xl bg-elevated/40 hover:bg-elevated transition-all duration-200 cursor-pointer border border-transparent hover:border-customBorder flex flex-col items-center gap-2.5 text-center"
+    >
+      <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden shadow-lg border-2 border-transparent group-hover:border-accent transition-all duration-300 bg-highlight flex items-center justify-center">
+        <img
+          src={imgSrc}
+          alt={artist.name}
+          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+          loading="lazy"
+          onError={() => {
+            if (imgSrc !== DEFAULT_MUSIC_ARTWORK) {
+              setImgSrc(DEFAULT_MUSIC_ARTWORK);
+              artistService
+                .getArtistProfile(artist.name)
+                .then((profile) => {
+                  if (profile?.imageUrl && !isUglyPlaceholder(profile.imageUrl)) {
+                    artist.picture = profile.imageUrl;
+                    setImgSrc(profile.imageUrl);
+                  }
+                })
+                .catch(() => {});
+            }
+          }}
+        />
+        <button
+          data-testid="artist-play-btn"
+          aria-label={`Play ${artist.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlayArtist(artist);
+          }}
+          disabled={isPlayingArtist}
+          className="absolute inset-0 m-auto w-10 h-10 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 hover:scale-110 active:scale-95 transition-all duration-200 cursor-pointer"
+        >
+          {isPlayingArtist ? (
+            <Loader2 size={18} className="animate-spin" />
+          ) : (
+            <Play size={18} fill="currentColor" className="ml-0.5" />
+          )}
+        </button>
+      </div>
+
+      <div className="flex flex-col items-center w-full min-w-0">
+        <h3 className="text-xs sm:text-sm font-bold text-primary truncate w-full group-hover:text-accent transition-colors">
+          {artist.name}
+        </h3>
+        <p className="text-[11px] text-secondary truncate w-full mt-0.5">
+          {artist.isFollowed
+            ? 'Followed Artist'
+            : artist.recentTrackTitle
+            ? artist.recentTrackTitle
+            : artist.playCount > 1
+            ? `${artist.playCount} plays`
+            : 'Recently Played'}
+        </p>
+      </div>
+    </div>
+  );
+};
+
 export const HomeView: React.FC = () => {
   const {
     playTrack,
@@ -90,6 +175,7 @@ export const HomeView: React.FC = () => {
     playlists,
     navigateToArtist,
     navigateToPlaylist,
+    deletePlaylist,
   } = usePlayerStore();
 
   const { user } = useAuthStore();
@@ -108,6 +194,9 @@ export const HomeView: React.FC = () => {
 
   // Personalized Shelves
   const [madeForYou, setMadeForYou] = useState<Track[]>([]);
+  const [madeForYouArtists, setMadeForYouArtists] = useState<RecentArtistItem[]>([]);
+  const [mfyFilter, setMfyFilter] = useState<'all' | 'artists' | 'tracks'>('all');
+  const [playingArtistId, setPlayingArtistId] = useState<string | null>(null);
   const [discoverWeekly, setDiscoverWeekly] = useState<Track[]>([]);
   const [dailyMixes, setDailyMixes] = useState<DailyMix[]>([]);
   const [heavyRotation, setHeavyRotation] = useState<Track[]>([]);
@@ -159,9 +248,13 @@ export const HomeView: React.FC = () => {
 
           // Generate personalized recommendation shelves
           const catalogue = [...charts];
-          telemetryDb.getAllPlays().then((plays) => {
+          Promise.all([
+            telemetryDb.getAllPlays(),
+            telemetryDb.getArtistAffinities(),
+          ]).then(([plays, affinities]) => {
             if (!mounted) return;
             setMadeForYou(recommendationEngine.generateMadeForYou(plays, catalogue, likedTracks, followedArtists));
+            setMadeForYouArtists(recommendationEngine.generateMadeForYouArtists(plays, affinities, followedArtists, catalogue, 12));
             setDiscoverWeekly(recommendationEngine.generateDiscoverWeekly(plays, catalogue, 15, followedArtists));
             setDailyMixes(recommendationEngine.generateDailyMixes(plays, catalogue, followedArtists));
             setHeavyRotation(recommendationEngine.generateHeavyRotation(plays, catalogue, likedTracks));
@@ -184,8 +277,12 @@ export const HomeView: React.FC = () => {
   useEffect(() => {
     if (chartTracks.length > 0) {
       const catalogue = [...chartTracks];
-      telemetryDb.getAllPlays().then((plays) => {
+      Promise.all([
+        telemetryDb.getAllPlays(),
+        telemetryDb.getArtistAffinities(),
+      ]).then(([plays, affinities]) => {
         setMadeForYou(recommendationEngine.generateMadeForYou(plays, catalogue, likedTracks, followedArtists));
+        setMadeForYouArtists(recommendationEngine.generateMadeForYouArtists(plays, affinities, followedArtists, catalogue, 12));
         setDiscoverWeekly(recommendationEngine.generateDiscoverWeekly(plays, catalogue, 15, followedArtists));
         setDailyMixes(recommendationEngine.generateDailyMixes(plays, catalogue, followedArtists));
         setHeavyRotation(recommendationEngine.generateHeavyRotation(plays, catalogue, likedTracks));
@@ -193,6 +290,37 @@ export const HomeView: React.FC = () => {
       }).catch(() => {});
     }
   }, [likedTracks, followedArtists]);
+
+  const handlePlayArtist = async (artist: RecentArtistItem) => {
+    setPlayingArtistId(artist.id);
+    try {
+      const profile = await artistService.getArtistProfile(artist.name);
+      if (profile && Array.isArray(profile.topTracks) && profile.topTracks.length > 0) {
+        playTrack(profile.topTracks[0], profile.topTracks);
+        return;
+      }
+    } catch (err) {
+      console.warn('[HomeView] Failed fetching artist profile for playback:', err);
+    } finally {
+      setPlayingArtistId(null);
+    }
+
+    // Fallback: look in chartTracks / catalogue or likedTracks
+    const matchingTracks = [
+      ...likedTracks.filter((t) => (t.artist || '').toLowerCase().includes(artist.name.toLowerCase())),
+      ...chartTracks.filter((t) => (t.artist || '').toLowerCase().includes(artist.name.toLowerCase())),
+    ];
+    if (matchingTracks.length > 0) {
+      playTrack(matchingTracks[0], matchingTracks);
+    } else {
+      try {
+        const searched = await searchCharts(artist.name, 10);
+        if (searched.length > 0) {
+          playTrack(searched[0], searched);
+        }
+      } catch {}
+    }
+  };
 
   const handleArtistClick = (artist: TopArtist) => {
     setActiveArtistName(artist.name);
@@ -263,136 +391,230 @@ export const HomeView: React.FC = () => {
       {/* Personalized Recommendations Section */}
       <div className="flex flex-col gap-8">
           {/* Shelf 1: Made For You */}
-          {madeForYou.length > 0 && (
+          {(madeForYou.length > 0 || madeForYouArtists.length > 0) && (
             <section data-testid="made-for-you-shelf" className="flex flex-col gap-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Sparkles className="text-accent" size={22} />
                   <div>
                     <h2 className="text-xl font-bold text-primary">Made For You</h2>
-                    <p className="text-xs text-muted font-medium">Your personalized mix of high-affinity favorites and tailored discoveries</p>
+                    <p className="text-xs text-muted font-medium">
+                      Your personalized mix of recent artists, favorite tracks, and tailored discoveries
+                    </p>
                   </div>
                 </div>
-                <button
-                  data-testid="play-shelf-made-for-you"
-                  onClick={() => playTrack(madeForYou[0], madeForYou)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md"
-                >
-                  <Play size={14} fill="currentColor" />
-                  <span>Play Shelf</span>
-                </button>
+
+                {/* View Filter Pills & Quick Actions */}
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <div className="flex items-center p-0.5 rounded-full bg-elevated border border-customBorder">
+                    <button
+                      data-testid="mfy-filter-all"
+                      onClick={() => setMfyFilter('all')}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                        mfyFilter === 'all'
+                          ? 'bg-accent text-accent-content shadow-sm'
+                          : 'text-secondary hover:text-primary'
+                      }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      data-testid="mfy-filter-artists"
+                      onClick={() => setMfyFilter('artists')}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                        mfyFilter === 'artists'
+                          ? 'bg-accent text-accent-content shadow-sm'
+                          : 'text-secondary hover:text-primary'
+                      }`}
+                    >
+                      Artists
+                    </button>
+                    <button
+                      data-testid="mfy-filter-tracks"
+                      onClick={() => setMfyFilter('tracks')}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                        mfyFilter === 'tracks'
+                          ? 'bg-accent text-accent-content shadow-sm'
+                          : 'text-secondary hover:text-primary'
+                      }`}
+                    >
+                      Songs
+                    </button>
+                  </div>
+
+                  {madeForYou.length > 0 && mfyFilter !== 'artists' && (
+                    <button
+                      data-testid="play-shelf-made-for-you"
+                      onClick={() => playTrack(madeForYou[0], madeForYou)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md cursor-pointer ml-1"
+                    >
+                      <Play size={13} fill="currentColor" />
+                      <span>Play Shelf</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
-              <div className="flex gap-4 overflow-x-auto pb-3 pt-1 scrollbar-thin scrollbar-thumb-highlight scrollbar-track-transparent">
-                {madeForYou.map((track) => {
-                  const isCurrent = currentTrack?.id === track.id;
-                  return (
-                    <div
-                      key={`mfy-${track.id}`}
-                      data-testid="track-item"
-                      onClick={() => playTrack(track, madeForYou)}
-                      onMouseEnter={() => prefetchTrack(track)}
-                      className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
-                    >
-                      <div className="relative aspect-square w-full rounded-lg overflow-hidden bg-highlight">
-                        <ShelfTrackImage track={track} />
-                        <button
-                          data-testid="track-play-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (isCurrent) togglePlay();
-                            else playTrack(track, madeForYou);
-                          }}
-                          className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
-                            isCurrent
-                              ? 'opacity-100 scale-100'
-                              : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
-                          }`}
-                        >
-                          <Play size={16} fill="currentColor" className="ml-0.5" />
-                        </button>
+              {/* Sub-Shelf A: Recent Artists (visible in 'all' and 'artists' modes) */}
+              {mfyFilter !== 'tracks' && madeForYouArtists.length > 0 && (
+                <div className="flex flex-col gap-2.5">
+                  {mfyFilter === 'all' && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-secondary uppercase tracking-wider">
+                        <Users size={14} className="text-accent" />
+                        <span>Artists You Listen To</span>
                       </div>
+                      <button
+                        onClick={() => setMfyFilter('artists')}
+                        className="text-xs font-bold text-accent hover:underline cursor-pointer"
+                      >
+                        View all ({madeForYouArtists.length})
+                      </button>
+                    </div>
+                  )}
 
-                      <div className="flex flex-col min-w-0">
-                        <h3
-                          data-testid="track-title"
-                          className={`text-sm font-semibold truncate ${
-                            isCurrent ? 'text-accent' : 'text-primary'
-                          }`}
-                        >
-                          {track.title}
-                        </h3>
-                        <p
-                          data-testid="track-artist"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigateToArtist(track.artist);
-                          }}
-                          className="text-xs text-secondary truncate hover:underline hover:text-primary cursor-pointer transition-colors"
-                        >
-                          {track.artist}
-                        </p>
+                  <div
+                    data-testid="mfy-artists-shelf"
+                    className={
+                      mfyFilter === 'artists'
+                        ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 pt-1'
+                        : 'flex gap-4 overflow-x-auto pb-2 pt-1 scrollbar-thin scrollbar-thumb-highlight scrollbar-track-transparent'
+                    }
+                  >
+                    {madeForYouArtists.map((artist) => (
+                      <RecentArtistCard
+                        key={`mfy-art-${artist.id}`}
+                        artist={artist}
+                        onPlayArtist={handlePlayArtist}
+                        isPlayingArtist={playingArtistId === artist.id}
+                        onArtistClick={(art) => navigateToArtist(art.name)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-Shelf B: Personalized Songs (visible in 'all' and 'tracks' modes) */}
+              {mfyFilter !== 'artists' && madeForYou.length > 0 && (
+                <div className="flex flex-col gap-2.5">
+                  {mfyFilter === 'all' && madeForYouArtists.length > 0 && (
+                    <div className="flex items-center justify-between mt-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-secondary uppercase tracking-wider">
+                        <Disc3 size={14} className="text-accent" />
+                        <span>Recommended Songs For You</span>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  )}
+
+                  <div className="flex gap-4 overflow-x-auto pb-3 pt-1 scrollbar-thin scrollbar-thumb-highlight scrollbar-track-transparent">
+                    {madeForYou.map((track) => {
+                      const isCurrent = currentTrack?.id === track.id;
+                      return (
+                        <div
+                          key={`mfy-${track.id}`}
+                          data-testid="track-item"
+                          onClick={() => playTrack(track, madeForYou)}
+                          onMouseEnter={() => prefetchTrack(track)}
+                          className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
+                        >
+                          <div className="relative aspect-square w-full rounded-lg overflow-hidden bg-highlight">
+                            <ShelfTrackImage track={track} />
+                            <button
+                              data-testid="track-play-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isCurrent) togglePlay();
+                                else playTrack(track, madeForYou);
+                              }}
+                              className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
+                                isCurrent
+                                  ? 'opacity-100 scale-100'
+                                  : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
+                              }`}
+                            >
+                              <Play size={16} fill="currentColor" className="ml-0.5" />
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col min-w-0">
+                            <h3
+                              data-testid="track-title"
+                              className={`text-sm font-semibold truncate ${
+                                isCurrent ? 'text-accent' : 'text-primary'
+                              }`}
+                            >
+                              {track.title}
+                            </h3>
+                            <p
+                              data-testid="track-artist"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigateToArtist(track.artist);
+                              }}
+                              className="text-xs text-secondary truncate hover:underline hover:text-primary cursor-pointer transition-colors"
+                            >
+                              {track.artist}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </section>
           )}
 
           {/* Shelf 2: Daily Vibe Curation (Curated Daily by Gemini 3.8 Flash) */}
           <section data-testid="daily-vibe-shelf" className="flex flex-col gap-5">
             {vibeToast && (
-              <div className="fixed top-20 right-6 z-50 bg-accent text-accent-content font-bold text-xs px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-                <Sparkles size={14} />
+              <div className="fixed top-20 right-6 z-50 bg-neutral-900 border border-white/20 text-white font-mono text-xs px-4 py-2.5 rounded-sm shadow-2xl tracking-wider uppercase animate-in fade-in slide-in-from-top-2">
                 <span>{vibeToast}</span>
               </div>
             )}
 
             {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-2xl bg-accent/15 text-accent border border-accent/30 shadow-md">
-                  <Sparkles size={24} className="animate-pulse" />
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-3 border-b border-white/[0.08]">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl sm:text-2xl font-bold text-primary tracking-tight">
+                    Daily Vibe Playlists
+                  </h2>
+                  <span className="text-[11px] font-mono tracking-widest uppercase text-muted">
+                    / CURATED DAILY
+                  </span>
                 </div>
-                <div>
-                  <div className="flex items-center gap-2.5">
-                    <h2 className="text-xl sm:text-2xl font-black text-primary tracking-tight">
-                      Daily Vibe Playlists
-                    </h2>
-                    <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-accent/20 text-accent border border-accent/30 tracking-wider">
-                      Gemini 3.8 Flash
-                    </span>
-                  </div>
-                  <p className="text-xs text-secondary font-medium mt-0.5">
-                    Curated once per day based on your listening history & live web search discoveries
-                  </p>
-                </div>
+                <p className="text-xs text-secondary mt-1 max-w-xl">
+                  Algorithmic audio sets calibrated from your playback telemetry and live music intelligence.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] font-mono tracking-wider text-muted">
+                <span className="w-1.5 h-1.5 bg-accent" />
+                <span>ENGINE: GEMINI 3.8 FLASH</span>
               </div>
             </div>
 
-            {/* Interactive Vibe Selector Tabs */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+            {/* Interactive Vibe Selector Rail */}
+            <div className="flex items-center gap-1 border-b border-white/[0.06] overflow-x-auto scrollbar-none">
               {[
-                { id: 'gaming' as VibeCategory, label: 'Gaming', icon: Gamepad2, color: 'text-purple-400' },
-                { id: 'working' as VibeCategory, label: 'Working', icon: Briefcase, color: 'text-emerald-400' },
-                { id: 'partying' as VibeCategory, label: 'Partying', icon: PartyPopper, color: 'text-rose-400' },
-                { id: 'chilling' as VibeCategory, label: 'Chilling', icon: Coffee, color: 'text-sky-400' },
-                { id: 'workout' as VibeCategory, label: 'Workout', icon: Dumbbell, color: 'text-amber-400' },
+                { id: 'gaming' as VibeCategory, label: 'GAMING', index: '01' },
+                { id: 'working' as VibeCategory, label: 'WORKING', index: '02' },
+                { id: 'partying' as VibeCategory, label: 'PARTYING', index: '03' },
+                { id: 'chilling' as VibeCategory, label: 'CHILLING', index: '04' },
+                { id: 'workout' as VibeCategory, label: 'WORKOUT', index: '05' },
               ].map((tab) => {
                 const isActive = activeVibe === tab.id;
-                const IconComponent = tab.icon;
                 return (
                   <button
                     key={tab.id}
                     onClick={() => setActiveVibe(tab.id)}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl font-bold text-xs transition-all cursor-pointer whitespace-nowrap border ${
+                    className={`px-4 py-3 text-xs font-semibold tracking-wider transition-all cursor-pointer whitespace-nowrap border-b-2 flex items-center gap-2 ${
                       isActive
-                        ? 'bg-accent text-accent-content border-accent shadow-lg shadow-accent/20 scale-[1.02]'
-                        : 'bg-elevated/70 hover:bg-elevated text-secondary hover:text-primary border-customBorder/60 hover:border-customBorder'
+                        ? 'border-accent text-primary bg-white/[0.03]'
+                        : 'border-transparent text-secondary hover:text-primary hover:border-white/20'
                     }`}
                   >
-                    <IconComponent size={16} className={isActive ? 'text-accent-content' : tab.color} />
+                    <span className="text-[10px] font-mono text-muted">{tab.index}</span>
                     <span>{tab.label}</span>
                   </button>
                 );
@@ -404,18 +626,24 @@ export const HomeView: React.FC = () => {
               const currentVibe = vibePlaylists.find((p) => p.vibe === activeVibe) || vibePlaylists[0];
               if (!currentVibe) {
                 return (
-                  <div className="p-8 rounded-3xl bg-elevated/40 border border-customBorder flex items-center justify-center gap-3 text-secondary text-sm">
-                    <Loader2 size={18} className="animate-spin text-accent" />
-                    <span>Loading today's curated vibes...</span>
+                  <div className="p-8 rounded-sm bg-elevated/40 border border-white/[0.08] flex items-center justify-center gap-3 text-secondary text-xs font-mono tracking-wider uppercase">
+                    <span className="w-1.5 h-1.5 bg-accent animate-ping" />
+                    <span>LOADING CURATED SETS...</span>
                   </div>
                 );
               }
 
-              const isSaved = savedVibes.has(currentVibe.id) || (playlists || []).some((p) => p.name === currentVibe.name);
+              const isSaved =
+                savedVibes.has(currentVibe.id) ||
+                (playlists || []).some(
+                  (p) =>
+                    p.id === currentVibe.id ||
+                    p.name.trim().toLowerCase() === currentVibe.name.trim().toLowerCase()
+                );
 
               return (
                 <div
-                  className={`relative overflow-hidden rounded-3xl p-6 sm:p-8 bg-gradient-to-br ${currentVibe.themeGradient} border shadow-2xl transition-all flex flex-col gap-6`}
+                  className="relative overflow-hidden rounded-sm bg-elevated/40 border border-white/[0.08] p-6 sm:p-8 flex flex-col gap-6 backdrop-blur-md shadow-2xl transition-all"
                 >
                   {/* Backdrop Glow */}
                   {currentVibe.coverArt && (
@@ -423,32 +651,28 @@ export const HomeView: React.FC = () => {
                       src={currentVibe.coverArt}
                       alt=""
                       aria-hidden="true"
-                      className="absolute -top-20 -right-20 w-80 h-80 object-cover blur-3xl opacity-25 pointer-events-none select-none scale-125"
+                      className="absolute -top-20 -right-20 w-80 h-80 object-cover blur-3xl opacity-20 pointer-events-none select-none scale-125"
                     />
                   )}
 
-                  <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center gap-6 justify-between">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
-                      <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-2xl overflow-hidden shadow-2xl border border-white/10 shrink-0 bg-highlight group">
+                  <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center gap-6 justify-between">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
+                      {/* Gallery Framed Artwork (No stickers or bubbles) */}
+                      <div className="relative w-32 h-32 sm:w-36 sm:h-36 rounded-sm overflow-hidden border border-white/10 shrink-0 bg-highlight">
                         <img
                           src={currentVibe.coverArt}
                           alt={currentVibe.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          className="w-full h-full object-cover"
                         />
-                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md text-[11px] font-extrabold text-white flex items-center gap-1">
-                          <span>{currentVibe.vibeIcon}</span>
-                          <span>{currentVibe.vibeLabel}</span>
-                        </div>
                       </div>
 
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-extrabold uppercase tracking-wider text-accent px-2.5 py-0.5 rounded-full bg-accent/20 border border-accent/30">
-                            {currentVibe.vibeTagline || 'Curated for today'}
-                          </span>
+                      <div className="flex flex-col gap-2">
+                        {/* Editorial Eyebrow (No curved pill) */}
+                        <div className="text-[10px] font-mono tracking-widest text-accent uppercase font-medium">
+                          CURATION FOCUS // {currentVibe.vibeTagline || 'TAILORED DAILY ROTATION'}
                         </div>
 
-                        <h3 className="text-2xl sm:text-3xl font-black text-primary tracking-tight">
+                        <h3 className="text-2xl sm:text-3xl font-bold text-primary tracking-tight">
                           {currentVibe.name}
                         </h3>
 
@@ -456,39 +680,37 @@ export const HomeView: React.FC = () => {
                           {currentVibe.description}
                         </p>
 
-                        <div className="flex items-center gap-2 text-xs text-muted font-medium mt-1">
-                          <span>{currentVibe.tracks.length} songs</span>
-                          <span>•</span>
-                          <span>{currentVibe.modelUsed || 'Gemini 3.8 Flash'}</span>
-                          <span>•</span>
-                          <span>Updated for Today</span>
+                        {/* Technical Data Readout */}
+                        <div className="flex items-center gap-3 text-[11px] font-mono text-muted mt-1">
+                          <span>{currentVibe.tracks.length} TRACKS</span>
+                          <span>/</span>
+                          <span>{currentVibe.modelUsed || 'GEMINI 3.8 FLASH'}</span>
+                          <span>/</span>
+                          <span>UPDATED TODAY</span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex flex-wrap items-center gap-3 w-full md:w-auto mt-2 md:mt-0">
+                    {/* Precision Geometric Action Buttons */}
+                    <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
                       <button
                         onClick={() => {
                           if (currentVibe.tracks.length > 0) {
                             playTrack(currentVibe.tracks[0], currentVibe.tracks);
                           }
                         }}
-                        className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-accent text-accent-content font-extrabold text-xs sm:text-sm shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                        className="px-6 py-2.5 rounded-sm bg-white text-black font-semibold text-xs tracking-wider uppercase hover:bg-neutral-200 active:scale-95 transition-all cursor-pointer"
                       >
-                        <Play size={18} fill="currentColor" />
-                        <span>Play Vibe</span>
+                        PLAY VIBE
                       </button>
 
                       <button
                         onClick={() => {
                           navigateToPlaylist(currentVibe.id);
                         }}
-                        className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-4 py-3 rounded-full bg-elevated/80 hover:bg-highlight border border-customBorder text-primary font-bold text-xs shadow transition-all active:scale-95 cursor-pointer"
-                        title="View complete playlist and tracks list"
+                        className="px-5 py-2.5 rounded-sm bg-white/[0.05] hover:bg-white/[0.10] border border-white/10 text-primary font-semibold text-xs tracking-wider uppercase active:scale-95 transition-all cursor-pointer"
                       >
-                        <ExternalLink size={15} />
-                        <span>View Full Playlist</span>
+                        VIEW PLAYLIST
                       </button>
 
                       <button
@@ -496,37 +718,53 @@ export const HomeView: React.FC = () => {
                           if (!isSaved) {
                             dailyVibeManager.saveVibeToLibrary(currentVibe);
                             setSavedVibes((prev) => new Set(prev).add(currentVibe.id));
-                            setVibeToast(`Saved "${currentVibe.name}" to your library!`);
+                            setVibeToast(`SAVED TO LIBRARY: ${currentVibe.name}`);
                             setTimeout(() => setVibeToast(null), 3000);
+                          } else {
+                            const found = (playlists || []).find(
+                              (p) =>
+                                p.id === currentVibe.id ||
+                                p.name.trim().toLowerCase() === currentVibe.name.trim().toLowerCase()
+                            );
+                            if (found && confirm(`Remove "${found.name}" from your library?`)) {
+                              deletePlaylist(found.id);
+                              setSavedVibes((prev) => {
+                                const next = new Set(prev);
+                                next.delete(currentVibe.id);
+                                return next;
+                              });
+                              setVibeToast(`REMOVED FROM LIBRARY: ${currentVibe.name}`);
+                              setTimeout(() => setVibeToast(null), 3000);
+                            }
                           }
                         }}
-                        className={`flex items-center justify-center gap-1.5 p-3 rounded-full border text-xs font-bold transition-all active:scale-95 cursor-pointer ${
+                        className={`px-4 py-2.5 rounded-sm border text-xs font-semibold tracking-wider uppercase active:scale-95 transition-all cursor-pointer ${
                           isSaved
-                            ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                            : 'bg-elevated/80 hover:bg-highlight text-secondary hover:text-primary border-customBorder'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30'
+                            : 'bg-white/[0.05] hover:bg-white/[0.10] text-secondary hover:text-primary border-white/10'
                         }`}
-                        title={isSaved ? 'Saved to Library' : 'Save to Library'}
+                        title={isSaved ? 'In your library (Click to remove)' : 'Save to Library'}
                       >
-                        {isSaved ? <Check size={16} /> : <Plus size={16} />}
+                        {isSaved ? 'SAVED' : 'SAVE TO LIBRARY'}
                       </button>
                     </div>
                   </div>
 
-                  {/* Track Peek Preview Carousel */}
-                  <div className="relative z-10 flex flex-col gap-2.5 pt-2 border-t border-white/10">
+                  {/* Tracklist Preview Section */}
+                  <div className="relative z-10 flex flex-col gap-3 pt-4 border-t border-white/[0.08]">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-extrabold text-primary uppercase tracking-wider">
-                        Curated Songs in this Vibe
+                      <span className="text-[11px] font-mono tracking-widest text-muted uppercase">
+                        TRACKLIST PREVIEW
                       </span>
                       <button
                         onClick={() => navigateToPlaylist(currentVibe.id)}
-                        className="text-xs font-bold text-accent hover:underline flex items-center gap-1 cursor-pointer"
+                        className="text-[11px] font-mono tracking-wider text-accent hover:underline uppercase cursor-pointer"
                       >
-                        <span>View all {currentVibe.tracks.length} tracks</span>
-                        <span>→</span>
+                        VIEW ALL {currentVibe.tracks.length} TRACKS
                       </button>
                     </div>
 
+                    {/* Track Micro-Cards */}
                     <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-highlight scrollbar-track-transparent">
                       {currentVibe.tracks.slice(0, 8).map((track, trackIdx) => {
                         const isCurrent = currentTrack?.id === track.id;
@@ -535,41 +773,31 @@ export const HomeView: React.FC = () => {
                             key={`vibe-track-${track.id}-${trackIdx}`}
                             onClick={() => playTrack(track, currentVibe.tracks)}
                             onMouseEnter={() => prefetchTrack(track)}
-                            className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-2xl bg-surface/70 hover:bg-surface border border-white/5 hover:border-customBorder transition-all cursor-pointer flex flex-col gap-2 shadow-md"
+                            className={`group flex-shrink-0 w-40 sm:w-44 p-2.5 rounded-sm border transition-all cursor-pointer flex flex-col gap-2 ${
+                              isCurrent
+                                ? 'bg-white/[0.08] border-accent shadow-md'
+                                : 'bg-surface/50 hover:bg-surface border-white/[0.06] hover:border-white/20'
+                            }`}
                           >
-                            <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-highlight">
+                            <div className="relative aspect-square w-full rounded-sm overflow-hidden bg-highlight">
                               <ShelfTrackImage track={track} />
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (isCurrent) togglePlay();
-                                  else playTrack(track, currentVibe.tracks);
-                                }}
-                                className={`absolute bottom-2 right-2 w-8 h-8 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
-                                  isCurrent
-                                    ? 'opacity-100 scale-100'
-                                    : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
-                                }`}
-                              >
-                                <Play size={14} fill="currentColor" className="ml-0.5" />
-                              </button>
                             </div>
 
                             <div className="flex flex-col min-w-0">
                               <h4
-                                className={`text-xs font-bold truncate ${
+                                className={`text-xs font-semibold truncate ${
                                   isCurrent ? 'text-accent' : 'text-primary'
                                 }`}
                               >
                                 {track.title}
                               </h4>
-                              <p className="text-[11px] text-secondary truncate mt-0.5">
+                              <p className="text-[11px] text-muted truncate mt-0.5">
                                 {track.artist}
                               </p>
                               {track.vibeReason && (
-                                <span className="text-[10px] text-accent/90 truncate mt-1 bg-accent/10 px-1.5 py-0.5 rounded-md font-medium">
-                                  ✨ {track.vibeReason}
-                                </span>
+                                <p className="text-[10px] text-secondary/80 italic truncate mt-1">
+                                  {track.vibeReason}
+                                </p>
                               )}
                             </div>
                           </div>
@@ -581,58 +809,48 @@ export const HomeView: React.FC = () => {
               );
             })()}
 
-            {/* Quick Switch Cards for All Vibes */}
+            {/* Quick Switch Studio Matrix */}
             {vibePlaylists.length > 1 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-1">
-                {vibePlaylists.map((vPl) => {
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-1">
+                {vibePlaylists.map((vPl, idx) => {
                   const isSelected = activeVibe === vPl.vibe;
+                  const channelNumber = String(idx + 1).padStart(2, '0');
                   return (
                     <div
                       key={`card-${vPl.id}`}
                       onClick={() => setActiveVibe(vPl.vibe)}
-                      className={`group p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                      className={`p-3.5 rounded-sm border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
                         isSelected
-                          ? 'bg-elevated border-accent shadow-md scale-[1.02]'
-                          : 'bg-elevated/40 hover:bg-elevated border-customBorder/60 hover:border-customBorder'
+                          ? 'bg-elevated border-accent shadow-sm'
+                          : 'bg-elevated/30 hover:bg-elevated/60 border-white/[0.06] hover:border-white/15'
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xl">{vPl.vibeIcon}</span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (vPl.tracks.length > 0) {
-                              playTrack(vPl.tracks[0], vPl.tracks);
-                            }
-                          }}
-                          className="w-8 h-8 rounded-full bg-accent text-accent-content flex items-center justify-center opacity-80 group-hover:opacity-100 transition-all hover:scale-105 shadow"
-                          title={`Play ${vPl.vibeLabel} Vibe`}
-                        >
-                          <Play size={14} fill="currentColor" className="ml-0.5" />
-                        </button>
+                      <div className="flex items-center justify-between text-[10px] font-mono tracking-wider">
+                        <span className="text-muted">CH.{channelNumber}</span>
+                        <span className={isSelected ? 'text-accent font-semibold' : 'text-muted'}>
+                          {isSelected ? 'ACTIVE' : 'SELECT'}
+                        </span>
                       </div>
 
                       <div>
-                        <h4 className="text-xs font-extrabold text-primary truncate group-hover:text-accent transition-colors">
+                        <h4 className="text-xs font-semibold text-primary truncate">
                           {vPl.name}
                         </h4>
-                        <p className="text-[11px] text-secondary truncate mt-0.5">
-                          {vPl.tracks.length} tracks • {vPl.vibeLabel}
+                        <p className="text-[10px] font-mono text-muted uppercase mt-0.5">
+                          {vPl.tracks.length} TRACKS // {vPl.vibeLabel}
                         </p>
                       </div>
 
-                      <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px] text-muted">
-                        <span className="group-hover:text-primary font-medium">
-                          {isSelected ? 'Active Vibe' : 'Select Vibe'}
-                        </span>
+                      <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between text-[10px] font-mono">
+                        <span className="text-secondary/70">SWITCH VIBE</span>
                         <span
                           onClick={(e) => {
                             e.stopPropagation();
                             navigateToPlaylist(vPl.id);
                           }}
-                          className="text-accent hover:underline font-bold"
+                          className="text-accent hover:underline uppercase"
                         >
-                          View
+                          DETAILS
                         </span>
                       </div>
                     </div>
