@@ -523,6 +523,11 @@ export const HomeView: React.FC = () => {
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                               loading="lazy"
                             />
+                            {vPl.isExtraLong && (
+                              <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md text-[10px] font-bold text-cyan-300 border border-cyan-500/40 shadow-md">
+                                Extra Long
+                              </span>
+                            )}
                             <button
                               data-testid="vibe-play-btn"
                               onClick={(e) => {
@@ -558,6 +563,7 @@ export const HomeView: React.FC = () => {
                               className="text-xs text-secondary truncate mt-0.5"
                             >
                               {vPl.vibeLabel} · {vPl.tracks.length} songs
+                              {vPl.isExtraLong ? ' · Extra Long' : ''}
                             </p>
                           </div>
                         </div>

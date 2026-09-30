@@ -38,6 +38,8 @@ import {
   Loader2,
   CheckCircle2,
   Music,
+  Cpu,
+  Sparkles,
 } from 'lucide-react';
 
 export const PlaylistView: React.FC = () => {
@@ -523,6 +525,78 @@ export const PlaylistView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* AI Curator Multi-Domain Reasoning Card (if available on Daily Vibe Playlist) */}
+      {vibePlaylist?.domainReasoning && (
+        <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-br from-surface/90 via-surface to-elevated/40 border border-accent/25 shadow-xl flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-accent/20 border border-accent/30 flex items-center justify-center text-accent">
+                <Cpu size={17} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-primary flex items-center gap-2">
+                  <span>AI Curator Domain Reasoning</span>
+                  {vibePlaylist.isExtraLong && (
+                    <span className="text-[10px] font-extrabold text-cyan-400 px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30">
+                      Extra-Long Edition ({vibePlaylist.tracks.length} Tracks)
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-secondary">
+                  Prior multi-domain analysis formulated before track selection
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+            {vibePlaylist.domainReasoning.thematicDomain && (
+              <div className="p-3.5 rounded-xl bg-elevated/30 border border-subtle/40 flex flex-col gap-1">
+                <span className="text-[11px] font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>Thematic & Conceptual Domain</span>
+                </span>
+                <p className="text-xs text-secondary leading-relaxed">
+                  {vibePlaylist.domainReasoning.thematicDomain}
+                </p>
+              </div>
+            )}
+
+            {vibePlaylist.domainReasoning.sonicDomain && (
+              <div className="p-3.5 rounded-xl bg-elevated/30 border border-subtle/40 flex flex-col gap-1">
+                <span className="text-[11px] font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>Sonic & Acoustic Architecture</span>
+                </span>
+                <p className="text-xs text-secondary leading-relaxed">
+                  {vibePlaylist.domainReasoning.sonicDomain}
+                </p>
+              </div>
+            )}
+
+            {vibePlaylist.domainReasoning.emotionalDomain && (
+              <div className="p-3.5 rounded-xl bg-elevated/30 border border-subtle/40 flex flex-col gap-1">
+                <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>Emotional & Psychological Arc</span>
+                </span>
+                <p className="text-xs text-secondary leading-relaxed">
+                  {vibePlaylist.domainReasoning.emotionalDomain}
+                </p>
+              </div>
+            )}
+
+            {vibePlaylist.domainReasoning.curationStrategy && (
+              <div className="p-3.5 rounded-xl bg-elevated/30 border border-subtle/40 flex flex-col gap-1">
+                <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>Curation Strategy & Discography Selection</span>
+                </span>
+                <p className="text-xs text-secondary leading-relaxed">
+                  {vibePlaylist.domainReasoning.curationStrategy}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Inline Studio Details Editor Panel */}
       {isEditingDetails && (

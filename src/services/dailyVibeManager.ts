@@ -305,6 +305,7 @@ export class DailyVibeManager {
           : `Music soundscape for ${cleanLabel} matching your personal taste.`,
         themeColor: v.themeColor || (['purple', 'emerald', 'rose', 'blue', 'amber'][idx % 5] as any),
         defaultCover: v.defaultCover || DEFAULT_VIBE_PRESETS[idx % DEFAULT_VIBE_PRESETS.length].defaultCover,
+        isAmended: Boolean(v.isAmended),
       };
     });
     safeStorage.setItem(storageKey, sanitized);
@@ -381,17 +382,52 @@ export class DailyVibeManager {
     modelUsed: string,
     userVibes?: UserVibeConfig[]
   ): DailyVibePlaylist[] {
-    return rawPlaylists.map((raw) => {
-      const matchingVibe =
-        userVibes?.find((v) => v.id.toLowerCase() === raw.vibe.toLowerCase()) ||
-        DEFAULT_VIBE_PRESETS.find((v) => v.id.toLowerCase() === raw.vibe.toLowerCase());
+    return rawPlaylists.map((raw, pIdx) => {
+      const cleanRawVibe = raw.vibe.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      // Robust matching against user configured vibes
+      let matchingVibe = userVibes?.find(
+        (v) =>
+          v.id.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanRawVibe ||
+          v.label.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanRawVibe
+      );
+
+      if (!matchingVibe && userVibes && pIdx < userVibes.length) {
+        matchingVibe = userVibes[pIdx];
+      }
+
+      if (!matchingVibe) {
+        matchingVibe = DEFAULT_VIBE_PRESETS.find(
+          (v) => v.id.toLowerCase() === raw.vibe.toLowerCase()
+        );
+      }
 
       const meta = VIBE_META[raw.vibe] || VIBE_META.gaming;
       const playlistId = `daily-vibe-${raw.vibe}-${dateString}`;
       const label = matchingVibe?.label || meta?.label || (raw.vibe.charAt(0).toUpperCase() + raw.vibe.slice(1));
-      const coverArt = matchingVibe?.defaultCover || meta?.defaultCover || DEFAULT_VIBE_PRESETS[0].defaultCover;
-      const themeGradient = meta?.themeGradient || 'from-purple-900/80 via-slate-900 to-indigo-950 border-purple-700/50';
-      const accentColor = meta?.accentColor || '#a855f7';
+      const labelLower = label.toLowerCase();
+
+      // Dynamic artwork & gradient for custom / sci-fi / singularity / cyberpunk aesthetics
+      let coverArt = matchingVibe?.defaultCover || meta?.defaultCover || DEFAULT_VIBE_PRESETS[0].defaultCover;
+      let themeGradient = meta?.themeGradient || 'from-purple-900/80 via-slate-900 to-indigo-950 border-purple-700/50';
+      let accentColor = meta?.accentColor || '#a855f7';
+
+      if (
+        labelLower.includes('singularity') ||
+        labelLower.includes('cyber') ||
+        labelLower.includes('ai') ||
+        labelLower.includes('future') ||
+        labelLower.includes('robot') ||
+        labelLower.includes('dystop')
+      ) {
+        coverArt = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80';
+        themeGradient = 'from-fuchsia-950/80 via-slate-900 to-cyan-950 border-cyan-500/50';
+        accentColor = '#06b6d4';
+      } else if (labelLower.includes('space') || labelLower.includes('cosmic') || labelLower.includes('night')) {
+        coverArt = 'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?w=800&auto=format&fit=crop&q=80';
+        themeGradient = 'from-indigo-950/80 via-slate-900 to-purple-950 border-purple-500/50';
+        accentColor = '#818cf8';
+      }
 
       const tracks: VibePlaylistTrack[] = raw.tracks.map((t, idx) => {
         const trackId = `vibe:${raw.vibe}:${dateString}:${idx}`;
@@ -452,6 +488,8 @@ export class DailyVibeManager {
         generatedDate: dateString,
         isAIGenerated: true,
         modelUsed,
+        domainReasoning: raw.domainReasoning,
+        isExtraLong: raw.isExtraLong ?? (raw.tracks.length >= 30 || Boolean(matchingVibe?.isAmended)),
         tracks,
       };
     });

@@ -9,6 +9,15 @@ export interface UserVibeConfig {
   prompt: string;
   themeColor?: 'purple' | 'emerald' | 'blue' | 'amber' | 'rose';
   defaultCover?: string;
+  isAmended?: boolean;
+}
+
+export interface VibeDomainReasoning {
+  thematicDomain?: string;
+  sonicDomain?: string;
+  emotionalDomain?: string;
+  tasteAlignment?: string;
+  curationStrategy?: string;
 }
 
 export type MacroGenre =
@@ -57,6 +66,8 @@ export interface DailyVibePlaylist extends CustomPlaylist {
   generatedDate: string; // YYYY-MM-DD
   isAIGenerated: boolean;
   modelUsed?: string;
+  domainReasoning?: VibeDomainReasoning;
+  isExtraLong?: boolean;
   tracks: VibePlaylistTrack[];
 }
 

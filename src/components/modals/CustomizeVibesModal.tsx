@@ -100,6 +100,7 @@ export const CustomizeVibesModal: React.FC<CustomizeVibesModalProps> = ({
           ...s,
           id: cleanId,
           label: cleanLabel,
+          isAmended: true,
           // If prompt wasn't manually customized, keep it synced with label
           prompt: s.prompt ? s.prompt : `Soundscape for ${cleanLabel} matching your personal taste.`,
         };
@@ -109,7 +110,7 @@ export const CustomizeVibesModal: React.FC<CustomizeVibesModalProps> = ({
 
   const handleUpdateSlotPrompt = (index: number, newPrompt: string) => {
     setSlots((prev) =>
-      prev.map((s, idx) => (idx === index ? { ...s, prompt: newPrompt } : s))
+      prev.map((s, idx) => (idx === index ? { ...s, prompt: newPrompt, isAmended: true } : s))
     );
   };
 
@@ -123,6 +124,7 @@ export const CustomizeVibesModal: React.FC<CustomizeVibesModalProps> = ({
               label: '',
               prompt: '',
               themeColor: THEME_COLORS[idx % 5],
+              isAmended: true,
             }
           : s
       )
@@ -163,6 +165,7 @@ export const CustomizeVibesModal: React.FC<CustomizeVibesModalProps> = ({
               prompt: idea.prompt,
               themeColor: idea.themeColor || THEME_COLORS[idx % 5],
               defaultCover: idea.defaultCover,
+              isAmended: true,
             }
           : s
       )
@@ -195,8 +198,10 @@ export const CustomizeVibesModal: React.FC<CustomizeVibesModalProps> = ({
       onSavedAndRegenerated?.();
       onClose();
     } catch (err: any) {
-      console.error('[CustomizeVibesModal] Failed to curate vibes:', err);
-      setStatusNotice('Unable to regenerate playlists right now. Your 5 vibes have been saved!');
+      console.error('[CustomizeVibesModal] Error during vibe curation:', err);
+      // Fallback guarantees cache is saved, so always refresh parent and close
+      onSavedAndRegenerated?.();
+      onClose();
     } finally {
       setIsSaving(false);
     }

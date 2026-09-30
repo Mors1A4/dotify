@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { dailyVibeManager, DEFAULT_VIBE_PRESETS } from '../../src/services/dailyVibeManager';
 import { geminiVibeService } from '../../src/services/geminiVibeService';
 import { UserVibeConfig } from '../../src/types/vibes';
@@ -125,5 +125,42 @@ describe('Daily Vibe Customization & Curation Rules', () => {
     expect(result[2].title).toBe('Night Ride Mix');
     expect(result[3].title).toBe('Oldies Gold Mix');
     expect(result[4].title).toBe('Zen Calm Mix');
+  });
+
+  it('generates an extra-long playlist with multi-domain reasoning when user adds or amends to "singularity is coming "', async () => {
+    vi.spyOn(geminiVibeService, 'generateDailyVibePlaylists').mockImplementation(
+      async (tasteProfile, _date, vibes) => ({
+        playlists: geminiVibeService.generateAlgorithmicFallback(tasteProfile, vibes),
+        modelUsed: 'Multi-Domain Algorithmic Engine',
+        fromFallback: true,
+      })
+    );
+
+    const customVibes: UserVibeConfig[] = [
+      {
+        id: 'custom_singularity_is_coming__0',
+        label: 'singularity is coming ',
+        prompt: 'Music soundscape for singularity is coming  matching your personal taste.',
+        isAmended: true,
+      },
+      { id: 'working', label: 'Working', prompt: 'Deep focus' },
+      { id: 'partying', label: 'Partying', prompt: 'Dance hits' },
+      { id: 'chilling', label: 'Chilling', prompt: 'Mellow sunset' },
+      { id: 'workout', label: 'Workout', prompt: 'Heavy gym beats' },
+    ];
+
+    dailyVibeManager.saveUserVibes(customVibes, 'singularity-user-tester');
+    const playlists = await dailyVibeManager.getDailyVibes('singularity-user-tester', true);
+
+    expect(playlists).toHaveLength(5);
+    const singularity = playlists[0];
+    expect(singularity.vibeLabel).toBe('singularity is coming');
+    expect(singularity.tracks.length).toBeGreaterThanOrEqual(35);
+    expect(singularity.isExtraLong).toBe(true);
+    expect(singularity.domainReasoning).toBeDefined();
+    expect(singularity.domainReasoning?.thematicDomain).toContain('singularity');
+    expect(singularity.domainReasoning?.sonicDomain).toBeDefined();
+    expect(singularity.domainReasoning?.emotionalDomain).toBeDefined();
+    expect(singularity.domainReasoning?.curationStrategy).toBeDefined();
   });
 });
