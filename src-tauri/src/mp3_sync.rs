@@ -720,16 +720,12 @@ pub fn save_track_bytes_or_url(
     Ok(entry)
 }
 
-pub fn try_handle_mp3_route<F>(
+pub fn try_handle_mp3_route(
     stream: &mut TcpStream,
     req_str: &str,
     path_and_query: &str,
     range_header: Option<&str>,
-    resolve_yt_fn: F,
-) -> bool
-where
-    F: Fn(&str, u64) -> Option<String>,
-{
+) -> bool {
     if !path_and_query.starts_with("/api/mp3s") {
         return false;
     }
@@ -857,25 +853,7 @@ where
         let source_url = body_json.get("sourceUrl").and_then(|v| v.as_str());
         let origin_dev = body_json.get("originDeviceName").and_then(|v| v.as_str());
 
-        let mut yt_resolved = None;
-        if audio_b64.is_none() && source_url.is_none() {
-            let artist = track_val
-                .get("artist")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let title = track_val
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let dur = track_val
-                .get("duration")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let q = format!("{} {}", artist, title).trim().to_string();
-            if !q.is_empty() {
-                yt_resolved = resolve_yt_fn(&q, dur);
-            }
-        }
+        let yt_resolved: Option<String> = None;
 
         match save_track_bytes_or_url(
             track_val,

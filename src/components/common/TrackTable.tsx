@@ -9,6 +9,7 @@ import {
   isUglyPlaceholder,
 } from '../../services/artworkService';
 import { SaveMp3Button } from './SaveMp3Button';
+import { prewarmCandidate } from '../../services/youtubeResolver';
 
 export interface TrackTableProps {
   tracks: Track[];
@@ -44,6 +45,17 @@ export const TrackTable: React.FC<TrackTableProps> = ({
   } = usePlayerStore();
 
   const [activeMenuIndex, setActiveMenuIndex] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    if (tracks && tracks.length > 0) {
+      const topTracks = tracks.slice(0, 3);
+      for (const t of topTracks) {
+        if (t.artist && t.title) {
+          prewarmCandidate(t.artist, t.title, t.duration);
+        }
+      }
+    }
+  }, [tracks]);
 
   const handlePlay = (track: Track) => {
     if (onPlayTrack) {
@@ -83,6 +95,16 @@ export const TrackTable: React.FC<TrackTableProps> = ({
               key={`${track.id}-${idx}`}
               data-testid="track-item"
               onClick={() => handlePlay(track)}
+              onMouseEnter={() => {
+                if (track.artist && track.title) {
+                  prewarmCandidate(track.artist, track.title, track.duration);
+                }
+              }}
+              onPointerDown={() => {
+                if (track.artist && track.title) {
+                  prewarmCandidate(track.artist, track.title, track.duration);
+                }
+              }}
               className={`group relative grid grid-cols-12 items-center px-4 py-2.5 rounded-lg transition-colors cursor-pointer ${
                 isCurrent ? 'bg-elevated' : 'hover:bg-elevated/50'
               }`}

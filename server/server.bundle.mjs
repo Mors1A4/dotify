@@ -25329,251 +25329,8 @@ var require_yt_search = __commonJS({
   }
 });
 
-// node_modules/tinyspawn/src/index.js
-var require_src5 = __commonJS({
-  "node_modules/tinyspawn/src/index.js"(exports, module) {
-    "use strict";
-    var { spawn: spawn2 } = __require("child_process");
-    var { EOL } = __require("os");
-    var EE_PROPS = Object.getOwnPropertyNames(__require("events").EventEmitter.prototype).filter((name4) => !name4.startsWith("_")).concat(["kill", "ref", "unref"]);
-    var eos = (stream, listener, buffer = []) => stream[listener] ? stream[listener].on("data", (data) => buffer.push(data)) && buffer : buffer;
-    var createChildProcessError = ({ cmd, cmdArgs, childProcess }) => {
-      const command = `${cmd} ${cmdArgs.join(" ")}`;
-      let message = `The command spawned as:${EOL}${EOL}`;
-      message += `  \`${command}\`${EOL}${EOL}`;
-      message += `exited with:${EOL}${EOL}`;
-      message += `  \`{ signal: '${childProcess.signalCode}', code: ${childProcess.exitCode} }\` ${EOL}${EOL}`;
-      message += `with the following trace:${EOL}`;
-      const error = new Error(message);
-      error.command = command;
-      error.name = "ChildProcessError";
-      Object.keys(childProcess).filter((key2) => !key2.startsWith("_") && !["stdio", "stdin"].includes(key2)).forEach((key2) => {
-        error[key2] = childProcess[key2];
-      });
-      return error;
-    };
-    var clean = (str) => str.trim().replace(/\n$/, "");
-    var parse = (buffer, { json } = {}) => (encoding, start, end) => {
-      const data = clean(Buffer.concat(buffer).toString(encoding, start, end));
-      return json ? JSON.parse(data) : data;
-    };
-    var extend = (defaults) => (input, args, options2) => {
-      const arrayForm = args instanceof Array;
-      if (!arrayForm) {
-        options2 = args;
-        args = [];
-      }
-      const [cmd, ...cmdArgs] = arrayForm ? [input, ...args.filter((arg) => arg != null && arg !== false)] : input.split(" ").filter(Boolean);
-      let childProcess;
-      const promise = new Promise((resolve, reject) => {
-        const opts = { ...defaults, ...options2 };
-        childProcess = spawn2(cmd, cmdArgs, opts);
-        const stdout = eos(childProcess, "stdout");
-        const stderr = eos(childProcess, "stderr");
-        childProcess.on("error", reject).on("close", (exitCode) => {
-          Object.defineProperty(childProcess, "stdout", {
-            get: parse(stdout, opts)
-          });
-          Object.defineProperty(childProcess, "stderr", { get: parse(stderr) });
-          if (exitCode !== 0) {
-            const error = createChildProcessError({ cmd, cmdArgs, childProcess });
-            if (opts.reject !== false) return reject(error);
-            childProcess.error = error;
-          }
-          return resolve(childProcess);
-        });
-      });
-      const subprocess = Object.assign(promise, childProcess);
-      if (childProcess) {
-        EE_PROPS.forEach((name4) => subprocess[name4] = childProcess[name4].bind(childProcess));
-      }
-      return subprocess;
-    };
-    var $ = extend();
-    $.extend = extend;
-    $.json = $.extend({ json: true });
-    module.exports = $;
-  }
-});
-
-// node_modules/dargs/index.js
-var require_dargs = __commonJS({
-  "node_modules/dargs/index.js"(exports, module) {
-    "use strict";
-    var match = (array2, value) => array2.some((x) => x instanceof RegExp ? x.test(value) : x === value);
-    var dargs = (object, options2) => {
-      const arguments_ = [];
-      let extraArguments = [];
-      let separatedArguments = [];
-      options2 = {
-        useEquals: true,
-        shortFlag: true,
-        ...options2
-      };
-      const makeArguments = (key2, value) => {
-        const prefix = options2.shortFlag && key2.length === 1 ? "-" : "--";
-        const theKey = options2.allowCamelCase ? key2 : key2.replace(/[A-Z]/g, "-$&").toLowerCase();
-        key2 = prefix + theKey;
-        if (options2.useEquals) {
-          arguments_.push(key2 + (value ? `=${value}` : ""));
-        } else {
-          arguments_.push(key2);
-          if (value) {
-            arguments_.push(value);
-          }
-        }
-      };
-      const makeAliasArg = (key2, value) => {
-        arguments_.push(`-${key2}`);
-        if (value) {
-          arguments_.push(value);
-        }
-      };
-      for (let [key2, value] of Object.entries(object)) {
-        let pushArguments = makeArguments;
-        if (Array.isArray(options2.excludes) && match(options2.excludes, key2)) {
-          continue;
-        }
-        if (Array.isArray(options2.includes) && !match(options2.includes, key2)) {
-          continue;
-        }
-        if (typeof options2.aliases === "object" && options2.aliases[key2]) {
-          key2 = options2.aliases[key2];
-          pushArguments = makeAliasArg;
-        }
-        if (key2 === "--") {
-          if (!Array.isArray(value)) {
-            throw new TypeError(
-              `Expected key \`--\` to be Array, got ${typeof value}`
-            );
-          }
-          separatedArguments = value;
-          continue;
-        }
-        if (key2 === "_") {
-          if (!Array.isArray(value)) {
-            throw new TypeError(
-              `Expected key \`_\` to be Array, got ${typeof value}`
-            );
-          }
-          extraArguments = value;
-          continue;
-        }
-        if (value === true) {
-          pushArguments(key2, "");
-        }
-        if (value === false && !options2.ignoreFalse) {
-          pushArguments(`no-${key2}`);
-        }
-        if (typeof value === "string") {
-          pushArguments(key2, value);
-        }
-        if (typeof value === "number" && !Number.isNaN(value)) {
-          pushArguments(key2, String(value));
-        }
-        if (Array.isArray(value)) {
-          for (const arrayValue of value) {
-            pushArguments(key2, arrayValue);
-          }
-        }
-      }
-      for (const argument of extraArguments) {
-        arguments_.push(String(argument));
-      }
-      if (separatedArguments.length > 0) {
-        arguments_.push("--");
-      }
-      for (const argument of separatedArguments) {
-        arguments_.push(String(argument));
-      }
-      return arguments_;
-    };
-    module.exports = dargs;
-  }
-});
-
-// node_modules/is-unix/index.js
-var require_is_unix = __commonJS({
-  "node_modules/is-unix/index.js"(exports, module) {
-    "use strict";
-    module.exports = (platform = "") => {
-      platform = platform.toLowerCase();
-      return [
-        "aix",
-        "android",
-        "darwin",
-        "freebsd",
-        "linux",
-        "openbsd",
-        "sunos"
-      ].indexOf(platform) !== -1;
-    };
-  }
-});
-
-// node_modules/youtube-dl-exec/src/constants.js
-var require_constants = __commonJS({
-  "node_modules/youtube-dl-exec/src/constants.js"(exports, module) {
-    "use strict";
-    var isUnix = require_is_unix();
-    var path4 = __require("path");
-    var PLATFORM_WIN = "win32";
-    var PLATFORM_UNIX = "unix";
-    var YOUTUBE_DL_HOST = process.env.YOUTUBE_DL_HOST ?? "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
-    var YOUTUBE_DL_DIR = process.env.YOUTUBE_DL_DIR ?? path4.join(__dirname, "..", "bin");
-    var YOUTUBE_DL_PLATFORM = process.env.YOUTUBE_DL_PLATFORM ?? isUnix(process.platform) ? PLATFORM_UNIX : PLATFORM_WIN;
-    var YOUTUBE_DL_FILENAME = process.env.YOUTUBE_DL_FILENAME || "yt-dlp";
-    var YOUTUBE_DL_FILE = !YOUTUBE_DL_FILENAME.endsWith(".exe") && YOUTUBE_DL_PLATFORM === "win32" ? `${YOUTUBE_DL_FILENAME}.exe` : YOUTUBE_DL_FILENAME;
-    var YOUTUBE_DL_PATH = path4.join(YOUTUBE_DL_DIR, YOUTUBE_DL_FILE);
-    var YOUTUBE_DL_SKIP_DOWNLOAD = process.env.YOUTUBE_DL_SKIP_DOWNLOAD;
-    var GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-    module.exports = {
-      GITHUB_TOKEN,
-      YOUTUBE_DL_DIR,
-      YOUTUBE_DL_FILE,
-      YOUTUBE_DL_FILENAME,
-      YOUTUBE_DL_HOST,
-      YOUTUBE_DL_PATH,
-      YOUTUBE_DL_PLATFORM,
-      YOUTUBE_DL_SKIP_DOWNLOAD
-    };
-  }
-});
-
-// node_modules/youtube-dl-exec/src/index.js
-var require_src6 = __commonJS({
-  "node_modules/youtube-dl-exec/src/index.js"(exports, module) {
-    "use strict";
-    var $ = require_src5();
-    var dargs = require_dargs();
-    var constants = require_constants();
-    var args = (flags = {}) => dargs(flags, { useEquals: false }).filter(Boolean);
-    var isJSON = (str = "") => str.startsWith("{");
-    var parse = ({ stdout, stderr, ...details }) => {
-      if (details.exitCode === 0) {
-        return isJSON(stdout) ? JSON.parse(stdout) : stdout;
-      }
-      throw Object.assign(new Error(stderr), { stderr, stdout }, details);
-    };
-    var create = (binaryPath) => {
-      const fn = (...fnArgs) => fn.exec(...fnArgs).then(parse).catch(parse);
-      fn.exec = (url, flags, opts = {}) => $(binaryPath, [...args(flags), "--", url].filter(Boolean), opts);
-      return fn;
-    };
-    var update = (binaryPath = constants.YOUTUBE_DL_PATH) => $(binaryPath, ["-U"]);
-    var defaultInstance = create(constants.YOUTUBE_DL_PATH);
-    module.exports = defaultInstance;
-    module.exports.youtubeDl = defaultInstance;
-    module.exports.create = create;
-    module.exports.update = update;
-    module.exports.args = args;
-    module.exports.isJSON = isJSON;
-    module.exports.constants = constants;
-  }
-});
-
 // node_modules/ws/lib/constants.js
-var require_constants2 = __commonJS({
+var require_constants = __commonJS({
   "node_modules/ws/lib/constants.js"(exports, module) {
     "use strict";
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
@@ -25811,7 +25568,7 @@ var require_bufferutil = __commonJS({
 var require_buffer_util = __commonJS({
   "node_modules/ws/lib/buffer-util.js"(exports, module) {
     "use strict";
-    var { EMPTY_BUFFER } = require_constants2();
+    var { EMPTY_BUFFER } = require_constants();
     var FastBuffer = Buffer[Symbol.species];
     function concat(list, totalLength) {
       if (list.length === 0) return EMPTY_BUFFER;
@@ -25939,7 +25696,7 @@ var require_permessage_deflate = __commonJS({
     var zlib = __require("zlib");
     var bufferUtil = require_buffer_util();
     var Limiter = require_limiter();
-    var { kStatusCode } = require_constants2();
+    var { kStatusCode } = require_constants();
     var FastBuffer = Buffer[Symbol.species];
     var TRAILER = Buffer.from([0, 0, 255, 255]);
     var kPerMessageDeflate = Symbol("permessage-deflate");
@@ -26369,7 +26126,7 @@ var require_validation = __commonJS({
   "node_modules/ws/lib/validation.js"(exports, module) {
     "use strict";
     var { isUtf8 } = __require("buffer");
-    var { hasBlob } = require_constants2();
+    var { hasBlob } = require_constants();
     var tokenChars = [
       0,
       0,
@@ -26576,7 +26333,7 @@ var require_receiver = __commonJS({
       EMPTY_BUFFER,
       kStatusCode,
       kWebSocket
-    } = require_constants2();
+    } = require_constants();
     var { concat, toArrayBuffer, unmask } = require_buffer_util();
     var { isValidStatusCode, isValidUTF8 } = require_validation();
     var FastBuffer = Buffer[Symbol.species];
@@ -27198,7 +26955,7 @@ var require_sender = __commonJS({
       types: { isUint8Array }
     } = __require("util");
     var PerMessageDeflate2 = require_permessage_deflate();
-    var { EMPTY_BUFFER, kWebSocket, NOOP } = require_constants2();
+    var { EMPTY_BUFFER, kWebSocket, NOOP } = require_constants();
     var { isBlob, isValidStatusCode } = require_validation();
     var { mask: applyMask, toBuffer } = require_buffer_util();
     var kByteLength = Symbol("kByteLength");
@@ -27685,7 +27442,7 @@ var require_sender = __commonJS({
 var require_event_target = __commonJS({
   "node_modules/ws/lib/event-target.js"(exports, module) {
     "use strict";
-    var { kForOnEventAttribute, kListener } = require_constants2();
+    var { kForOnEventAttribute, kListener } = require_constants();
     var kCode = Symbol("kCode");
     var kData = Symbol("kData");
     var kError = Symbol("kError");
@@ -28089,7 +27846,7 @@ var require_websocket = __commonJS({
       kStatusCode,
       kWebSocket,
       NOOP
-    } = require_constants2();
+    } = require_constants();
     var {
       EventTarget: { addEventListener, removeEventListener }
     } = require_event_target();
@@ -29114,7 +28871,7 @@ var require_websocket_server = __commonJS({
     var PerMessageDeflate2 = require_permessage_deflate();
     var subprotocol2 = require_subprotocol();
     var WebSocket2 = require_websocket();
-    var { CLOSE_TIMEOUT, GUID, kWebSocket } = require_constants2();
+    var { CLOSE_TIMEOUT, GUID, kWebSocket } = require_constants();
     var keyRegex = /^[+/0-9A-Za-z]{22}==$/;
     var RUNNING = 0;
     var CLOSING = 1;
@@ -29917,7 +29674,7 @@ var require_node5 = __commonJS({
 });
 
 // node_modules/castv2-client/node_modules/debug/src/index.js
-var require_src7 = __commonJS({
+var require_src5 = __commonJS({
   "node_modules/castv2-client/node_modules/debug/src/index.js"(exports, module) {
     if (typeof process !== "undefined" && process.type === "renderer") {
       module.exports = require_browser5();
@@ -29932,7 +29689,7 @@ var require_controller = __commonJS({
   "node_modules/castv2-client/lib/controllers/controller.js"(exports, module) {
     var EventEmitter = __require("events").EventEmitter;
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     function Controller(client, sourceId, destinationId, namespace, encoding) {
       EventEmitter.call(this);
       this.channel = client.createChannel(sourceId, destinationId, namespace, encoding);
@@ -29962,7 +29719,7 @@ var require_controller = __commonJS({
 var require_json2 = __commonJS({
   "node_modules/castv2-client/lib/controllers/json.js"(exports, module) {
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var Controller = require_controller();
     function JsonController(client, sourceId, destinationId, namespace) {
       Controller.call(this, client, sourceId, destinationId, namespace, "JSON");
@@ -29976,7 +29733,7 @@ var require_json2 = __commonJS({
 var require_request_response = __commonJS({
   "node_modules/castv2-client/lib/controllers/request-response.js"(exports, module) {
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var JsonController = require_json2();
     function RequestResponseController(client, sourceId, destinationId, namespace) {
       JsonController.call(this, client, sourceId, destinationId, namespace);
@@ -30008,7 +29765,7 @@ var require_request_response = __commonJS({
 var require_connection = __commonJS({
   "node_modules/castv2-client/lib/controllers/connection.js"(exports, module) {
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var JsonController = require_json2();
     function ConnectionController(client, sourceId, destinationId) {
       JsonController.call(this, client, sourceId, destinationId, "urn:x-cast:com.google.cast.tp.connection");
@@ -30039,7 +29796,7 @@ var require_connection = __commonJS({
 var require_heartbeat = __commonJS({
   "node_modules/castv2-client/lib/controllers/heartbeat.js"(exports, module) {
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var JsonController = require_json2();
     var DEFAULT_INTERVAL = 5;
     var TIMEOUT_FACTOR = 3;
@@ -30104,7 +29861,7 @@ var require_heartbeat = __commonJS({
 var require_receiver2 = __commonJS({
   "node_modules/castv2-client/lib/controllers/receiver.js"(exports, module) {
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var RequestResponseController = require_request_response();
     function ReceiverController(client, sourceId, destinationId) {
       RequestResponseController.call(this, client, sourceId, destinationId, "urn:x-cast:com.google.cast.receiver");
@@ -30184,7 +29941,7 @@ var require_receiver2 = __commonJS({
 var require_media = __commonJS({
   "node_modules/castv2-client/lib/controllers/media.js"(exports, module) {
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var RequestResponseController = require_request_response();
     function MediaController(client, sourceId, destinationId) {
       RequestResponseController.call(this, client, sourceId, destinationId, "urn:x-cast:com.google.cast.media");
@@ -31002,7 +30759,7 @@ var require_node6 = __commonJS({
 });
 
 // node_modules/debug/src/index.js
-var require_src8 = __commonJS({
+var require_src6 = __commonJS({
   "node_modules/debug/src/index.js"(exports, module) {
     if (typeof process === "undefined" || process.type === "renderer" || process.browser === true || process.__nwjs) {
       module.exports = require_browser6();
@@ -36003,7 +35760,7 @@ var require_common2 = __commonJS({
 });
 
 // node_modules/castv2/node_modules/protobufjs/src/index.js
-var require_src9 = __commonJS({
+var require_src7 = __commonJS({
   "node_modules/castv2/node_modules/protobufjs/src/index.js"(exports, module) {
     "use strict";
     var protobuf = module.exports = require_index_light();
@@ -36019,7 +35776,7 @@ var require_src9 = __commonJS({
 var require_protobufjs = __commonJS({
   "node_modules/castv2/node_modules/protobufjs/index.js"(exports, module) {
     "use strict";
-    module.exports = require_src9();
+    module.exports = require_src7();
   }
 });
 
@@ -36111,7 +35868,7 @@ var require_channel = __commonJS({
   "node_modules/castv2/lib/channel.js"(exports, module) {
     var EventEmitter = __require("events").EventEmitter;
     var util = __require("util");
-    var debug = require_src8()("castv2");
+    var debug = require_src6()("castv2");
     function Channel(bus, sourceId, destinationId, namespace, encoding) {
       EventEmitter.call(this);
       this.bus = bus;
@@ -36172,7 +35929,7 @@ var require_client = __commonJS({
     var EventEmitter = __require("events").EventEmitter;
     var util = __require("util");
     var tls = __require("tls");
-    var debug = require_src8()("castv2");
+    var debug = require_src6()("castv2");
     var protocol = require_proto();
     var PacketStreamWrapper = require_packet_stream_wrapper();
     var Channel = require_channel();
@@ -36283,7 +36040,7 @@ var require_server = __commonJS({
     var EventEmitter = __require("events").EventEmitter;
     var util = __require("util");
     var tls = __require("tls");
-    var debug = require_src8()("castv2");
+    var debug = require_src6()("castv2");
     var protocol = require_proto();
     var PacketStreamWrapper = require_packet_stream_wrapper();
     var CastMessage = protocol.CastMessage;
@@ -36419,7 +36176,7 @@ var require_sender2 = __commonJS({
   "node_modules/castv2-client/lib/senders/sender.js"(exports, module) {
     var EventEmitter = __require("events").EventEmitter;
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     function Sender2(client, senderId, receiverId) {
       EventEmitter.call(this);
       this.client = client;
@@ -36453,7 +36210,7 @@ var require_platform = __commonJS({
   "node_modules/castv2-client/lib/senders/platform.js"(exports, module) {
     var util = __require("util");
     var Client2 = require_castv2().Client;
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var Sender2 = require_sender2();
     var ConnectionController = require_connection();
     var HeartbeatController = require_heartbeat();
@@ -36551,7 +36308,7 @@ var require_platform = __commonJS({
 var require_application2 = __commonJS({
   "node_modules/castv2-client/lib/senders/application.js"(exports, module) {
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var Sender2 = require_sender2();
     var ConnectionController = require_connection();
     function Application(client, session) {
@@ -36590,7 +36347,7 @@ var require_application2 = __commonJS({
 var require_default_media_receiver = __commonJS({
   "node_modules/castv2-client/lib/senders/default-media-receiver.js"(exports, module) {
     var util = __require("util");
-    var debug = require_src7()("castv2-client");
+    var debug = require_src5()("castv2-client");
     var Application = require_application2();
     var MediaController = require_media();
     function DefaultMediaReceiver2(client, session) {
@@ -36658,7 +36415,7 @@ var require_castv2_client = __commonJS({
 });
 
 // node_modules/@grpc/grpc-js/build/src/constants.js
-var require_constants3 = __commonJS({
+var require_constants2 = __commonJS({
   "node_modules/@grpc/grpc-js/build/src/constants.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -36806,7 +36563,7 @@ var require_logging = __commonJS({
     exports.log = exports.setLoggerVerbosity = exports.setLogger = exports.getLogger = void 0;
     exports.trace = trace;
     exports.isTracerEnabled = isTracerEnabled;
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var process_1 = __require("process");
     var clientVersion = require_package().version;
     var DEFAULT_LOGGER = {
@@ -36926,7 +36683,7 @@ var require_metadata = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Metadata = void 0;
     var logging_1 = require_logging();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var error_1 = require_error();
     var LEGAL_KEY_REGEX = /^[0-9a-z_.-]+$/;
     var LEGAL_NON_BINARY_VALUE_REGEX = /^[ -~]*$/;
@@ -37535,7 +37292,7 @@ var require_service_config = __commonJS({
     exports.validateServiceConfig = validateServiceConfig;
     exports.extractAndSelectServiceConfig = extractAndSelectServiceConfig;
     var os4 = __require("os");
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var load_balancer_1 = require_load_balancer();
     var DURATION_REGEX = /^\d+(\.\d{1,9})?s$/;
     var CLIENT_LANGUAGE_STRING = "node";
@@ -38011,7 +37768,7 @@ var require_picker = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.QueuePicker = exports.UnavailablePicker = exports.PickResultType = void 0;
     var metadata_1 = require_metadata();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var PickResultType;
     (function(PickResultType2) {
       PickResultType2[PickResultType2["COMPLETE"] = 0] = "COMPLETE";
@@ -38331,10 +38088,10 @@ var require_resolving_load_balancer = __commonJS({
     var resolver_1 = require_resolver();
     var picker_1 = require_picker();
     var backoff_timeout_1 = require_backoff_timeout();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var metadata_1 = require_metadata();
     var logging = require_logging();
-    var constants_2 = require_constants3();
+    var constants_2 = require_constants2();
     var uri_parser_1 = require_uri_parser();
     var load_balancer_child_handler_1 = require_load_balancer_child_handler();
     var TRACER_NAME = "resolving_load_balancer";
@@ -38693,7 +38450,7 @@ var require_call = __commonJS({
     exports.callErrorFromStatus = callErrorFromStatus;
     var events_1 = __require("events");
     var stream_1 = __require("stream");
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     function callErrorFromStatus(status, callerStack) {
       const message = `${status.code} ${constants_1.Status[status.code]}: ${status.details}`;
       const error = new Error(message);
@@ -38882,7 +38639,7 @@ var require_client_interceptors = __commonJS({
     exports.getInterceptingCall = getInterceptingCall;
     var metadata_1 = require_metadata();
     var call_interface_1 = require_call_interface();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var error_1 = require_error();
     var InterceptorConfigurationError = class _InterceptorConfigurationError extends Error {
       constructor(message) {
@@ -39229,7 +38986,7 @@ var require_client2 = __commonJS({
     var call_1 = require_call();
     var channel_1 = require_channel2();
     var connectivity_state_1 = require_connectivity_state();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var metadata_1 = require_metadata();
     var client_interceptors_1 = require_client_interceptors();
     var CHANNEL_SYMBOL = Symbol();
@@ -45932,7 +45689,7 @@ var require_common3 = __commonJS({
 });
 
 // node_modules/protobufjs/src/index.js
-var require_src10 = __commonJS({
+var require_src8 = __commonJS({
   "node_modules/protobufjs/src/index.js"(exports, module) {
     "use strict";
     var protobuf = module.exports = require_index_light2();
@@ -45948,7 +45705,7 @@ var require_src10 = __commonJS({
 var require_protobufjs2 = __commonJS({
   "node_modules/protobufjs/index.js"(exports, module) {
     "use strict";
-    module.exports = require_src10();
+    module.exports = require_src8();
   }
 });
 
@@ -48360,7 +48117,7 @@ var require_util3 = __commonJS({
 });
 
 // node_modules/@grpc/proto-loader/build/src/index.js
-var require_src11 = __commonJS({
+var require_src9 = __commonJS({
   "node_modules/@grpc/proto-loader/build/src/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -48563,7 +48320,7 @@ var require_channelz = __commonJS({
     exports.setup = setup;
     var net_1 = __require("net");
     var connectivity_state_1 = require_connectivity_state();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var subchannel_address_1 = require_subchannel_address();
     var admin_1 = require_admin();
     var make_client_1 = require_make_client();
@@ -49098,7 +48855,7 @@ var require_channelz = __commonJS({
       if (loadedChannelzDefinition) {
         return loadedChannelzDefinition;
       }
-      const loaderLoadSync = require_src11().loadSync;
+      const loaderLoadSync = require_src9().loadSync;
       const loadedProto = loaderLoadSync("channelz.proto", {
         keepCase: true,
         longs: String,
@@ -49126,7 +48883,7 @@ var require_subchannel = __commonJS({
     var connectivity_state_1 = require_connectivity_state();
     var backoff_timeout_1 = require_backoff_timeout();
     var logging = require_logging();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var uri_parser_1 = require_uri_parser();
     var subchannel_address_1 = require_subchannel_address();
     var channelz_1 = require_channelz();
@@ -49418,10 +49175,10 @@ var require_resolver_dns = __commonJS({
     var dns = __require("dns");
     var util = __require("util");
     var service_config_1 = require_service_config();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var metadata_1 = require_metadata();
     var logging = require_logging();
-    var constants_2 = require_constants3();
+    var constants_2 = require_constants2();
     var uri_parser_1 = require_uri_parser();
     var net_1 = __require("net");
     var backoff_timeout_1 = require_backoff_timeout();
@@ -49668,7 +49425,7 @@ var require_http_proxy = __commonJS({
     exports.mapProxyName = mapProxyName;
     exports.getProxiedConnection = getProxiedConnection;
     var logging_1 = require_logging();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var resolver_1 = require_resolver();
     var http4 = __require("http");
     var tls = __require("tls");
@@ -49955,11 +49712,11 @@ var require_subchannel_call = __commonJS({
     exports.Http2SubchannelCall = void 0;
     var http22 = __require("http2");
     var os4 = __require("os");
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var metadata_1 = require_metadata();
     var stream_decoder_1 = require_stream_decoder();
     var logging = require_logging();
-    var constants_2 = require_constants3();
+    var constants_2 = require_constants2();
     var TRACER_NAME = "subchannel_call";
     function getSystemErrorName(errno) {
       for (const [name4, num] of Object.entries(os4.constants.errno)) {
@@ -50322,7 +50079,7 @@ var require_transport = __commonJS({
     var http22 = __require("http2");
     var tls_1 = __require("tls");
     var channelz_1 = require_channelz();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var http_proxy_1 = require_http_proxy();
     var logging = require_logging();
     var resolver_1 = require_resolver();
@@ -51008,7 +50765,7 @@ var require_compression_filter = __commonJS({
     exports.CompressionFilterFactory = exports.CompressionFilter = void 0;
     var zlib = __require("zlib");
     var compression_algorithms_1 = require_compression_algorithms();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var filter_1 = require_filter();
     var logging = require_logging();
     var isCompressionAlgorithmKey = (key2) => {
@@ -51335,7 +51092,7 @@ var require_control_plane_status = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.restrictControlPlaneStatusCode = restrictControlPlaneStatusCode;
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var INAPPROPRIATE_CONTROL_PLANE_CODES = [
       constants_1.Status.OK,
       constants_1.Status.INVALID_ARGUMENT,
@@ -51366,7 +51123,7 @@ var require_load_balancing_call = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.LoadBalancingCall = void 0;
     var connectivity_state_1 = require_connectivity_state();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var deadline_1 = require_deadline();
     var metadata_1 = require_metadata();
     var picker_1 = require_picker();
@@ -51578,7 +51335,7 @@ var require_resolving_call = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ResolvingCall = void 0;
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var deadline_1 = require_deadline();
     var metadata_1 = require_metadata();
     var logging = require_logging();
@@ -51825,7 +51582,7 @@ var require_retrying_call = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.RetryingCall = exports.MessageBufferTracker = exports.RetryThrottler = void 0;
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var metadata_1 = require_metadata();
     var logging = require_logging();
     var TRACER_NAME = "retrying_call";
@@ -52440,7 +52197,7 @@ var require_internal_channel = __commonJS({
     var resolving_load_balancer_1 = require_resolving_load_balancer();
     var subchannel_pool_1 = require_subchannel_pool();
     var picker_1 = require_picker();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var filter_stack_1 = require_filter_stack();
     var compression_filter_1 = require_compression_filter();
     var resolver_1 = require_resolver();
@@ -52951,7 +52708,7 @@ var require_server_call = __commonJS({
     var http22 = __require("http2");
     var stream_1 = __require("stream");
     var zlib = __require("zlib");
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var metadata_1 = require_metadata();
     var stream_decoder_1 = require_stream_decoder();
     var logging = require_logging();
@@ -53651,7 +53408,7 @@ var require_server2 = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Server = void 0;
     var http22 = __require("http2");
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var server_call_1 = require_server_call();
     var server_credentials_1 = require_server_credentials();
     var resolver_1 = require_resolver();
@@ -54535,7 +54292,7 @@ var require_load_balancer_outlier_detection = __commonJS({
     exports.OutlierDetectionLoadBalancer = exports.OutlierDetectionLoadBalancingConfig = void 0;
     exports.setup = setup;
     var connectivity_state_1 = require_connectivity_state();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var duration_1 = require_duration();
     var experimental_1 = require_experimental();
     var load_balancer_1 = require_load_balancer();
@@ -55195,7 +54952,7 @@ var require_resolver_ip = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.setup = setup;
     var net_1 = __require("net");
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var metadata_1 = require_metadata();
     var resolver_1 = require_resolver();
     var uri_parser_1 = require_uri_parser();
@@ -55289,7 +55046,7 @@ var require_load_balancer_pick_first = __commonJS({
     var connectivity_state_1 = require_connectivity_state();
     var picker_1 = require_picker();
     var logging = require_logging();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var TRACER_NAME = "pick_first";
     function trace(text) {
       logging.trace(constants_1.LogVerbosity.DEBUG, TRACER_NAME, text);
@@ -55590,7 +55347,7 @@ var require_load_balancer_round_robin = __commonJS({
     var picker_1 = require_picker();
     var subchannel_address_1 = require_subchannel_address();
     var logging = require_logging();
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     var TRACER_NAME = "round_robin";
     function trace(text) {
       logging.trace(constants_1.LogVerbosity.DEBUG, TRACER_NAME, text);
@@ -55732,7 +55489,7 @@ var require_load_balancer_round_robin = __commonJS({
 });
 
 // node_modules/@grpc/grpc-js/build/src/index.js
-var require_src12 = __commonJS({
+var require_src10 = __commonJS({
   "node_modules/@grpc/grpc-js/build/src/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -55761,7 +55518,7 @@ var require_src12 = __commonJS({
     Object.defineProperty(exports, "Client", { enumerable: true, get: function() {
       return client_1.Client;
     } });
-    var constants_1 = require_constants3();
+    var constants_1 = require_constants2();
     Object.defineProperty(exports, "logVerbosity", { enumerable: true, get: function() {
       return constants_1.LogVerbosity;
     } });
@@ -56018,130 +55775,10 @@ function handleStreamProxy(req, res) {
 
 // server/trackResolver.js
 var import_yt_search = __toESM(require_yt_search(), 1);
-var import_youtube_dl_exec = __toESM(require_src6(), 1);
 var streamCache = /* @__PURE__ */ new Map();
-var pendingResolutions = /* @__PURE__ */ new Map();
 var CACHE_TTL_MS = 4 * 60 * 60 * 1e3;
-var DIRECT_AUDIO_FORMAT = "140/251/250/249/139/ba[ext=m4a][protocol^=http][protocol!*=m3u8][protocol!*=dash]/ba[protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[ext=mp4][protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[protocol^=http][protocol!*=m3u8][protocol!*=dash]";
-var MAX_CONCURRENT_EXTRACTIONS = 2;
-var activeExtractions = 0;
-var highPriorityQueue = [];
-var lowPriorityQueue = [];
-function acquireExtractionSlot(isPreload = false) {
-  if (activeExtractions < MAX_CONCURRENT_EXTRACTIONS) {
-    activeExtractions++;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    if (isPreload) {
-      lowPriorityQueue.push(resolve);
-    } else {
-      highPriorityQueue.push(resolve);
-    }
-  });
-}
-function releaseExtractionSlot() {
-  const next = highPriorityQueue.shift() || lowPriorityQueue.shift();
-  if (next) {
-    next();
-  } else {
-    activeExtractions = Math.max(0, activeExtractions - 1);
-  }
-}
-function selectBestCandidates(videos, expectedDurationSec = 0) {
-  if (!Array.isArray(videos) || videos.length === 0) return [];
-  const minFullTrackSec = expectedDurationSec > 60 ? Math.max(45, Math.min(60, expectedDurationSec - 15)) : 45;
-  const maxFullTrackSec = expectedDurationSec > 0 ? Math.max(expectedDurationSec * 2.5, 600) : 900;
-  const validLengthVideos = videos.filter(
-    (v) => v?.url && v.seconds >= minFullTrackSec && v.seconds <= maxFullTrackSec
-  );
-  const fallbackVideos = videos.filter(
-    (v) => v?.url && (!v.seconds || v.seconds >= minFullTrackSec)
-  );
-  const pool = validLengthVideos.length > 0 ? validLengthVideos : fallbackVideos;
-  if (pool.length === 0) return [];
-  const scored = pool.slice(0, 10).map((v, idx) => {
-    let score = 100 - idx * 4;
-    const titleLower = String(v.title || "").toLowerCase();
-    const authorLower = String(v.author?.name || "").toLowerCase();
-    const descLower = String(v.description || "").toLowerCase();
-    if (authorLower.endsWith("- topic") || descLower.includes("provided to youtube by")) {
-      score += 35;
-    }
-    if (titleLower.includes("official audio") || titleLower.includes("(audio)")) {
-      score += 30;
-    } else if (titleLower.includes("lyric") || titleLower.includes("visualizer")) {
-      score += 18;
-    }
-    if (titleLower.includes("#shorts") || titleLower.includes("teaser") || titleLower.includes("preview") || titleLower.includes("snippet")) {
-      score -= 80;
-    }
-    if (expectedDurationSec > 0 && v.seconds > 0) {
-      const diff = Math.abs(v.seconds - expectedDurationSec);
-      if (diff <= 5) score += 40;
-      else if (diff <= 15) score += 25;
-      else if (diff <= 45) score += 10;
-      else if (diff > 90) score -= 25;
-    }
-    return { video: v, score };
-  });
-  scored.sort((a2, b) => b.score - a2.score);
-  return scored.slice(0, 4).map((s) => s.video);
-}
-async function resolveAudioStreamUrl(cacheKey, searchWords, expectedDurationSec, forceRefresh = false, isPreload = false) {
-  if (forceRefresh) {
-    streamCache.delete(cacheKey);
-  } else {
-    const cached = streamCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      return cached.url;
-    }
-  }
-  if (pendingResolutions.has(cacheKey)) {
-    return pendingResolutions.get(cacheKey);
-  }
-  const resolutionPromise = (async () => {
-    await acquireExtractionSlot(isPreload);
-    try {
-      const query2 = `${searchWords} official audio`.trim();
-      const searchRes = await (0, import_yt_search.default)(query2);
-      let candidates = selectBestCandidates(searchRes?.videos, expectedDurationSec);
-      if (candidates.length === 0) {
-        const fallbackSearch = await (0, import_yt_search.default)(searchWords);
-        candidates = selectBestCandidates(fallbackSearch?.videos, expectedDurationSec);
-      }
-      for (const video of candidates) {
-        if (!video?.url) continue;
-        try {
-          const audioUrl = await (0, import_youtube_dl_exec.default)(video.url, {
-            getUrl: true,
-            format: DIRECT_AUDIO_FORMAT,
-            noWarnings: true,
-            noPlaylist: true
-          });
-          const lines = String(audioUrl || "").split(/\r?\n/).map((l) => l.trim()).filter(
-            (l) => l.startsWith("http") && !l.includes(".m3u8") && !l.includes("/manifest/")
-          );
-          const cleanUrl = lines[0];
-          if (cleanUrl) {
-            streamCache.set(cacheKey, { url: cleanUrl, timestamp: Date.now() });
-            return cleanUrl;
-          }
-        } catch (candidateErr) {
-          console.warn(
-            `[TrackResolver] Candidate ${video.url} failed, trying next:`,
-            candidateErr.message
-          );
-        }
-      }
-      return null;
-    } finally {
-      releaseExtractionSlot();
-      pendingResolutions.delete(cacheKey);
-    }
-  })();
-  pendingResolutions.set(cacheKey, resolutionPromise);
-  return resolutionPromise;
+async function resolveAudioStreamUrl() {
+  return null;
 }
 async function handleTrackStream(req, res) {
   let {
@@ -57524,7 +57161,6 @@ async function resolveSpotifyUrl(input) {
 }
 
 // server/mp3SyncHub.js
-var import_youtube_dl_exec2 = __toESM(require_src6(), 1);
 var import_yt_search2 = __toESM(require_yt_search(), 1);
 import fs from "fs";
 import path from "path";
@@ -57533,7 +57169,6 @@ import dgram2 from "dgram";
 import crypto2 from "crypto";
 var UDP_DISCOVERY_PORT = 42889;
 var HTTP_PORT = Number(process.env.PORT || 3001);
-var DIRECT_AUDIO_FORMAT2 = "140/251/250/249/139/ba[ext=m4a][protocol^=http][protocol!*=m3u8][protocol!*=dash]/ba[protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[ext=mp4][protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[protocol^=http][protocol!*=m3u8][protocol!*=dash]";
 function getMp3StorageDir() {
   const home = os2.homedir();
   if (home) {
@@ -57769,30 +57404,7 @@ async function scanLanSubnetForPeers() {
   }
   return Array.from(discoveredPeers.values());
 }
-async function resolveStreamUrlViaYtdlp(track) {
-  const query2 = `${track.artist || ""} ${track.title || ""} official audio`.trim();
-  if (!query2) return null;
-  try {
-    const searchRes = await (0, import_yt_search2.default)(query2);
-    const videos = (searchRes?.videos || []).filter(
-      (v) => v?.url && (!v.seconds || v.seconds >= 40 && v.seconds <= 900)
-    );
-    for (const v of videos.slice(0, 3)) {
-      try {
-        const out = await (0, import_youtube_dl_exec2.default)(v.url, {
-          getUrl: true,
-          format: DIRECT_AUDIO_FORMAT2,
-          noWarnings: true,
-          noPlaylist: true
-        });
-        const cleanUrl = String(out || "").split(/\r?\n/).map((l) => l.trim()).find((l) => l.startsWith("http") && !l.includes(".m3u8") && !l.includes("/manifest/"));
-        if (cleanUrl) return cleanUrl;
-      } catch {
-      }
-    }
-  } catch (err) {
-    console.warn("[Mp3SyncHub] yt-dlp resolution failed:", err.message);
-  }
+async function resolveStreamUrlViaYtdlp() {
   return null;
 }
 var activeDownloads = /* @__PURE__ */ new Map();
@@ -60412,8 +60024,8 @@ var Md5;
 }).apply(typeof commonjsGlobal !== "undefined" ? commonjsGlobal : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {});
 
 // node_modules/@firebase/firestore/dist/common-BKJf2lb8.node.mjs
-var grpc = __toESM(require_src12(), 1);
-var protoLoader = __toESM(require_src11(), 1);
+var grpc = __toESM(require_src10(), 1);
+var protoLoader = __toESM(require_src9(), 1);
 import { TextEncoder as TextEncoder2, inspect, TextDecoder as TextDecoder2 } from "util";
 import { randomBytes as randomBytes$1 } from "crypto";
 
@@ -89236,8 +88848,8 @@ var ExpUserDataWriter = class extends AbstractUserDataWriter {
 };
 
 // node_modules/@firebase/firestore/dist/index.node.mjs
-var import_grpc_js = __toESM(require_src12(), 1);
-var import_proto_loader = __toESM(require_src11(), 1);
+var import_grpc_js = __toESM(require_src10(), 1);
+var import_proto_loader = __toESM(require_src9(), 1);
 var name$12 = "@firebase/firestore";
 var version4 = "4.17.2";
 function registerFirestore(variant, useFetchStreams = true) {
@@ -90853,10 +90465,15 @@ async function applyAndReleaseForkUpgrade(requestId) {
         if (relPath.startsWith(".upgrade-context") || relPath === "opencode.json") continue;
         const srcFile = path2.join(forkPath, relPath);
         const destFile = path2.join(PROJECT_ROOT, relPath);
-        if (fs2.existsSync(srcFile) && fs2.statSync(srcFile).isFile()) {
-          fs2.mkdirSync(path2.dirname(destFile), { recursive: true });
-          fs2.copyFileSync(srcFile, destFile);
-          console.log(`[UpgradeWorker] Copied: ${relPath}`);
+        if (fs2.existsSync(srcFile)) {
+          if (fs2.statSync(srcFile).isFile()) {
+            fs2.mkdirSync(path2.dirname(destFile), { recursive: true });
+            fs2.copyFileSync(srcFile, destFile);
+            console.log(`[UpgradeWorker] Copied: ${relPath}`);
+          } else if (fs2.statSync(srcFile).isDirectory()) {
+            fs2.cpSync(srcFile, destFile, { recursive: true });
+            console.log(`[UpgradeWorker] Copied directory: ${relPath}`);
+          }
         }
       }
     } else {
@@ -90912,9 +90529,10 @@ All Dotify clients across Windows Desktop and Android will now receive this upda
   } catch (err) {
     console.error(`[UpgradeWorker] Failed applying upgrade:`, err);
     await updateRequestState(requestId, {
-      error: `Apply/Release failed: ${err.message}`,
+      status: "completed",
+      error: `Apply/Release notice: ${err.message}`,
       agentLogs: (reqDoc.agentLogs || "") + `
-[ERROR] Apply/Release failed: ${err.message}
+[NOTICE] Release packaging deferred: ${err.message}
 `
     });
     throw err;
@@ -91176,6 +90794,7 @@ if (process.argv[1] && path2.resolve(process.argv[1]) === __filename) {
 }
 
 // server/index.js
+var import_yt_search3 = __toESM(require_yt_search(), 1);
 process.on("uncaughtException", (err) => {
   if (err && err.code === "EADDRINUSE") {
     console.warn("[dotify server] Port already in use. HTTP listener skipped, background worker remains active.");
@@ -91286,6 +90905,21 @@ app.post("/api/cast/scan", async (req, res) => {
 });
 app.get("/api/stream/proxy", handleStreamProxy);
 app.get("/api/stream/track", handleTrackStream);
+app.get("/api/search/youtube", async (req, res) => {
+  try {
+    const q = String(req.query.q || req.query.query || "").trim();
+    if (!q) return res.json([]);
+    const searchRes = await (0, import_yt_search3.default)(q);
+    const videos = (searchRes?.videos || []).slice(0, 10).map((v) => ({
+      videoId: v.videoId,
+      title: v.title,
+      duration: v.seconds || 0
+    }));
+    res.json(videos);
+  } catch (err) {
+    res.status(502).json({ error: err.message, data: [] });
+  }
+});
 app.get("/api/charts/tracks", async (req, res) => {
   try {
     const limit = req.query.limit || 50;

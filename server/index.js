@@ -11,6 +11,7 @@ import { resolveSpotifyUrl, isSpotifyUrl } from './spotifyResolver.js';
 import { getDiscoveredCastDevices, scanForCastDevices } from './castHub.js';
 import { setupMp3SyncHub } from './mp3SyncHub.js';
 import { startUpgradeWorker } from './upgradeWorker.js';
+import ytSearch from 'yt-search';
 
 // Prevent unhandled network socket/TLS/stream errors from terminating backend
 process.on('uncaughtException', (err) => {
@@ -144,6 +145,23 @@ app.get('/api/stream/proxy', handleStreamProxy);
 
 // Universal audio track stream resolver & proxy (YouTube audio extraction + preview fallback)
 app.get('/api/stream/track', handleTrackStream);
+
+// YouTube search candidates for unified desktop/web resolution
+app.get('/api/search/youtube', async (req, res) => {
+  try {
+    const q = String(req.query.q || req.query.query || '').trim();
+    if (!q) return res.json([]);
+    const searchRes = await ytSearch(q);
+    const videos = (searchRes?.videos || []).slice(0, 10).map((v) => ({
+      videoId: v.videoId,
+      title: v.title,
+      duration: v.seconds || 0,
+    }));
+    res.json(videos);
+  } catch (err) {
+    res.status(502).json({ error: err.message, data: [] });
+  }
+});
 
 // Top Charts & Mainstream Artists API (Deezer charts & search)
 app.get('/api/charts/tracks', async (req, res) => {

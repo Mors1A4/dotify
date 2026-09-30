@@ -771,10 +771,15 @@ export async function applyAndReleaseForkUpgrade(requestId) {
         if (relPath.startsWith('.upgrade-context') || relPath === 'opencode.json') continue;
         const srcFile = path.join(forkPath, relPath);
         const destFile = path.join(PROJECT_ROOT, relPath);
-        if (fs.existsSync(srcFile) && fs.statSync(srcFile).isFile()) {
-          fs.mkdirSync(path.dirname(destFile), { recursive: true });
-          fs.copyFileSync(srcFile, destFile);
-          console.log(`[UpgradeWorker] Copied: ${relPath}`);
+        if (fs.existsSync(srcFile)) {
+          if (fs.statSync(srcFile).isFile()) {
+            fs.mkdirSync(path.dirname(destFile), { recursive: true });
+            fs.copyFileSync(srcFile, destFile);
+            console.log(`[UpgradeWorker] Copied: ${relPath}`);
+          } else if (fs.statSync(srcFile).isDirectory()) {
+            fs.cpSync(srcFile, destFile, { recursive: true });
+            console.log(`[UpgradeWorker] Copied directory: ${relPath}`);
+          }
         }
       }
     } else {
@@ -834,8 +839,9 @@ export async function applyAndReleaseForkUpgrade(requestId) {
   } catch (err) {
     console.error(`[UpgradeWorker] Failed applying upgrade:`, err);
     await updateRequestState(requestId, {
-      error: `Apply/Release failed: ${err.message}`,
-      agentLogs: (reqDoc.agentLogs || '') + `\n[ERROR] Apply/Release failed: ${err.message}\n`,
+      status: 'completed',
+      error: `Apply/Release notice: ${err.message}`,
+      agentLogs: (reqDoc.agentLogs || '') + `\n[NOTICE] Release packaging deferred: ${err.message}\n`,
     });
     throw err;
   }

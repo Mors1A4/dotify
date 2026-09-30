@@ -65,13 +65,14 @@ npx tauri build
 So that `dotify.exe` and `dotify-setup.exe` work on **any friend's PC and any network** without Node.js installed:
 1. **Hybrid Backend Spawner (`spawn_backend_server()` in [`src-tauri/src/lib.rs`](file:///c:/Users/monty/Documents/AB/notify/src-tauri/src/lib.rs))**:
    - Checks if `127.0.0.1:3001` is open; if not, tries `node server/index.js` if present.
-   - If `127.0.0.1:3001` is still unbound (on any machine without Node.js), Rust binds `127.0.0.1:3001` natively (`handle_embedded_backend_client()`).
-2. **Auto-Bootstrapped `yt-dlp.exe` & `curl.exe` Range Proxy**:
-   - `ensure_ytdlp_binary()` checks `%LOCALAPPDATA%\dotify\yt-dlp.exe` and silently downloads the official binary via `curl.exe` if missing.
-   - `resolve_ytdlp_stream_url()` resolves full-length M4A/AAC YouTube audio streams (`ytsearch4:<artist> <title> official audio`) with in-memory caching.
-   - `proxy_audio_stream_via_curl()` streams audio with `Range` / `206 Partial Content` and `Access-Control-Allow-Origin: *` so Web Audio API's 10-band Equalizer and Spectrum Visualizer work without CORS issues.
-3. **Direct Stream Fallback & Dynamic Paths**:
-   - [`src/audio/audioEngine.ts`](file:///c:/Users/monty/Documents/AB/notify/src/audio/audioEngine.ts) falls back to direct `fallbackUrl` (`dzcdn.net`) whenever `/api/stream/track` fails after retry.
+   - If `127.0.0.1:3001` is still unbound (on any machine without Node.js), Rust binds `127.0.0.1:3001` natively (`handle_embedded_backend_client()`) to host LAN sync and search.
+2. **Unified Central YouTube Streaming (`YouTubeIframeBridge`)**:
+   - Both Windows Desktop and Android Mobile share the exact same central streaming mechanism: the hidden, zero-footprint `YouTubeIframeBridge`.
+   - Eliminates embedded `yt-dlp.exe` binary and extraction, reducing executable size by ~15 MB and eliminating process spawning latency.
+   - Unified cross-platform candidate scoring in [`src/services/youtubeResolver.ts`](file:///c:/Users/monty/Documents/AB/notify/src/services/youtubeResolver.ts) scores official audio, artist topic uploads, and duration matches identically across platforms.
+   - Native candidate discovery uses the Tauri command `search_youtube_candidates` (direct `curl.exe` query on Windows), Android WebView bridge, and local `/api/search/youtube` fallback.
+3. **Local MP3 Vault & Direct Stream Invariant**:
+   - Local saved MP3 files from the Vault (`useMp3VaultStore`) and live radio streams continue playing directly via HTML5 `<audio>` elements with 10-band Web Audio DSP and gapless dual-element prebuffering.
    - `get_dotify_local_dir()` dynamically resolves `%LOCALAPPDATA%\dotify` and `std::env::current_exe()` (never hardcode `C:\Users\monty`).
 
 ---
@@ -126,8 +127,26 @@ node scripts/release.mjs 1.1.0 --notes "Major update"
 
 ## 6. Audio Engine, Multi-Source Streaming & Silence Invariant
 
-- **Dual-Deck Audio Engine**: [`src/audio/audioEngine.ts`](file:///c:/Users/monty/Documents/AB/notify/src/audio/audioEngine.ts) combines HTML5 Audio, Web Audio API, a 10-band peaking equalizer, and real-time spectrum visualizer.
-- **Silence-Aware Reactivity**: Soundwave icons and equalizer bars ([`src/components/common/VisualizerIcon.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/common/VisualizerIcon.tsx), [`src/components/player/QueueDrawer.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/player/QueueDrawer.tsx)) **MUST NEVER animate during audio silence** (track start, pre-roll, buffering, seeking, mute, or pause).
+- **Dual-Deck Audio Engine**: [`src/audio/audioEngine.ts`](file:///c:/Users/monty/Documents/AB/notify/src/audio/audioEngine.ts) combines HTML5 Audio, Web Audio API, a 10-band peaking equalizer, and real-time spectrum visualizer with a unified hidden `YouTubeIframeBridge`.
+- **Direct Audio vs. Central YouTube Bridge (`isDirectAudioTrack`)**:
+  - `audioEngine.isDirectAudioTrack(track)` routes local saved MP3 files (`useMp3VaultStore`, synthetic `mp3:` / `vault:` IDs, `/api/mp3s/file`), and live radio (`source === 'radio'`) to HTML5 `<audio>` elements with gapless dual-element prebuffering and 10-band Web Audio DSP.
+  - Standard tracks (charts, search, albums, user playlists) stream directly through the hidden `YouTubeIframeBridge` identically across Windows, Android, and Web.
+- **Silence-Aware Reactivity & Bridge Energy Pulse**:
+  - Soundwave icons and equalizer bars ([`src/components/common/VisualizerIcon.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/common/VisualizerIcon.tsx), [`src/components/player/QueueDrawer.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/player/QueueDrawer.tsx)) **MUST NEVER animate during audio silence** (track start, pre-roll, buffering, seeking, mute, or pause).
+  - During `YouTubeIframeBridge` playback, `audioEngine.getAudioEnergy()` synthesizes a rhythmic pulse (energy 12–45) based on playback timestamp to keep the equalizer bars gracefully animated while respecting `isPlaying()` states.
+- **Unified YouTube Candidate Scoring (`youtubeResolver.ts`)**:
+  - Shared candidate scoring across Windows & Android:
+    - Base: `100 - index * 4`
+    - Artist `- Topic` channel or `Provided to YouTube by`: `+35`
+    - Title `official audio` or `(audio)`: `+30`
+    - Title `lyric` or `visualizer`: `+18`
+    - Shorts / teaser / preview penalty: `-80`
+    - Exact duration match: `diff <= 5s` (`+40`), `diff <= 15s` (`+25`), `diff <= 45s` (`+10`), `diff > 90s` (`-25`)
+  - Cross-platform search tiers:
+    1. Tauri Rust native command (`search_youtube_candidates`)
+    2. Android WebView bridge (`AndroidNativeYouTube.searchYouTubeCandidates`)
+    3. Embedded local REST endpoint (`/api/search/youtube`)
+    4. Public Invidious mirror fallback
 - **Audio Energy Sampling**: [`src/hooks/useAudioActive.ts`](file:///c:/Users/monty/Documents/AB/notify/src/hooks/useAudioActive.ts) queries `audioEngine.isAudioActive(5)`:
   - Samples Web Audio `AnalyserNode.getByteFrequencyData()`.
   - Skips bin 0 (DC offset/electrical ground bias).

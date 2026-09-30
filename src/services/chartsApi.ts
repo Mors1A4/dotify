@@ -401,6 +401,7 @@ export async function fetchAlbumTracks(
       sourceMetadata: {
         format: 'mp3',
         license: 'Commercial Streaming / YouTube Audio Stream',
+        previewUrl: preview || undefined,
       },
     };
   });
@@ -529,6 +530,7 @@ export function formatChartTrack(item: any): Track {
     sourceMetadata: {
       format: 'mp3',
       license: 'Commercial Streaming / YouTube Audio Stream',
+      previewUrl: item.preview || undefined,
     },
   };
 }

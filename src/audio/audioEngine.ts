@@ -116,27 +116,31 @@ export class AudioEngine {
     if (this.audioContext) return;
 
     try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const AudioCtx =
+        typeof window !== 'undefined'
+          ? window.AudioContext || (window as any).webkitAudioContext
+          : (globalThis as any).AudioContext;
       if (!AudioCtx) return;
 
-      this.audioContext = new AudioCtx();
+      const ctx = new AudioCtx() as AudioContext;
+      this.audioContext = ctx;
 
       // Pre-amp gain node
-      this.preAmpNode = this.audioContext.createGain();
+      this.preAmpNode = ctx.createGain();
       this.preAmpNode.gain.setValueAtTime(
         this.dbToLinear(this.eqState.preAmp),
-        this.audioContext.currentTime
+        ctx.currentTime
       );
 
       // Create dual sources and balance gains
-      this.primarySourceNode = this.audioContext.createMediaElementSource(this.primaryAudio);
-      this.secondarySourceNode = this.audioContext.createMediaElementSource(this.secondaryAudio);
+      this.primarySourceNode = ctx.createMediaElementSource(this.primaryAudio);
+      this.secondarySourceNode = ctx.createMediaElementSource(this.secondaryAudio);
 
-      this.primaryGainNode = this.audioContext.createGain();
-      this.secondaryGainNode = this.audioContext.createGain();
+      this.primaryGainNode = ctx.createGain();
+      this.secondaryGainNode = ctx.createGain();
 
-      this.primaryGainNode.gain.setValueAtTime(this.isPrimaryActive ? 1.0 : 0.0, this.audioContext.currentTime);
-      this.secondaryGainNode.gain.setValueAtTime(this.isPrimaryActive ? 0.0 : 1.0, this.audioContext.currentTime);
+      this.primaryGainNode.gain.setValueAtTime(this.isPrimaryActive ? 1.0 : 0.0, ctx.currentTime);
+      this.secondaryGainNode.gain.setValueAtTime(this.isPrimaryActive ? 0.0 : 1.0, ctx.currentTime);
 
       this.primarySourceNode.connect(this.primaryGainNode);
       this.secondarySourceNode.connect(this.secondaryGainNode);
@@ -146,16 +150,16 @@ export class AudioEngine {
 
       // 10-band BiquadFilter cascade
       this.filterNodes = EQ_FREQUENCIES.map((freq, idx) => {
-        const filter = this.audioContext!.createBiquadFilter();
+        const filter = ctx.createBiquadFilter();
         filter.type = 'peaking';
-        filter.frequency.setValueAtTime(freq, this.audioContext!.currentTime);
-        filter.Q.setValueAtTime(1.4142, this.audioContext!.currentTime);
-        filter.gain.setValueAtTime(this.eqState.bands[idx], this.audioContext!.currentTime);
+        filter.frequency.setValueAtTime(freq, ctx.currentTime);
+        filter.Q.setValueAtTime(1.4142, ctx.currentTime);
+        filter.gain.setValueAtTime(this.eqState.bands[idx], ctx.currentTime);
         return filter;
       });
 
       // AnalyserNode for 60 FPS spectrum visualizer (1024 FFT size for 512 frequency bins)
-      this.analyserNode = this.audioContext.createAnalyser();
+      this.analyserNode = ctx.createAnalyser();
       this.analyserNode.fftSize = 1024;
       this.analyserNode.smoothingTimeConstant = 0.8;
 
@@ -167,16 +171,16 @@ export class AudioEngine {
         lastNode = filter;
       }
 
-      this.masterGainNode = this.audioContext.createGain();
+      this.masterGainNode = ctx.createGain();
       const initialGain = this.calculateGain(this.currentVolume);
-      this.masterGainNode.gain.setValueAtTime(initialGain, this.audioContext.currentTime);
+      this.masterGainNode.gain.setValueAtTime(initialGain, ctx.currentTime);
 
       this.primaryAudio.volume = 1.0;
       this.secondaryAudio.volume = 1.0;
 
       lastNode.connect(this.analyserNode);
       this.analyserNode.connect(this.masterGainNode);
-      this.masterGainNode.connect(this.audioContext.destination);
+      this.masterGainNode.connect(ctx.destination);
     } catch (err) {
       console.warn('[AudioEngine] Web Audio DSP initialization deferred or unsupported:', err);
     }
@@ -593,6 +597,41 @@ export class AudioEngine {
     this.standbyFadePromise = null;
   }
 
+  public isDirectAudioTrack(track: Track | null): boolean {
+    if (!track) return false;
+    if (track.source === 'radio' || (track.source as string) === 'mp3_vault') return true;
+    if (track.id && (track.id.startsWith('mp3:') || track.id.startsWith('vault:'))) return true;
+    try {
+      const vault = useMp3VaultStore.getState();
+      if (track.id && vault.isTrackSaved(track.id)) return true;
+    } catch {}
+
+    const streamUrl = String(track.streamUrl || '').toLowerCase();
+    if (!streamUrl) return false;
+
+    // Reject streaming proxy routes and deezer previews from being treated as direct static tracks
+    if (streamUrl.includes('/api/stream/track') || streamUrl.includes('dzcdn.net')) {
+      return false;
+    }
+
+    if (
+      streamUrl.startsWith('blob:') ||
+      streamUrl.startsWith('file:') ||
+      streamUrl.startsWith('data:') ||
+      streamUrl.endsWith('.mp3') ||
+      streamUrl.endsWith('.wav') ||
+      streamUrl.endsWith('.ogg') ||
+      streamUrl.endsWith('.flac') ||
+      streamUrl.endsWith('.m4a') ||
+      streamUrl.includes('/stream/') ||
+      streamUrl.includes('/api/mp3s/file')
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
   /**
    * Pre-buffers the next track on the standby element in the background without audible playback.
    */
@@ -606,27 +645,36 @@ export class AudioEngine {
     this.prebufferedTrack = track;
     this.isPrebufferedReady = false;
 
-    // In background on Android or YouTube bridge mode, pre-resolve next track's video ID
-    if (track.artist && track.title) {
-      resolveYouTubeVideoId(track.artist, track.title, track.duration).catch(() => {});
-    }
-
-    try {
-      const targetUrl = this.resolveFullStreamUrl(track);
-      const streamUrl = await audioCache.getCachedStreamUrl(track.id, targetUrl, true);
-      if (this.standbyFadePromise) {
-        await this.standbyFadePromise.catch(() => {});
+    const isDirect = this.isDirectAudioTrack(track);
+    if (isDirect) {
+      try {
+        const targetUrl = this.resolveFullStreamUrl(track);
+        const streamUrl = await audioCache.getCachedStreamUrl(track.id, targetUrl, true);
+        if (this.standbyFadePromise) {
+          await this.standbyFadePromise.catch(() => {});
+        }
+        if (this.prebufferedTrack?.id === track.id) {
+          const standby = this.standbyAudio;
+          standby.src = streamUrl;
+          standby.preload = 'auto';
+          standby.load();
+          this.isPrebufferedReady = true;
+        }
+      } catch (err) {
+        console.debug('[AudioEngine] Pre-buffering next track failed:', err);
+        this.isPrebufferedReady = false;
       }
-      if (this.prebufferedTrack?.id === track.id) {
-        const standby = this.standbyAudio;
-        standby.src = streamUrl;
-        standby.preload = 'auto';
-        standby.load();
-        this.isPrebufferedReady = true;
+    } else {
+      // Standard track: Pre-resolve next track's video ID and prime YouTube standby deck
+      if (track.artist && track.title) {
+        resolveYouTubeVideoId(track.artist, track.title, track.duration)
+          .then((videoId) => {
+            if (videoId) {
+              this.ytBridge.cueNext(videoId);
+            }
+          })
+          .catch(() => {});
       }
-    } catch (err) {
-      console.debug('[AudioEngine] Pre-buffering next track failed:', err);
-      this.isPrebufferedReady = false;
     }
   }
 
@@ -640,18 +688,10 @@ export class AudioEngine {
       this.isUsingYouTubeBridge = false;
     }
 
-    const vault = useMp3VaultStore.getState();
-    const isSavedMp3 = Boolean(track.id && vault.isTrackSaved(track.id));
-    const isRadio = track.source === 'radio';
-    const vaultPeers = vault.peers || [];
-    const desktopWifiPeer = isAndroidApp()
-      ? vaultPeers.find((p) => p.deviceType === 'desktop' && p.ip)
-      : null;
-    const hasDesktopServer = !isAndroidApp() || Boolean(getCustomApiUrl()) || Boolean(desktopWifiPeer);
+    const isDirect = this.isDirectAudioTrack(track);
 
-    // If on Android in standalone mode (no desktop peer or custom server) and track is not local MP3 or radio:
-    // Route directly through the self-contained YouTube IFrame Bridge!
-    if (isAndroidApp() && !hasDesktopServer && !isSavedMp3 && !isRadio) {
+    // Central unified streaming: Route standard tracks directly through the YouTube IFrame Bridge!
+    if (!isDirect) {
       this.currentTrack = track;
       this.hasNotifiedApproachingEnd = false;
       this.prebufferedTrack = null;
@@ -791,7 +831,7 @@ export class AudioEngine {
       }
 
       // 3. Fallback to self-contained YouTube IFrame Bridge if standard stream failed
-      if (!isRadio) {
+      if (track.source !== 'radio') {
         const ok = await this.playViaYouTubeBridge(track, reqId);
         if (ok) return;
       }
@@ -801,6 +841,29 @@ export class AudioEngine {
     }
   }
 
+  private isFastStartBurstEnabled: boolean = (() => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const val = localStorage.getItem('dotify_fast_start_burst');
+        if (val !== null) return val === 'true';
+      }
+    } catch {}
+    return true;
+  })();
+
+  public setFastStartBurstEnabled(enabled: boolean): void {
+    this.isFastStartBurstEnabled = enabled;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('dotify_fast_start_burst', enabled ? 'true' : 'false');
+      }
+    } catch {}
+  }
+
+  public isFastStartBurst(): boolean {
+    return this.isFastStartBurstEnabled;
+  }
+
   private async playViaYouTubeBridge(
     track: Track,
     reqId: number,
@@ -808,11 +871,84 @@ export class AudioEngine {
     shouldPlay = true
   ): Promise<boolean> {
     if (!track.artist && !track.title) return false;
-    try {
+
+    const previewUrl = track.sourceMetadata?.previewUrl;
+    const canUseFastBurst = Boolean(
+      this.isFastStartBurstEnabled &&
+      previewUrl &&
+      startSeconds === 0 &&
+      shouldPlay
+    );
+
+    let burstStarted = false;
+
+    if (canUseFastBurst) {
+      try {
+        this.initWebAudio();
+        const audio = this.activeAudio;
+        audio.src = previewUrl!;
+        audio.currentTime = 0;
+        audio.load();
+        audio.play().catch(() => {});
+        burstStarted = true;
+        this.isSwitchingTrack = false;
+        this.notifyState(true, false);
+        this.startProgressLoop();
+      } catch (e) {
+        console.debug('[AudioEngine] Fast-start burst failed to start, falling back to standard buffer:', e);
+      }
+    }
+
+    if (!burstStarted) {
       this.notifyState(true, true); // buffering
+    }
+
+    try {
       const videoId = await resolveYouTubeVideoId(track.artist, track.title, track.duration);
       if (reqId !== this.playRequestId || !videoId) {
+        if (burstStarted) this.activeAudio.pause();
         return false;
+      }
+
+      if (burstStarted) {
+        // Fast-Start Burst was playing: hand off to YouTube player with smooth crossfade
+        const burstAudio = this.activeAudio;
+        const currentElapsed = burstAudio.currentTime || 0;
+
+        await this.ytBridge.play(videoId, Math.max(0, currentElapsed));
+        if (reqId !== this.playRequestId) {
+          burstAudio.pause();
+          return false;
+        }
+
+        // Crossfade burstAudio out over 150ms
+        if (this.audioContext && this.primaryGainNode && this.secondaryGainNode) {
+          try {
+            const now = this.audioContext.currentTime;
+            const activeGain = this.isPrimaryActive ? this.primaryGainNode.gain : this.secondaryGainNode.gain;
+            activeGain.setValueAtTime(activeGain.value, now);
+            activeGain.linearRampToValueAtTime(0.001, now + 0.15);
+            setTimeout(() => {
+              if (reqId === this.playRequestId) {
+                burstAudio.pause();
+                activeGain.setValueAtTime(1.0, this.audioContext?.currentTime || 0);
+              }
+            }, 150);
+          } catch {
+            burstAudio.pause();
+          }
+        } else {
+          burstAudio.pause();
+        }
+
+        this.standbyAudio.pause();
+        this.isUsingYouTubeBridge = true;
+        this.isSwitchingTrack = false;
+        this.notifyState(shouldPlay, false);
+        if (shouldPlay) {
+          this.startProgressLoop();
+        }
+        return true;
       }
 
       this.activeAudio.pause();
@@ -831,6 +967,7 @@ export class AudioEngine {
       return true;
     } catch (err: any) {
       console.warn('[AudioEngine] YouTube IFrame playback failed:', err);
+      if (burstStarted) this.activeAudio.pause();
       this.isUsingYouTubeBridge = false;
       return false;
     }
@@ -976,16 +1113,9 @@ export class AudioEngine {
 
     const targetSeconds = Math.max(0, positionMs / 1000);
 
-    const vault = useMp3VaultStore.getState();
-    const isSavedMp3 = Boolean(track.id && vault.isTrackSaved(track.id));
-    const isRadio = track.source === 'radio';
-    const vaultPeers = vault.peers || [];
-    const desktopWifiPeer = isAndroidApp()
-      ? vaultPeers.find((p) => p.deviceType === 'desktop' && p.ip)
-      : null;
-    const hasDesktopServer = !isAndroidApp() || Boolean(getCustomApiUrl()) || Boolean(desktopWifiPeer);
+    const isDirect = this.isDirectAudioTrack(track);
 
-    if (isAndroidApp() && !hasDesktopServer && !isSavedMp3 && !isRadio) {
+    if (!isDirect) {
       this.currentTrack = track;
       this.hasNotifiedApproachingEnd = false;
       this.prebufferedTrack = null;
@@ -1088,6 +1218,9 @@ export class AudioEngine {
   }
 
   public isPlaying(): boolean {
+    if (this.isUsingYouTubeBridge) {
+      return this.ytBridge.isPlaying();
+    }
     const audio = this.activeAudio;
     return !audio.paused && !audio.ended;
   }
@@ -1106,6 +1239,15 @@ export class AudioEngine {
    * Returns 0 if silent, paused, buffering, seeking, or audio context suspended.
    */
   public getAudioEnergy(): number {
+    if (this.isUsingYouTubeBridge) {
+      if (this.ytBridge.isPlaying() && this.currentVolume > 0.001) {
+        const cur = this.ytBridge.getCurrentTime();
+        const pulse = Math.sin(cur * 3.5 * Math.PI) * 20 + 45;
+        return Math.max(25, Math.min(85, Math.round(pulse * this.currentVolume)));
+      }
+      return 0;
+    }
+
     this.initWebAudio();
     const el = this.activeAudio;
     if (!el || el.paused || el.ended || el.seeking || el.muted || this.currentVolume <= 0.001) {

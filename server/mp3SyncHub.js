@@ -3,7 +3,6 @@ import path from 'path';
 import os from 'os';
 import dgram from 'dgram';
 import crypto from 'crypto';
-import youtubedl from 'youtube-dl-exec';
 import ytSearch from 'yt-search';
 
 const UDP_DISCOVERY_PORT = 42889;
@@ -287,32 +286,8 @@ export async function scanLanSubnetForPeers() {
   return Array.from(discoveredPeers.values());
 }
 
-async function resolveStreamUrlViaYtdlp(track) {
-  const query = `${track.artist || ''} ${track.title || ''} official audio`.trim();
-  if (!query) return null;
-  try {
-    const searchRes = await ytSearch(query);
-    const videos = (searchRes?.videos || []).filter(
-      (v) => v?.url && (!v.seconds || (v.seconds >= 40 && v.seconds <= 900))
-    );
-    for (const v of videos.slice(0, 3)) {
-      try {
-        const out = await youtubedl(v.url, {
-          getUrl: true,
-          format: DIRECT_AUDIO_FORMAT,
-          noWarnings: true,
-          noPlaylist: true,
-        });
-        const cleanUrl = String(out || '')
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .find((l) => l.startsWith('http') && !l.includes('.m3u8') && !l.includes('/manifest/'));
-        if (cleanUrl) return cleanUrl;
-      } catch {}
-    }
-  } catch (err) {
-    console.warn('[Mp3SyncHub] yt-dlp resolution failed:', err.message);
-  }
+async function resolveStreamUrlViaYtdlp() {
+  // yt-dlp binary extraction removed in favor of unified client-side YouTube streaming
   return null;
 }
 

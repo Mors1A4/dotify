@@ -41,7 +41,6 @@
     "tailwind-merge": "^3.0.1",
     "webtorrent": "^3.0.21",
     "ws": "^8.21.3",
-    "youtube-dl-exec": "^3.1.15",
     "yt-search": "^2.13.1",
     "zustand": "^5.0.3"
   },

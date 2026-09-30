@@ -5,6 +5,7 @@ import { Sliders, Power, RotateCcw } from 'lucide-react';
 
 export const EqualizerDrawer: React.FC = () => {
   const [eqState, setEqState] = useState(() => audioEngine.getEqualizerState());
+  const [isFastStart, setIsFastStart] = useState(() => audioEngine.isFastStartBurst());
 
   const handleToggle = () => {
     audioEngine.toggleEqualizer();
@@ -146,6 +147,26 @@ export const EqualizerDrawer: React.FC = () => {
             </div>
           );
         })}
+      </div>
+
+      {/* Audio Performance: Instant Fast-Start Burst */}
+      <div className="mt-auto pt-3 border-t border-customBorder/60 flex flex-col gap-2">
+        <div className="flex items-center justify-between bg-elevated/60 p-2.5 rounded-lg border border-customBorder/60">
+          <div className="flex flex-col pr-2">
+            <span className="text-xs font-semibold text-primary">Instant Fast-Start Burst</span>
+            <span className="text-[10px] text-muted">Plays initial audio burst in &lt;100ms with smooth crossfade into full stream</span>
+          </div>
+          <input
+            type="checkbox"
+            checked={isFastStart}
+            onChange={(e) => {
+              const val = e.target.checked;
+              setIsFastStart(val);
+              audioEngine.setFastStartBurstEnabled(val);
+            }}
+            className="accent-accent cursor-pointer"
+          />
+        </div>
       </div>
     </div>
   );

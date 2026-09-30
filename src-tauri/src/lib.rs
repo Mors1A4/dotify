@@ -223,415 +223,52 @@ fn get_dotify_local_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(".")
 }
 
-#[cfg(target_os = "windows")]
-static STREAM_URL_CACHE: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, (String, Instant)>>,
-> = std::sync::OnceLock::new();
-
-#[cfg(target_os = "windows")]
-fn get_stream_cache(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, (String, Instant)>> {
-    STREAM_URL_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-#[cfg(target_os = "windows")]
-static PENDING_YTDLP_KEYS: std::sync::OnceLock<(
-    std::sync::Mutex<std::collections::HashSet<String>>,
-    std::sync::Condvar,
-)> = std::sync::OnceLock::new();
-
-#[cfg(target_os = "windows")]
-fn get_pending_keys() -> &'static (
-    std::sync::Mutex<std::collections::HashSet<String>>,
-    std::sync::Condvar,
-) {
-    PENDING_YTDLP_KEYS.get_or_init(|| {
-        (
-            std::sync::Mutex::new(std::collections::HashSet::new()),
-            std::sync::Condvar::new(),
-        )
-    })
-}
-
-#[cfg(target_os = "windows")]
-struct PendingKeyGuard {
-    key: String,
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for PendingKeyGuard {
-    fn drop(&mut self) {
-        let (lock, cvar) = get_pending_keys();
-        if let Ok(mut set) = lock.lock() {
-            set.remove(&self.key);
-            cvar.notify_all();
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-static YTDLP_SEMAPHORE: std::sync::OnceLock<(std::sync::Mutex<(usize, usize)>, std::sync::Condvar)> =
-    std::sync::OnceLock::new();
-
-#[cfg(target_os = "windows")]
-fn get_ytdlp_semaphore() -> &'static (std::sync::Mutex<(usize, usize)>, std::sync::Condvar) {
-    YTDLP_SEMAPHORE.get_or_init(|| (std::sync::Mutex::new((0, 0)), std::sync::Condvar::new()))
-}
-
-#[cfg(target_os = "windows")]
-struct YtdlpSlotGuard;
-
-#[cfg(target_os = "windows")]
-impl Drop for YtdlpSlotGuard {
-    fn drop(&mut self) {
-        let (lock, cvar) = get_ytdlp_semaphore();
-        if let Ok(mut state) = lock.lock() {
-            state.0 = state.0.saturating_sub(1);
-            cvar.notify_all();
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn acquire_ytdlp_slot(is_preload: bool) -> YtdlpSlotGuard {
-    const MAX_CONCURRENT_YTDLP: usize = 2;
-    let (lock, cvar) = get_ytdlp_semaphore();
-    if let Ok(mut state) = lock.lock() {
-        if !is_preload {
-            state.1 += 1;
-            while state.0 >= MAX_CONCURRENT_YTDLP {
-                state = cvar.wait(state).unwrap_or_else(|e| e.into_inner());
-            }
-            state.1 = state.1.saturating_sub(1);
-            state.0 += 1;
-        } else {
-            while state.0 >= MAX_CONCURRENT_YTDLP || state.1 > 0 {
-                state = cvar.wait(state).unwrap_or_else(|e| e.into_inner());
-            }
-            state.0 += 1;
-        }
-    }
-    YtdlpSlotGuard
-}
-
-#[cfg(target_os = "windows")]
-const EMBEDDED_YTDLP: &[u8] = include_bytes!("../../node_modules/youtube-dl-exec/bin/yt-dlp.exe");
-
-#[cfg(target_os = "windows")]
-fn ensure_ytdlp_binary() -> Option<std::path::PathBuf> {
-    let dotify_dir = get_dotify_local_dir();
-    let _ = std::fs::create_dir_all(&dotify_dir);
-    let local_ytdlp = dotify_dir.join("yt-dlp.exe");
-
-    if local_ytdlp.exists() {
-        if let Ok(meta) = std::fs::metadata(&local_ytdlp) {
-            if meta.len() > 10_000_000 {
-                return Some(local_ytdlp);
-            }
-        }
+#[tauri::command]
+fn search_youtube_candidates(query: String) -> Result<String, String> {
+    let clean = query.trim();
+    if clean.is_empty() {
+        return Ok("[]".to_string());
     }
 
-    // Write embedded yt-dlp.exe directly from memory in ~40ms (zero network dependency)
-    if std::fs::write(&local_ytdlp, EMBEDDED_YTDLP).is_ok() {
-        return Some(local_ytdlp);
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let sibling = parent.join("yt-dlp.exe");
-            if sibling.exists() {
-                return Some(sibling);
-            }
-        }
-    }
-
-    let dev_ytdlp = std::path::PathBuf::from("node_modules/youtube-dl-exec/bin/yt-dlp.exe");
-    if dev_ytdlp.exists() {
-        return Some(dev_ytdlp);
-    }
-
-    if local_ytdlp.exists() {
-        Some(local_ytdlp)
-    } else {
-        None
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn get_cached_stream_url(key: &str) -> Option<String> {
-    const CACHE_TTL: Duration = Duration::from_secs(4 * 3600);
-    if let Ok(mut guard) = get_stream_cache().lock() {
-        if let Some((url, ts)) = guard.get(key) {
-            if ts.elapsed() < CACHE_TTL {
-                return Some(url.clone());
-            }
-        }
-        guard.remove(key);
-    }
-    None
-}
-
-#[cfg(target_os = "windows")]
-fn resolve_ytdlp_stream_url(
-    query: &str,
-    expected_duration_sec: u64,
-    force_refresh: bool,
-    is_preload: bool,
-) -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-    let key = query.trim().to_ascii_lowercase();
-    if key.is_empty() {
-        return None;
-    }
-
-    if force_refresh {
-        if let Ok(mut guard) = get_stream_cache().lock() {
-            guard.remove(&key);
-        }
-    } else if let Some(cached) = get_cached_stream_url(&key) {
-        return Some(cached);
-    }
-
-    // Deduplicate concurrent resolutions for the exact same track key
-    {
-        let (lock, cvar) = get_pending_keys();
-        if let Ok(mut set) = lock.lock() {
-            let mut waited = false;
-            while set.contains(&key) {
-                waited = true;
-                set = cvar.wait(set).unwrap_or_else(|e| e.into_inner());
-            }
-            if waited && !force_refresh {
-                if let Some(cached) = get_cached_stream_url(&key) {
-                    return Some(cached);
-                }
-            }
-            set.insert(key.clone());
-        }
-    }
-    let _pending_guard = PendingKeyGuard { key: key.clone() };
-    let _slot_guard = acquire_ytdlp_slot(is_preload);
-
-    if !force_refresh {
-        if let Some(cached) = get_cached_stream_url(&key) {
-            return Some(cached);
-        }
-    }
-
-    let ytdlp_path = ensure_ytdlp_binary()?;
-    let min_dur = if expected_duration_sec > 60 { 55 } else { 45 };
-    let match_filter = format!("duration >= {} & duration <= 900 & !is_live", min_dur);
-    let search_arg = format!("ytsearch4:{} official audio", query.trim());
-
-    let output = std::process::Command::new(&ytdlp_path)
-        .args([
-            "--get-url",
-            "-i",
-            "--match-filter",
-            &match_filter,
-            "--max-downloads",
-            "1",
-            "-f",
-            "140/251/250/249/139/ba[ext=m4a][protocol^=http][protocol!*=m3u8][protocol!*=dash]/ba[protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[ext=mp4][protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[protocol^=http][protocol!*=m3u8][protocol!*=dash]",
-            "--no-playlist",
-            "--no-warnings",
-            &search_arg,
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-
-    if let Ok(out) = output {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        for line in stdout.lines() {
-            let clean = line.trim();
-            if clean.starts_with("http")
-                && !clean.contains(".m3u8")
-                && !clean.contains("/manifest/")
-            {
-                if let Ok(mut guard) = get_stream_cache().lock() {
-                    guard.insert(key.clone(), (clean.to_string(), Instant::now()));
-                }
-                return Some(clean.to_string());
-            }
-        }
-    }
-
-    // Secondary fallback without 'official audio' suffix
-    let fallback_arg = format!("ytsearch3:{}", query.trim());
-    if let Ok(out2) = std::process::Command::new(&ytdlp_path)
-        .args([
-            "--get-url",
-            "-i",
-            "--match-filter",
-            &match_filter,
-            "--max-downloads",
-            "1",
-            "-f",
-            "140/251/250/249/139/ba[ext=m4a][protocol^=http][protocol!*=m3u8][protocol!*=dash]/ba[protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[ext=mp4][protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[protocol^=http][protocol!*=m3u8][protocol!*=dash]",
-            "--no-playlist",
-            "--no-warnings",
-            &fallback_arg,
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    {
-        let stdout2 = String::from_utf8_lossy(&out2.stdout);
-        for line in stdout2.lines() {
-            let clean = line.trim();
-            if clean.starts_with("http")
-                && !clean.contains(".m3u8")
-                && !clean.contains("/manifest/")
-            {
-                if let Ok(mut guard) = get_stream_cache().lock() {
-                    guard.insert(key, (clean.to_string(), Instant::now()));
-                }
-                return Some(clean.to_string());
-            }
-        }
-    }
-
-    None
-}
-
-#[cfg(target_os = "windows")]
-fn proxy_audio_stream_via_curl(
-    stream: &mut TcpStream,
-    target_url: &str,
-    range_header: Option<&str>,
-    is_fallback: bool,
-    allow_error_passthrough: bool,
-) -> bool {
-    use std::io::{BufRead, BufReader};
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let encoded: String = percent_encoding::utf8_percent_encode(
+        clean,
+        percent_encoding::NON_ALPHANUMERIC,
+    )
+    .to_string();
+    let target_url = format!("https://www.youtube.com/results?search_query={}&hl=en", encoded);
 
     let mut cmd = std::process::Command::new("curl.exe");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     cmd.args([
         "-s",
         "-L",
-        "--http1.1",
-        "-D",
-        "-",
+        "-m",
+        "5",
         "-A",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "-H",
+        "Accept-Language: en-US,en;q=0.9",
+        &target_url,
     ]);
-    if let Some(r) = range_header {
-        cmd.args(["-H", &format!("Range: {}", r)]);
-    }
-    cmd.arg(target_url);
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::null());
-    cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let Ok(mut child) = cmd.spawn() else {
-        if allow_error_passthrough {
-            let err_res = "HTTP/1.1 502 Bad Gateway\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            let _ = stream.write_all(err_res.as_bytes());
-        }
-        return false;
-    };
-
-    let mut succeeded = false;
-
-    if let Some(stdout) = child.stdout.take() {
-        let mut reader = BufReader::with_capacity(32768, stdout);
-        let mut status_line = String::from("HTTP/1.1 200 OK");
-        let mut status_code: u16 = 200;
-        let mut content_type = String::from("audio/mp4");
-        let mut content_length: Option<String> = None;
-        let mut content_range: Option<String> = None;
-
-        loop {
-            let mut first_line = String::new();
-            if reader.read_line(&mut first_line).unwrap_or(0) == 0 {
-                status_code = 502;
-                break;
-            }
-            let trimmed = first_line.trim().to_string();
-            if !trimmed.starts_with("HTTP/") {
-                break;
-            }
-            let code: u16 = trimmed
-                .split_whitespace()
-                .nth(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(200);
-
-            status_code = code;
-            status_line = trimmed;
-            content_length = None;
-            content_range = None;
-
-            loop {
-                let mut hline = String::new();
-                if reader.read_line(&mut hline).unwrap_or(0) == 0 {
-                    break;
-                }
-                let htrim = hline.trim();
-                if htrim.is_empty() {
-                    break;
-                }
-                let lower = htrim.to_ascii_lowercase();
-                if lower.starts_with("content-type:") {
-                    if let Some(v) = htrim.splitn(2, ':').nth(1) {
-                        content_type = v.trim().to_string();
-                    }
-                } else if lower.starts_with("content-length:") {
-                    if let Some(v) = htrim.splitn(2, ':').nth(1) {
-                        content_length = Some(v.trim().to_string());
-                    }
-                } else if lower.starts_with("content-range:") {
-                    if let Some(v) = htrim.splitn(2, ':').nth(1) {
-                        content_range = Some(v.trim().to_string());
-                    }
-                }
-            }
-
-            if code != 100 && !(300..400).contains(&code) {
-                break;
-            }
-        }
-
-        if status_code >= 400 && !allow_error_passthrough {
-            let _ = child.kill();
-            let _ = child.wait();
-            return false;
-        }
-
-        let is_preview = is_fallback || target_url.contains("dzcdn.net");
-        let cache_control = if is_preview {
-            "no-store, no-cache, must-revalidate"
+    let output = cmd.output().map_err(|e| format!("Failed to run curl: {}", e))?;
+    if output.status.success() {
+        let html = String::from_utf8_lossy(&output.stdout).to_string();
+        if html.contains("ytInitialData") {
+            Ok(html)
         } else {
-            "public, max-age=14400"
-        };
-
-        let mut resp_headers = format!(
-            "{}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Range, Content-Type\r\nAccess-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length, X-Dotify-Preview-Fallback\r\nAccept-Ranges: bytes\r\nCache-Control: {}\r\nContent-Type: {}\r\n",
-            status_line, cache_control, content_type
-        );
-        if is_preview {
-            resp_headers.push_str("X-Dotify-Preview-Fallback: true\r\n");
+            Err("No ytInitialData found in response".to_string())
         }
-        if let Some(cl) = content_length {
-            resp_headers.push_str(&format!("Content-Length: {}\r\n", cl));
-        }
-        if let Some(cr) = content_range {
-            resp_headers.push_str(&format!("Content-Range: {}\r\n", cr));
-        }
-        resp_headers.push_str("Connection: close\r\n\r\n");
-
-        if stream.write_all(resp_headers.as_bytes()).is_ok() {
-            let _ = std::io::copy(&mut reader, stream);
-            succeeded = status_code < 400;
-        }
+    } else {
+        Err(format!("curl error status: {:?}", output.status.code()))
     }
-
-    let _ = child.kill();
-    let _ = child.wait();
-    succeeded
 }
+
 
 fn handle_embedded_backend_client(mut stream: TcpStream) {
     let Some(req_str) = read_full_request(&mut stream) else {
@@ -700,132 +337,44 @@ fn handle_embedded_backend_client(mut stream: TcpStream) {
         &req_str,
         path_and_query,
         range_header.as_deref(),
-        |q, dur| {
-            #[cfg(target_os = "windows")]
-            {
-                resolve_ytdlp_stream_url(q, dur, false, false)
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = (q, dur);
-                None
-            }
-        },
     ) {
         return;
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        let parse_query = |q: &str| -> std::collections::HashMap<String, String> {
-            let mut map = std::collections::HashMap::new();
-            for pair in q.split('&') {
+    if path_and_query.starts_with("/api/search/youtube") {
+        let mut query = String::new();
+        if let Some(q_idx) = path_and_query.find('?') {
+            for pair in path_and_query[q_idx + 1..].split('&') {
                 let mut parts = pair.splitn(2, '=');
                 if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
-                    let decoded = percent_encoding::percent_decode_str(&v.replace('+', " "))
-                        .decode_utf8_lossy()
-                        .to_string();
-                    map.insert(k.to_string(), decoded);
-                }
-            }
-            map
-        };
-
-        if path_and_query.starts_with("/api/stream/proxy") {
-            if let Some(q_idx) = path_and_query.find('?') {
-                let params = parse_query(&path_and_query[q_idx + 1..]);
-                if let Some(target_url) = params.get("url") {
-                    let _ = proxy_audio_stream_via_curl(
-                        &mut stream,
-                        target_url,
-                        range_header.as_deref(),
-                        false,
-                        true,
-                    );
-                    return;
+                    if k == "q" || k == "query" {
+                        query = percent_encoding::percent_decode_str(&v.replace('+', " "))
+                            .decode_utf8_lossy()
+                            .to_string();
+                        break;
+                    }
                 }
             }
         }
-
-        if path_and_query.starts_with("/api/stream/track") {
-            if let Some(q_idx) = path_and_query.find('?') {
-                let params = parse_query(&path_and_query[q_idx + 1..]);
-                let artist = params.get("artist").cloned().unwrap_or_default();
-                let title = params.get("title").cloned().unwrap_or_default();
-                let q_param = params
-                    .get("query")
-                    .or_else(|| params.get("q"))
-                    .cloned()
-                    .unwrap_or_default();
-                let preview = params.get("preview").cloned().unwrap_or_default();
-                let preload = params.get("preload").cloned().unwrap_or_default();
-                let is_preload = preload == "true";
-                let retry = params.get("_retry").cloned().unwrap_or_default() == "1";
-                let expected_dur: u64 = params
-                    .get("duration")
-                    .and_then(|d| d.parse().ok())
-                    .unwrap_or(0);
-
-                let search_words = if !q_param.trim().is_empty() {
-                    q_param.trim().to_string()
-                } else {
-                    format!("{} {}", artist, title).trim().to_string()
-                };
-
-                let resolved =
-                    resolve_ytdlp_stream_url(&search_words, expected_dur, retry, is_preload);
-
-                if is_preload {
-                    let body = if resolved.is_some() {
-                        "{\"cached\":true}"
-                    } else {
-                        "{\"cached\":false,\"fallback\":true}"
-                    };
-                    let res = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
-                    let _ = stream.write_all(res.as_bytes());
-                    return;
-                }
-
-                if let Some(yt_url) = resolved {
-                    if proxy_audio_stream_via_curl(
-                        &mut stream,
-                        &yt_url,
-                        range_header.as_deref(),
-                        false,
-                        false,
-                    ) {
-                        return;
-                    }
-                    // Upstream returned >= 400 (e.g. expired googlevideo URL): evict and re-resolve once
-                    if let Some(fresh_url) =
-                        resolve_ytdlp_stream_url(&search_words, expected_dur, true, false)
-                    {
-                        if proxy_audio_stream_via_curl(
-                            &mut stream,
-                            &fresh_url,
-                            range_header.as_deref(),
-                            false,
-                            preview.is_empty(),
-                        ) {
-                            return;
-                        }
-                    }
-                }
-
-                let err_body = "{\"error\":\"Stream resolution failed\"}";
-                let fail_resp = format!(
-                    "HTTP/1.1 502 Bad Gateway\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    err_body.len(),
-                    err_body
+        if !query.trim().is_empty() {
+            if let Ok(html) = search_youtube_candidates(query) {
+                let res = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.len(),
+                    html
                 );
-                let _ = stream.write_all(fail_resp.as_bytes());
+                let _ = stream.write_all(res.as_bytes());
                 return;
             }
         }
+        let empty = "[]";
+        let res = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            empty.len(),
+            empty
+        );
+        let _ = stream.write_all(res.as_bytes());
+        return;
     }
 
     let not_found = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 18\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"NotFound\"}";
@@ -834,12 +383,6 @@ fn handle_embedded_backend_client(mut stream: TcpStream) {
 
 fn spawn_backend_server() {
     thread::spawn(|| {
-        #[cfg(target_os = "windows")]
-        {
-            thread::spawn(|| {
-                let _ = ensure_ytdlp_binary();
-            });
-        }
         loop {
             if TcpStream::connect("127.0.0.1:3001").is_err() {
                 #[cfg(target_os = "windows")]
@@ -1561,7 +1104,8 @@ pub fn run() {
             set_app_icon_rgba,
             set_android_app_icon,
             open_mp3_folder,
-            install_windows_update
+            install_windows_update,
+            search_youtube_candidates
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
