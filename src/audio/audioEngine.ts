@@ -193,12 +193,12 @@ export class AudioEngine {
     if (track?.source === 'radio' || track?.duration === Infinity) {
       return Infinity;
     }
+    if (track && typeof track.duration === 'number' && isFinite(track.duration) && track.duration > 0) {
+      return track.duration;
+    }
     const rawDur = el?.duration;
     if (typeof rawDur === 'number' && isFinite(rawDur) && rawDur > 0) {
       return rawDur;
-    }
-    if (track && typeof track.duration === 'number' && isFinite(track.duration) && track.duration > 0) {
-      return track.duration;
     }
     return 0;
   }
@@ -841,29 +841,6 @@ export class AudioEngine {
     }
   }
 
-  private isFastStartBurstEnabled: boolean = (() => {
-    try {
-      if (typeof localStorage !== 'undefined') {
-        const val = localStorage.getItem('dotify_fast_start_burst');
-        if (val !== null) return val === 'true';
-      }
-    } catch {}
-    return true;
-  })();
-
-  public setFastStartBurstEnabled(enabled: boolean): void {
-    this.isFastStartBurstEnabled = enabled;
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('dotify_fast_start_burst', enabled ? 'true' : 'false');
-      }
-    } catch {}
-  }
-
-  public isFastStartBurst(): boolean {
-    return this.isFastStartBurstEnabled;
-  }
-
   private async playViaYouTubeBridge(
     track: Track,
     reqId: number,
@@ -871,84 +848,11 @@ export class AudioEngine {
     shouldPlay = true
   ): Promise<boolean> {
     if (!track.artist && !track.title) return false;
-
-    const previewUrl = track.sourceMetadata?.previewUrl;
-    const canUseFastBurst = Boolean(
-      this.isFastStartBurstEnabled &&
-      previewUrl &&
-      startSeconds === 0 &&
-      shouldPlay
-    );
-
-    let burstStarted = false;
-
-    if (canUseFastBurst) {
-      try {
-        this.initWebAudio();
-        const audio = this.activeAudio;
-        audio.src = previewUrl!;
-        audio.currentTime = 0;
-        audio.load();
-        audio.play().catch(() => {});
-        burstStarted = true;
-        this.isSwitchingTrack = false;
-        this.notifyState(true, false);
-        this.startProgressLoop();
-      } catch (e) {
-        console.debug('[AudioEngine] Fast-start burst failed to start, falling back to standard buffer:', e);
-      }
-    }
-
-    if (!burstStarted) {
-      this.notifyState(true, true); // buffering
-    }
-
     try {
+      this.notifyState(true, true); // buffering
       const videoId = await resolveYouTubeVideoId(track.artist, track.title, track.duration);
       if (reqId !== this.playRequestId || !videoId) {
-        if (burstStarted) this.activeAudio.pause();
         return false;
-      }
-
-      if (burstStarted) {
-        // Fast-Start Burst was playing: hand off to YouTube player with smooth crossfade
-        const burstAudio = this.activeAudio;
-        const currentElapsed = burstAudio.currentTime || 0;
-
-        await this.ytBridge.play(videoId, Math.max(0, currentElapsed));
-        if (reqId !== this.playRequestId) {
-          burstAudio.pause();
-          return false;
-        }
-
-        // Crossfade burstAudio out over 150ms
-        if (this.audioContext && this.primaryGainNode && this.secondaryGainNode) {
-          try {
-            const now = this.audioContext.currentTime;
-            const activeGain = this.isPrimaryActive ? this.primaryGainNode.gain : this.secondaryGainNode.gain;
-            activeGain.setValueAtTime(activeGain.value, now);
-            activeGain.linearRampToValueAtTime(0.001, now + 0.15);
-            setTimeout(() => {
-              if (reqId === this.playRequestId) {
-                burstAudio.pause();
-                activeGain.setValueAtTime(1.0, this.audioContext?.currentTime || 0);
-              }
-            }, 150);
-          } catch {
-            burstAudio.pause();
-          }
-        } else {
-          burstAudio.pause();
-        }
-
-        this.standbyAudio.pause();
-        this.isUsingYouTubeBridge = true;
-        this.isSwitchingTrack = false;
-        this.notifyState(shouldPlay, false);
-        if (shouldPlay) {
-          this.startProgressLoop();
-        }
-        return true;
       }
 
       this.activeAudio.pause();
@@ -967,7 +871,6 @@ export class AudioEngine {
       return true;
     } catch (err: any) {
       console.warn('[AudioEngine] YouTube IFrame playback failed:', err);
-      if (burstStarted) this.activeAudio.pause();
       this.isUsingYouTubeBridge = false;
       return false;
     }

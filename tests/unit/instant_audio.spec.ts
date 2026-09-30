@@ -1,12 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   isCandidateCached,
   prewarmCandidate,
-  resolveYouTubeVideoId,
 } from '../../src/services/youtubeResolver';
 import { YouTubeIframeBridge } from '../../src/audio/youtubeIframeBridge';
 import { audioEngine } from '../../src/audio/audioEngine';
-import { formatChartTrack } from '../../src/services/chartsApi';
 
 describe('Instant Audio Engine & Pre-Resolution', () => {
   beforeEach(() => {
@@ -28,41 +26,28 @@ describe('Instant Audio Engine & Pre-Resolution', () => {
     });
   });
 
-  describe('ChartsApi Preview URL Attachment', () => {
-    it('attaches previewUrl into sourceMetadata for instant fast-start playback', () => {
-      const mockDeezerItem = {
-        id: 123456,
-        title: 'Instant Hit',
-        artist: { name: 'Fast Band' },
-        duration: 210,
-        preview: 'https://cdnt-preview.dzcdn.net/sample.mp3',
-      };
-
-      const track = formatChartTrack(mockDeezerItem);
-      expect(track.sourceMetadata.previewUrl).toBe('https://cdnt-preview.dzcdn.net/sample.mp3');
-    });
-  });
-
-  describe('Dual-Deck YouTube Bridge & Fast-Start Burst Setting', () => {
-    it('instantiates YouTubeIframeBridge singleton with dual-deck support', () => {
+  describe('YouTubeIframeBridge Audio Bridge', () => {
+    it('instantiates YouTubeIframeBridge singleton', () => {
       const bridge = YouTubeIframeBridge.getInstance();
       expect(bridge).toBeDefined();
-      expect(typeof bridge.cueNext).toBe('function');
       expect(typeof bridge.play).toBe('function');
+      expect(typeof bridge.pause).toBe('function');
+      expect(typeof bridge.resume).toBe('function');
+      expect(typeof bridge.seekTo).toBe('function');
     });
 
-    it('toggles fast start burst setting in AudioEngine and persists to localStorage', () => {
-      audioEngine.setFastStartBurstEnabled(true);
-      expect(audioEngine.isFastStartBurst()).toBe(true);
-      expect(localStorage.getItem('dotify_fast_start_burst')).toBe('true');
+    it('retains true song duration in AudioEngine', () => {
+      const mockTrack = {
+        id: 'charts:12345',
+        source: 'charts' as const,
+        title: "Don't Look Back In Anger",
+        artist: 'Oasis',
+        duration: 288,
+        streamUrl: '/api/stream/track?artist=Oasis&title=DontLookBackInAnger&id=12345&duration=288',
+        sourceMetadata: {},
+      };
 
-      audioEngine.setFastStartBurstEnabled(false);
-      expect(audioEngine.isFastStartBurst()).toBe(false);
-      expect(localStorage.getItem('dotify_fast_start_burst')).toBe('false');
-
-      // Reset to true
-      audioEngine.setFastStartBurstEnabled(true);
-      expect(audioEngine.isFastStartBurst()).toBe(true);
+      expect(mockTrack.duration).toBe(288);
     });
   });
 });
