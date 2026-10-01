@@ -160,17 +160,35 @@ export const VisualizerModal: React.FC = () => {
       ctx.clearRect(0, 0, w, h);
 
       if (showHud && w > 480) {
-        const analyser = audioEngine.getAnalyser();
         const accentHex = getNebulaThemeHex(theme, themeAccentColor);
 
-        if (analyser) {
-          const binCount = analyser.frequencyBinCount;
-          if (timeBuffer.length !== binCount) {
-            timeBuffer = new Uint8Array(binCount);
-            freqBuffer = new Uint8Array(binCount);
+        let bridgeActive = false;
+        try {
+          bridgeActive = audioEngine.isBridgeAudible();
+        } catch {
+          bridgeActive = false;
+        }
+        if (bridgeActive) {
+          if (timeBuffer.length !== 512) {
+            timeBuffer = new Uint8Array(512);
+            freqBuffer = new Uint8Array(512);
           }
-          analyser.getByteTimeDomainData(timeBuffer);
-          analyser.getByteFrequencyData(freqBuffer);
+          // YT-bridge FFT is unreachable: use beat-reactive synthetic data.
+          if (!audioEngine.fillBridgeVisualizerData(freqBuffer, timeBuffer)) {
+            bridgeActive = false;
+          }
+        }
+        if (!bridgeActive) {
+          const analyser = audioEngine.getAnalyser();
+          if (analyser) {
+            const binCount = analyser.frequencyBinCount;
+            if (timeBuffer.length !== binCount) {
+              timeBuffer = new Uint8Array(binCount);
+              freqBuffer = new Uint8Array(binCount);
+            }
+            analyser.getByteTimeDomainData(timeBuffer);
+            analyser.getByteFrequencyData(freqBuffer);
+          }
         }
 
         ctx.save();

@@ -1138,15 +1138,115 @@ export class AudioEngine {
   }
 
   /**
+   * True when playback is routed through the hidden YouTube IFrame bridge.
+   * The bridge's audio lives inside a cross-origin iframe and can never be
+   * wired into the Web Audio AnalyserNode, so visualizers must use the
+   * synthetic bridge spectrum (see fillBridgeVisualizerData) instead of
+   * expecting real FFT data.
+   */
+  public isBridgePlayback(): boolean {
+    return this.isUsingYouTubeBridge;
+  }
+
+  /**
+   * True when the YouTube bridge is actively producing audible sound.
+   * Preserves the silence invariant: paused / buffering / muted / zero-volume
+   * states return false so visualizers fall back to idle breathing.
+   */
+  public isBridgeAudible(): boolean {
+    if (!this.isUsingYouTubeBridge) return false;
+    try {
+      if (!this.ytBridge.isPlaying()) return false;
+    } catch {
+      return false;
+    }
+    if (this.currentVolume <= 0.001) return false;
+    return true;
+  }
+
+  public getBridgeVisualTime(): number {
+    try {
+      return this.ytBridge.getCurrentTime() || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Beat-reactive synthetic spectrum for YouTube-bridge playback.
+   * Fills `freq` (0..255 magnitude per FFT bin) and `wave` (0..255 time-domain,
+   * 128 = silence) so Nebula / Ultra / HUD canvases dance in sync with the
+   * music even though real YT audio bytes are unreachable (cross-origin iframe).
+   * Returns true when synthetic music data was written, false when silent
+   * (caller should render idle state instead).
+   */
+  public fillBridgeVisualizerData(freq: Uint8Array, wave: Uint8Array): boolean {
+    if (!this.isBridgeAudible()) return false;
+    if (freq.length === 0 || wave.length === 0) return false;
+    const t = this.getBridgeVisualTime();
+    const volScale = 0.35 + 0.65 * Math.max(0, Math.min(1, this.currentVolume));
+
+    // ~124 BPM kick clock shared with getAudioEnergy so icon + canvas stay in sync.
+    const beatInterval = 60 / 124;
+    const beatPhase = beatInterval > 0 ? (t % beatInterval) / beatInterval : 0;
+    const kickEnv = Math.exp(-beatPhase * 5);
+    const barInterval = beatInterval * 4;
+    const barPhase = barInterval > 0 ? (t % barInterval) / barInterval : 0;
+    const barEnv = Math.exp(-barPhase * 3);
+
+    const bassLevel = Math.min(1, 0.52 + kickEnv * 0.48 + barEnv * 0.08);
+    const midLevel = Math.min(
+      1,
+      0.38 + 0.2 * (0.5 + 0.5 * Math.sin(t * 2.1)) + kickEnv * 0.18
+    );
+    const trebleLevel = Math.min(
+      1,
+      0.32 + 0.18 * (0.5 + 0.5 * Math.sin(t * 3.7 + 1.3)) + kickEnv * 0.12
+    );
+
+    const n = freq.length;
+    for (let i = 0; i < n; i++) {
+      const x = i / n;
+      const lowShape = Math.exp(-x * 9);
+      const midD = (x - 0.18) / 0.13;
+      const midShape = Math.exp(-midD * midD);
+      const highShape = Math.exp(-x * 3) * (0.55 + 0.45 * Math.sin(t * 3.0 + i * 0.11));
+      const wobble = 0.85 + 0.15 * Math.sin(t * 4.2 + i * 0.35);
+      const val =
+        (bassLevel * lowShape + midLevel * midShape * 0.8 + trebleLevel * highShape * 0.5) *
+        wobble *
+        volScale;
+      const byte = Math.round(Math.min(1.2, val) * 255);
+      freq[i] = Math.max(0, Math.min(255, byte));
+    }
+
+    const m = wave.length;
+    for (let i = 0; i < m; i++) {
+      const u = i / m;
+      const s =
+        128 +
+        70 * kickEnv * Math.sin(u * Math.PI * 4 + t * 5) * volScale +
+        25 * midLevel * Math.sin(u * Math.PI * 10 - t * 7) +
+        12 * trebleLevel * Math.sin(u * Math.PI * 22 + t * 9);
+      wave[i] = Math.max(0, Math.min(255, Math.round(s)));
+    }
+    return true;
+  }
+
+  /**
    * Returns current peak audio frequency energy (0 to 255).
    * Returns 0 if silent, paused, buffering, seeking, or audio context suspended.
    */
   public getAudioEnergy(): number {
     if (this.isUsingYouTubeBridge) {
-      if (this.ytBridge.isPlaying() && this.currentVolume > 0.001) {
-        const cur = this.ytBridge.getCurrentTime();
-        const pulse = Math.sin(cur * 3.5 * Math.PI) * 20 + 45;
-        return Math.max(25, Math.min(85, Math.round(pulse * this.currentVolume)));
+      if (this.isBridgeAudible()) {
+        const cur = this.getBridgeVisualTime();
+        const beatInterval = 60 / 124;
+        const beatPhase = beatInterval > 0 ? (cur % beatInterval) / beatInterval : 0;
+        const kickEnv = Math.exp(-beatPhase * 5);
+        const energy = 55 + kickEnv * 40;
+        const scaled = energy * (0.35 + 0.65 * Math.max(0, Math.min(1, this.currentVolume)));
+        return Math.max(25, Math.min(95, Math.round(scaled)));
       }
       return 0;
     }

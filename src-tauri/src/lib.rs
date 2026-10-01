@@ -332,6 +332,35 @@ fn handle_embedded_backend_client(mut stream: TcpStream) {
         return;
     }
 
+    if path_and_query.starts_with("/api/cast/probe") {
+        let mut target_ip = String::new();
+        if let Some(q_idx) = path_and_query.find('?') {
+            for pair in path_and_query[q_idx + 1..].split('&') {
+                let mut parts = pair.splitn(2, '=');
+                if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+                    if k == "ip" {
+                        target_ip = percent_encoding::percent_decode_str(v)
+                            .decode_utf8_lossy()
+                            .to_string();
+                        break;
+                    }
+                }
+            }
+        }
+        if !target_ip.is_empty() {
+            let _ = mp3_sync::probe_cast_device(&target_ip, 1500);
+        }
+        let devices = mp3_sync::get_discovered_cast_devices();
+        let body = serde_json::json!({ "ok": true, "devices": devices }).to_string();
+        let res = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(res.as_bytes());
+        return;
+    }
+
     if mp3_sync::try_handle_mp3_route(
         &mut stream,
         &req_str,
@@ -391,31 +420,23 @@ fn spawn_backend_server() {
                     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
                     let mut candidates = vec![
-                        std::path::PathBuf::from("server/server.bundle.mjs"),
                         std::path::PathBuf::from("server/index.js"),
                     ];
                     if let Ok(exe) = std::env::current_exe() {
                         if let Some(parent) = exe.parent() {
-                            candidates.push(parent.join("server/server.bundle.mjs"));
                             candidates.push(parent.join("server/index.js"));
                         }
                     }
-                    candidates.push(get_dotify_local_dir().join("server/server.bundle.mjs"));
                     candidates.push(get_dotify_local_dir().join("server/index.js"));
-                    candidates.push(std::path::PathBuf::from("C:\\Users\\monty\\Documents\\AB\\notify\\server\\server.bundle.mjs"));
                     candidates.push(std::path::PathBuf::from("C:\\Users\\monty\\Documents\\AB\\notify\\server\\index.js"));
 
                     for path in &candidates {
                         if path.exists() {
-                            let is_bundle = path.to_string_lossy().contains("bundle");
-                            if !is_bundle {
-                                let root_opt = path.parent().and_then(|p| p.parent());
-                                let has_node_modules = root_opt
-                                    .map(|r| r.join("node_modules").exists())
-                                    .unwrap_or_else(|| std::path::Path::new("node_modules").exists());
-                                if !has_node_modules {
-                                    continue;
-                                }
+                            let has_node_modules = std::path::Path::new("node_modules").exists()
+                                || std::path::Path::new("C:\\Users\\monty\\Documents\\AB\\notify\\node_modules").exists()
+                                || get_dotify_local_dir().join("server/node_modules").exists();
+                            if !has_node_modules {
+                                continue;
                             }
                             let mut cmd = std::process::Command::new("node");
                             cmd.arg(path);
@@ -426,8 +447,10 @@ fn spawn_backend_server() {
                             }
                             cmd.creation_flags(CREATE_NO_WINDOW);
                             if cmd.spawn().is_ok() {
-                                thread::sleep(Duration::from_millis(1000));
-                                break;
+                                thread::sleep(Duration::from_millis(1500));
+                                if TcpStream::connect("127.0.0.1:3001").is_ok() {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1066,6 +1089,21 @@ fn install_windows_update(
     }
 }
 
+#[tauri::command]
+fn scan_cast_devices() -> Vec<mp3_sync::DiscoveredCastDevice> {
+    mp3_sync::scan_for_cast_devices()
+}
+
+#[tauri::command]
+fn get_cast_devices() -> Vec<mp3_sync::DiscoveredCastDevice> {
+    mp3_sync::get_discovered_cast_devices()
+}
+
+#[tauri::command]
+fn probe_cast_speaker(ip: String) -> Option<mp3_sync::DiscoveredCastDevice> {
+    mp3_sync::probe_cast_device(&ip, 1500)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1105,7 +1143,10 @@ pub fn run() {
             set_android_app_icon,
             open_mp3_folder,
             install_windows_update,
-            search_youtube_candidates
+            search_youtube_candidates,
+            scan_cast_devices,
+            get_cast_devices,
+            probe_cast_speaker
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

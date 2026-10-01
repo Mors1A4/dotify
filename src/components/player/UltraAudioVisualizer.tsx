@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useMemo,
 } from 'react';
+import { audioEngine } from '../../audio/audioEngine';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -939,8 +940,25 @@ export const UltraAudioVisualizer: React.FC<UltraAudioVisualizerProps> = ({
 
       const activeAnalyser = analyser || demoAudioRef.current?.analyser || null;
       let hasSignal = false;
+      let bridgeActive = false;
+      try {
+        bridgeActive = audioEngine.isBridgeAudible();
+      } catch {
+        bridgeActive = false;
+      }
 
-      if (activeAnalyser) {
+      if (bridgeActive) {
+        // YouTube-bridge audio is unreachable via AnalyserNode (cross-origin
+        // iframe): synthesize beat-reactive spectrum from playback clock.
+        if (rawFreqBuffer.length !== TEXTURE_WIDTH) {
+          rawFreqBuffer = new Uint8Array(TEXTURE_WIDTH);
+          rawTimeBuffer = new Uint8Array(TEXTURE_WIDTH);
+        }
+        hasSignal = audioEngine.fillBridgeVisualizerData(rawFreqBuffer, rawTimeBuffer);
+        if (!hasSignal) bridgeActive = false;
+      }
+
+      if (!bridgeActive && activeAnalyser) {
         const binCount = activeAnalyser.frequencyBinCount;
         if (rawFreqBuffer.length !== binCount) {
           rawFreqBuffer = new Uint8Array(binCount);
@@ -957,7 +975,7 @@ export const UltraAudioVisualizer: React.FC<UltraAudioVisualizerProps> = ({
         hasSignal = sumSignal > 64;
       }
 
-      if (hasSignal && activeAnalyser) {
+      if (hasSignal && (activeAnalyser || bridgeActive)) {
         smoothed.isSilent = false;
         const binCount = rawFreqBuffer.length;
 

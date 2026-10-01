@@ -177,17 +177,24 @@ export const DevicePickerModal: React.FC = () => {
                         <DeviceIcon type={dev.deviceType} size={18} />
                       </div>
                       <div className="min-w-0">
-                        <p className={`text-sm font-semibold truncate ${isActive ? 'text-accent' : 'text-primary'}`}>
-                          {dev.deviceName}
-                          {dev.isCurrentDevice && ' (This Device)'}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className={`text-sm font-semibold truncate ${isActive ? 'text-accent' : 'text-primary'}`}>
+                            {dev.deviceName}
+                            {dev.isCurrentDevice && ' (This Device)'}
+                          </p>
+                          {(dev.deviceType === 'speaker' || dev.deviceId.startsWith('cast:')) && dev.castDetails?.ip && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/15 text-accent font-mono shrink-0">
+                              {dev.castDetails.ip}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-muted truncate">
                           {isActive
                             ? 'Listening on this device'
                             : dev.isCurrentDevice
                             ? 'Switch playback back here'
                             : dev.deviceType === 'speaker' || dev.deviceId.startsWith('cast:')
-                            ? 'Google Cast Smart Speaker'
+                            ? `${dev.castDetails?.model || 'Google Cast Speaker'} • Tap to stream`
                             : 'Available on local network'}
                         </p>
                       </div>
@@ -216,18 +223,20 @@ export const DevicePickerModal: React.FC = () => {
         </div>
 
         {/* Footer & Radar discovery status */}
-        <div className="flex items-center justify-between pt-2 border-t border-customBorder/40 text-xs text-muted">
-          <button
-            onClick={handleScanClick}
-            disabled={isScanning}
-            className="flex items-center gap-2 hover:text-primary transition-colors cursor-pointer"
-          >
-            <RefreshCw size={12} className={isScanning ? 'animate-spin text-accent' : 'text-accent'} />
-            <span>{isScanning ? 'Scanning Wi-Fi network...' : 'Scan for Speakers'}</span>
-          </button>
-          <div className="flex items-center gap-1">
-            <Wifi size={13} />
-            <span>LAN & Cast Sync</span>
+        <div className="flex flex-col gap-2 pt-2 border-t border-customBorder/40">
+          <div className="flex items-center justify-between text-xs text-muted">
+            <button
+              onClick={handleScanClick}
+              disabled={isScanning}
+              className="flex items-center gap-2 hover:text-primary transition-colors cursor-pointer"
+            >
+              <RefreshCw size={12} className={isScanning ? 'animate-spin text-accent' : 'text-accent'} />
+              <span>{isScanning ? 'Scanning Wi-Fi network...' : 'Scan for Speakers'}</span>
+            </button>
+            <div className="flex items-center gap-1">
+              <Wifi size={13} />
+              <span>LAN & Cast Sync</span>
+            </div>
           </div>
         </div>
       </div>

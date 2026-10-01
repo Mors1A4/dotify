@@ -1,5 +1,6 @@
 import dgram from 'dgram';
 import http from 'http';
+import net from 'net';
 import os from 'os';
 import { Client, DefaultMediaReceiver } from 'castv2-client';
 
@@ -68,10 +69,13 @@ export function makeLanStreamUrl(url, port = 3001) {
 }
 
 /**
- * Query Eureka info on HTTP port 8008 for a given IP address
+ * Query Eureka info on HTTP port 8008 for a given IP address with fallback to port 8009
  */
 export async function probeEurekaDevice(ip) {
-  return new Promise((resolve) => {
+  if (!ip) return null;
+
+  // 1. Try Eureka port 8008 HTTP
+  const devFromHttp = await new Promise((resolve) => {
     const req = http.get(
       `http://${ip}:8008/setup/eureka_info?params=name,device_info`,
       { timeout: 1200 },
@@ -84,11 +88,12 @@ export async function probeEurekaDevice(ip) {
         res.on('end', () => {
           try {
             const data = JSON.parse(body);
-            if (data && data.name) {
+            const name = data?.name || data?.device_info?.name;
+            if (name) {
               const deviceId = `cast:${ip}:8009`;
               const dev = {
                 deviceId,
-                deviceName: data.name || 'Google Home Speaker',
+                deviceName: name,
                 deviceType: 'speaker',
                 role: 'active_host',
                 isCurrentDevice: false,
@@ -102,7 +107,7 @@ export async function probeEurekaDevice(ip) {
                 castDetails: {
                   ip,
                   port: 8009,
-                  model: data.device_info?.model_name || 'Google Cast Speaker',
+                  model: data.device_info?.model_name || data.model_name || 'Google Cast Speaker',
                   udn: data.ssdp_udn || '',
                 },
               };
@@ -120,6 +125,46 @@ export async function probeEurekaDevice(ip) {
       req.destroy();
       resolve(null);
     });
+  });
+
+  if (devFromHttp) return devFromHttp;
+
+  // 2. Fallback: check if Cast V2 TLS port 8009 is reachable
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(600);
+    socket.on('connect', () => {
+      socket.destroy();
+      const deviceId = `cast:${ip}:8009`;
+      const dev = {
+        deviceId,
+        deviceName: `Google Cast Speaker (${ip})`,
+        deviceType: 'speaker',
+        role: 'active_host',
+        isCurrentDevice: false,
+        isActive: deviceId === activeCastDeviceId,
+        volume: 0.7,
+        lastSeen: Date.now(),
+        capabilities: {
+          canPlayAudio: true,
+          isController: false,
+        },
+        castDetails: {
+          ip,
+          port: 8009,
+          model: 'Google Cast Speaker',
+          udn: '',
+        },
+      };
+      registerDiscoveredSpeaker(dev);
+      resolve(dev);
+    });
+    socket.on('error', () => resolve(null));
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(null);
+    });
+    socket.connect(8009, ip);
   });
 }
 

@@ -138,8 +138,8 @@ export const MobileNowPlayingSheet: React.FC = () => {
         )}
 
         {sheetTab === 'visualizer' && (
-          <div className="w-full flex-1 flex items-center justify-center">
-            <VisualizerCanvas className="w-full max-w-sm" />
+          <div className="w-full max-w-xs aspect-square rounded-2xl overflow-hidden shadow-2xl border border-customBorder relative group">
+            <VisualizerCanvas className="w-full h-full" />
           </div>
         )}
 

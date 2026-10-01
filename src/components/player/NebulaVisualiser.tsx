@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { useThemeStore } from "../../store/themeStore";
+import { audioEngine } from "../../audio/audioEngine";
 
 /* ─────────────────────────────────────────────────────────────
    Types & themes
@@ -486,7 +487,26 @@ export const NebulaVisualiser: React.FC<NebulaVisualiserProps> = ({
     const analyse = (dt: number, nowMs: number) => {
       const { analyser: an, paused: p, onBeat: cb } = live.current;
 
-      if (an && !p) {
+      // YouTube-bridge playback has no reachable AnalyserNode (cross-origin
+      // iframe), so drive the shader from beat-reactive synthetic spectrum.
+      let bridgeActive = false;
+      try {
+        bridgeActive = !p && audioEngine.isBridgeAudible();
+      } catch {
+        bridgeActive = false;
+      }
+      if (bridgeActive) {
+        const needBins = an ? an.frequencyBinCount : 512;
+        const needWave = an ? an.fftSize : 1024;
+        if (freq.length !== needBins) {
+          freq = new Uint8Array(needBins);
+          wavIn = new Uint8Array(needWave);
+          rebuildBinMap(needBins);
+        } else if (wavIn.length !== needWave) {
+          wavIn = new Uint8Array(needWave);
+        }
+        audioEngine.fillBridgeVisualizerData(freq, wavIn);
+      } else if (an && !p) {
         if (freq.length !== an.frequencyBinCount) {
           freq = new Uint8Array(an.frequencyBinCount);
           wavIn = new Uint8Array(an.fftSize);
@@ -494,7 +514,11 @@ export const NebulaVisualiser: React.FC<NebulaVisualiserProps> = ({
         }
         an.getByteFrequencyData(freq);
         an.getByteTimeDomainData(wavIn);
+      }
 
+      if (bridgeActive || (an && !p)) {
+        const fftSize = an ? an.fftSize : wavIn.length;
+        const sampleRate = an?.context?.sampleRate || 44100;
         // spectrum texture
         for (let i = 0; i < FFT_TEX; i++) {
           const [lo, hi] = binMap[i] || [0, 1];
@@ -508,8 +532,7 @@ export const NebulaVisualiser: React.FC<NebulaVisualiserProps> = ({
         for (let i = 0; i < WAVE_TEX; i++) waveTex[i] = wavIn[(i * step) | 0];
 
         // band energies
-        const sampleRate = an.context?.sampleRate || 44100;
-        const hzPerBin = sampleRate / an.fftSize;
+        const hzPerBin = sampleRate / fftSize;
         const b = (hz: number) => Math.round(hz / hzPerBin);
         const rawBass = Math.pow(avgRange(freq, b(20), b(150)), 1.4);
         const rawMid = avgRange(freq, b(150), b(2000));

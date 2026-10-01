@@ -429,7 +429,7 @@ fn http_get_raw(ip: &str, port: u16, path: &str, timeout_ms: u64) -> Option<(u16
     let ipv4: Ipv4Addr = ip.parse().ok()?;
     let addr = SocketAddr::new(IpAddr::V4(ipv4), port);
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(timeout_ms)).ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(timeout_ms.max(2500))));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(timeout_ms.max(1500))));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(timeout_ms)));
 
     let req = format!(
@@ -438,11 +438,46 @@ fn http_get_raw(ip: &str, port: u16, path: &str, timeout_ms: u64) -> Option<(u16
     );
     stream.write_all(req.as_bytes()).ok()?;
 
-    let mut data = Vec::new();
-    stream.read_to_end(&mut data).ok()?;
+    let mut data = Vec::with_capacity(8192);
+    let mut buf = [0u8; 4096];
+    let mut header_end = None;
+    let mut content_length: Option<usize> = None;
 
-    let header_end = data.windows(4).position(|w| w == b"\r\n\r\n")?;
-    let header_str = String::from_utf8_lossy(&data[..header_end]);
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                data.extend_from_slice(&buf[..n]);
+                if header_end.is_none() {
+                    if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let hend = pos + 4;
+                        header_end = Some(hend);
+                        let header_str = String::from_utf8_lossy(&data[..pos]);
+                        for line in header_str.lines() {
+                            let lower = line.to_ascii_lowercase();
+                            if lower.starts_with("content-length:") {
+                                if let Some(val) = line.split(':').nth(1) {
+                                    content_length = val.trim().parse::<usize>().ok();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(hend) = header_end {
+                    if let Some(cl) = content_length {
+                        if data.len() >= hend + cl {
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    let hend = header_end.or_else(|| data.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4))?;
+    let header_str = String::from_utf8_lossy(&data[..hend]);
     let status_code: u16 = header_str
         .lines()
         .next()?
@@ -450,7 +485,7 @@ fn http_get_raw(ip: &str, port: u16, path: &str, timeout_ms: u64) -> Option<(u16
         .nth(1)?
         .parse()
         .ok()?;
-    let body = data[header_end + 4..].to_vec();
+    let body = data[hend..].to_vec();
     Some((status_code, body))
 }
 
@@ -1191,48 +1226,102 @@ pub fn get_discovered_cast_devices() -> Vec<DiscoveredCastDevice> {
 }
 
 pub fn probe_cast_device(ip: &str, timeout_ms: u64) -> Option<DiscoveredCastDevice> {
-    let (status, body) = http_get_raw(ip, 8008, "/setup/eureka_info?params=name,device_info", timeout_ms)?;
-    if status != 200 {
-        return None;
-    }
-    let val: serde_json::Value = serde_json::from_slice(&body).ok()?;
-    let name = val.get("name").and_then(|v| v.as_str())?;
-    let model = val
-        .get("device_info")
-        .and_then(|di| di.get("model_name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("Google Cast Speaker");
-    let udn = val.get("ssdp_udn").and_then(|v| v.as_str()).unwrap_or("");
+    // 1. Try Eureka port 8008 HTTP
+    if let Some((status, body)) = http_get_raw(ip, 8008, "/setup/eureka_info?params=name,device_info", timeout_ms) {
+        if status == 200 {
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&body) {
+                let name = val.get("name")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| val.get("device_info").and_then(|di| di.get("name")).and_then(|v| v.as_str()))
+                    .unwrap_or("Google Home Speaker");
+                let model = val
+                    .get("device_info")
+                    .and_then(|di| di.get("model_name"))
+                    .and_then(|v| v.as_str())
+                    .or_else(|| val.get("model_name").and_then(|v| v.as_str()))
+                    .unwrap_or("Google Cast Speaker");
+                let udn = val.get("ssdp_udn").and_then(|v| v.as_str()).unwrap_or("");
 
-    let dev_id = format!("cast:{}:8009", ip);
-    let dev = DiscoveredCastDevice {
-        deviceId: dev_id.clone(),
-        deviceName: name.to_string(),
-        deviceType: "speaker".to_string(),
-        role: "active_host".to_string(),
-        isCurrentDevice: false,
-        isActive: false,
-        volume: 0.7,
-        lastSeen: now_ms(),
-        capabilities: serde_json::json!({
-            "canPlayAudio": true,
-            "isController": false
-        }),
-        castDetails: serde_json::json!({
-            "ip": ip,
-            "port": 8009,
-            "model": model,
-            "udn": udn
-        }),
-    };
+                let dev_id = format!("cast:{}:8009", ip);
+                let dev = DiscoveredCastDevice {
+                    deviceId: dev_id.clone(),
+                    deviceName: name.to_string(),
+                    deviceType: "speaker".to_string(),
+                    role: "active_host".to_string(),
+                    isCurrentDevice: false,
+                    isActive: false,
+                    volume: 0.7,
+                    lastSeen: now_ms(),
+                    capabilities: serde_json::json!({
+                        "canPlayAudio": true,
+                        "isController": false
+                    }),
+                    castDetails: serde_json::json!({
+                        "ip": ip,
+                        "port": 8009,
+                        "model": model,
+                        "udn": udn
+                    }),
+                };
 
-    if let Ok(mut map) = get_cast_devices_map().lock() {
-        map.insert(dev_id, dev.clone());
+                if let Ok(mut map) = get_cast_devices_map().lock() {
+                    map.insert(dev_id, dev.clone());
+                }
+                return Some(dev);
+            }
+        }
     }
-    Some(dev)
+
+    // 2. Fallback: Check if Cast V2 TLS port 8009 is reachable directly
+    let ipv4: Ipv4Addr = ip.parse().ok()?;
+    let addr = SocketAddr::new(IpAddr::V4(ipv4), 8009);
+    if let Ok(_stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(timeout_ms.min(500))) {
+        let dev_id = format!("cast:{}:8009", ip);
+        let dev = DiscoveredCastDevice {
+            deviceId: dev_id.clone(),
+            deviceName: format!("Google Cast Speaker ({})", ip),
+            deviceType: "speaker".to_string(),
+            role: "active_host".to_string(),
+            isCurrentDevice: false,
+            isActive: false,
+            volume: 0.7,
+            lastSeen: now_ms(),
+            capabilities: serde_json::json!({
+                "canPlayAudio": true,
+                "isController": false
+            }),
+            castDetails: serde_json::json!({
+                "ip": ip,
+                "port": 8009,
+                "model": "Google Cast Speaker",
+                "udn": ""
+            }),
+        };
+
+        if let Ok(mut map) = get_cast_devices_map().lock() {
+            map.insert(dev_id, dev.clone());
+        }
+        return Some(dev);
+    }
+
+    None
 }
 
 pub fn scan_for_cast_devices() -> Vec<DiscoveredCastDevice> {
+    // Probe any previously cached cast IPs first
+    let cached_ips: Vec<String> = {
+        if let Ok(map) = get_cast_devices_map().lock() {
+            map.values()
+                .filter_map(|d| d.castDetails.get("ip").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    };
+    for ip in cached_ips {
+        probe_cast_device(&ip, 800);
+    }
+
     let my_ip = get_local_lan_ip();
     let parts: Vec<&str> = my_ip.split('.').collect();
     if parts.len() == 4 && my_ip != "127.0.0.1" {
@@ -1244,12 +1333,12 @@ pub fn scan_for_cast_devices() -> Vec<DiscoveredCastDevice> {
                 all_ips.push(format!("{}.{}", prefix, i));
             }
         }
-        for chunk in all_ips.chunks(48) {
+        for chunk in all_ips.chunks(64) {
             let mut handles = Vec::with_capacity(chunk.len());
             for ip in chunk {
                 let ip_clone = ip.clone();
                 handles.push(thread::spawn(move || {
-                    let _ = probe_cast_device(&ip_clone, 1200);
+                    let _ = probe_cast_device(&ip_clone, 800);
                 }));
             }
             for h in handles {

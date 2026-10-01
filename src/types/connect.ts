@@ -19,6 +19,12 @@ export interface ConnectedDevice {
   volume: number; // 0.0 to 1.0
   lastSeen: number;
   capabilities?: DeviceCapabilities;
+  castDetails?: {
+    ip: string;
+    port: number;
+    model: string;
+    udn?: string;
+  };
 }
 
 // Backward compatibility alias

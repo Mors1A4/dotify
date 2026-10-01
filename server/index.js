@@ -8,7 +8,7 @@ import { handleStreamProxy } from './streamProxy.js';
 import { handleTrackStream } from './trackResolver.js';
 import { setupConnectHub } from './connectHub.js';
 import { resolveSpotifyUrl, isSpotifyUrl } from './spotifyResolver.js';
-import { getDiscoveredCastDevices, scanForCastDevices } from './castHub.js';
+import { getDiscoveredCastDevices, scanForCastDevices, probeEurekaDevice } from './castHub.js';
 import { setupMp3SyncHub } from './mp3SyncHub.js';
 import { startUpgradeWorker } from './upgradeWorker.js';
 import ytSearch from 'yt-search';
@@ -135,6 +135,17 @@ app.post('/api/cast/scan', async (req, res) => {
   try {
     const devices = await scanForCastDevices();
     res.json({ ok: true, devices });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.all('/api/cast/probe', async (req, res) => {
+  try {
+    const ip = req.query.ip || req.body?.ip;
+    if (!ip) return res.status(400).json({ ok: false, error: 'IP required' });
+    const dev = await probeEurekaDevice(String(ip).trim());
+    res.json({ ok: true, device: dev, devices: getDiscoveredCastDevices() });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
