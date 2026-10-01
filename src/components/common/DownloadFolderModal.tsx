@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, FolderOpen, Loader2, CheckCircle2, AlertTriangle, RotateCcw } from 'lucide-react';
 import {
   fetchDownloadDir,
@@ -102,7 +103,10 @@ export const DownloadFolderModal: React.FC<Props> = ({ open, onClose }) => {
     setSuccess(null);
   };
 
-  return (
+  // Portal to document.body: TopBar has backdrop-blur-md which creates a CSS
+  // containing block that traps position:fixed descendants. Without a portal
+  // the modal is clipped inside the header and appears invisible.
+  const modalContent = (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
       onClick={onClose}
@@ -257,4 +261,9 @@ export const DownloadFolderModal: React.FC<Props> = ({ open, onClose }) => {
       </div>
     </div>
   );
+
+  if (typeof document !== 'undefined') {
+    return createPortal(modalContent, document.body);
+  }
+  return modalContent;
 };
