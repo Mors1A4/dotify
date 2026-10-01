@@ -80,7 +80,9 @@ export function isUglyPlaceholder(url?: string | null): boolean {
     lower.includes('images/cover//') ||
     lower.includes('images/artist//') ||
     lower.includes('default_cover') ||
-    lower.includes('default_artist')
+    lower.includes('default_artist') ||
+    // Deezer CDN images are cross-origin blocked in Tauri WebView2 (no Referer / session cookie)
+    lower.includes('cdn-images.dzcdn.net')
   ) {
     return true;
   }
