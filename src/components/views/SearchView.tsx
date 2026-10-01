@@ -386,7 +386,7 @@ export const SearchView: React.FC = () => {
                 <div
                   key={track.id}
                   data-testid="track-item"
-                  onClick={() => playTrack(track, results)}
+                  onClick={() => playTrack(track, results, idx, { origin: 'search', searchQuery })}
                   onMouseEnter={() => prefetchTrack(track)}
                   className={`group grid grid-cols-12 items-center px-4 py-2.5 rounded-lg transition-colors cursor-pointer ${
                     isCurrent ? 'bg-elevated' : 'hover:bg-elevated/50'

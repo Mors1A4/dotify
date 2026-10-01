@@ -6,7 +6,11 @@ import {
   GenreAffinityRecord,
   ArtistAffinityRecord,
   ExportableTelemetryDataset,
+  PlayOrigin,
+  PlayIntent,
+  PlayContext,
 } from '../types/telemetry';
+import { listeningClassifier, UserAffinityContext } from './listeningClassifier';
 
 export class TelemetryDatabase {
   private static instance: TelemetryDatabase;
@@ -101,7 +105,8 @@ export class TelemetryDatabase {
     track: Track,
     durationPlayedMs: number,
     totalDurationMs: number,
-    replayed = false
+    replayed = false,
+    playContext?: PlayContext | PlayOrigin
   ): Promise<TrackPlayRecord> {
     const db = await this.getDb();
 
@@ -116,6 +121,25 @@ export class TelemetryDatabase {
     const completionRate = Math.max(0, Math.min(1, durationPlayedMs / effectiveTotal));
     const completed = completionRate >= 0.8;
     const skipped = (durationPlayedMs < 30000 || completionRate < 0.5) && !completed;
+
+    const contextObj: PlayContext | undefined =
+      typeof playContext === 'string' ? { origin: playContext } : playContext;
+
+    const classified = listeningClassifier.classifyListeningRecord({
+      trackId: track.id,
+      title: track.title,
+      artist: track.artist,
+      genre: track.sourceMetadata?.genre,
+      source: track.source,
+      replayed,
+      completionRate,
+      skipped,
+      origin: contextObj?.origin,
+    });
+
+    const origin: PlayOrigin = contextObj?.origin || classified.origin;
+    const intent: PlayIntent = replayed ? 'favoured' : (contextObj?.intent || classified.intent);
+    const intentWeight = intent === 'favoured' ? 1.0 : (skipped ? 0.05 : classified.intentWeight);
 
     const playId = `play_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const playRecord: any = {
@@ -137,6 +161,16 @@ export class TelemetryDatabase {
       completed,
       replayed,
       artworkUrl: track.artworkUrl || '',
+      origin,
+      intent,
+      intentWeight,
+      searchQuery: contextObj?.searchQuery,
+      contextMetadata: {
+        playlistId: contextObj?.playlistId,
+        playlistName: contextObj?.playlistName,
+        artistName: contextObj?.artistName,
+        albumTitle: contextObj?.albumTitle,
+      },
     };
 
     // Store in track_plays and alias plays
@@ -159,12 +193,12 @@ export class TelemetryDatabase {
 
     // Update genre affinity if not skipped
     if (!skipped && playRecord.genre && playRecord.genre !== 'Unknown') {
-      await this.updateGenreAffinity(playRecord.genre, durationPlayedMs, completed, replayed, skipped);
+      await this.updateGenreAffinity(playRecord.genre, durationPlayedMs, completed, replayed, skipped, intent);
     }
 
     // Update artist affinity if not skipped
     if (!skipped && playRecord.artist) {
-      await this.updateArtistAffinity(playRecord.artist, durationPlayedMs, completed, replayed, skipped);
+      await this.updateArtistAffinity(playRecord.artist, durationPlayedMs, completed, replayed, skipped, intent);
     }
 
     return playRecord;
@@ -175,7 +209,8 @@ export class TelemetryDatabase {
     playedMs: number,
     completed: boolean,
     replayed: boolean,
-    skipped: boolean
+    skipped: boolean,
+    intent: PlayIntent = 'favoured'
   ): Promise<void> {
     const db = await this.getDb();
     const genreStores = ['genre_affinity', 'genreAffinities'].filter((name) =>
@@ -195,15 +230,29 @@ export class TelemetryDatabase {
         const existing: GenreAffinityRecord = getReq.result || {
           genre,
           playCount: 0,
+          favouredPlayCount: 0,
+          passivePlayCount: 0,
           totalTimePlayedMs: 0,
           affinityScore: 0,
           lastUpdated: Date.now(),
         };
 
         existing.playCount += 1;
+        if (intent === 'favoured' || replayed) {
+          existing.favouredPlayCount = (existing.favouredPlayCount || 0) + 1;
+        } else {
+          existing.passivePlayCount = (existing.passivePlayCount || 0) + 1;
+        }
         existing.totalTimePlayedMs += playedMs;
 
-        const baseScore = existing.playCount * 5 + Math.floor(existing.totalTimePlayedMs / 60000);
+        const isFavoured = intent === 'favoured' || replayed;
+        const playFactor = isFavoured
+          ? existing.playCount * 5
+          : ((existing.favouredPlayCount || 0) * 5 + (existing.passivePlayCount || 0) * 1);
+        const timeMinutes = Math.floor(existing.totalTimePlayedMs / 60000);
+        const timeFactor = isFavoured ? timeMinutes : Math.floor(timeMinutes * 0.3);
+
+        const baseScore = playFactor + timeFactor;
         const deltaBonus = (replayed ? 15 : 0) + (completed ? 10 : 0) - (skipped ? 5 : 0);
         existing.affinityScore = Math.max(1, Math.min(100, Math.round(baseScore + deltaBonus)));
         existing.lastUpdated = Date.now();
@@ -223,7 +272,8 @@ export class TelemetryDatabase {
     playedMs: number,
     completed: boolean,
     replayed: boolean,
-    skipped: boolean
+    skipped: boolean,
+    intent: PlayIntent = 'favoured'
   ): Promise<void> {
     const db = await this.getDb();
     const artistStores = ['artist_affinity', 'artistAffinities'].filter((name) =>
@@ -243,15 +293,29 @@ export class TelemetryDatabase {
         const existing: ArtistAffinityRecord = getReq.result || {
           artist,
           playCount: 0,
+          favouredPlayCount: 0,
+          passivePlayCount: 0,
           totalTimePlayedMs: 0,
           affinityScore: 0,
           lastUpdated: Date.now(),
         };
 
         existing.playCount += 1;
+        if (intent === 'favoured' || replayed) {
+          existing.favouredPlayCount = (existing.favouredPlayCount || 0) + 1;
+        } else {
+          existing.passivePlayCount = (existing.passivePlayCount || 0) + 1;
+        }
         existing.totalTimePlayedMs += playedMs;
 
-        const baseScore = existing.playCount * 5 + Math.floor(existing.totalTimePlayedMs / 60000);
+        const isFavoured = intent === 'favoured' || replayed;
+        const playFactor = isFavoured
+          ? existing.playCount * 5
+          : ((existing.favouredPlayCount || 0) * 5 + (existing.passivePlayCount || 0) * 1);
+        const timeMinutes = Math.floor(existing.totalTimePlayedMs / 60000);
+        const timeFactor = isFavoured ? timeMinutes : Math.floor(timeMinutes * 0.3);
+
+        const baseScore = playFactor + timeFactor;
         const deltaBonus = (replayed ? 15 : 0) + (completed ? 10 : 0) - (skipped ? 5 : 0);
         existing.affinityScore = Math.max(1, Math.min(100, Math.round(baseScore + deltaBonus)));
         existing.lastUpdated = Date.now();
@@ -484,6 +548,7 @@ export class TelemetryDatabase {
       }
 
       for (const p of data.plays) {
+        const classified = listeningClassifier.classifyListeningRecord(p);
         const playRecord = {
           ...p,
           id: p.id || p.playId,
@@ -492,6 +557,11 @@ export class TelemetryDatabase {
           timePlayedMs: p.timePlayedMs ?? p.durationPlayedMs ?? 0,
           totalDurationMs: p.totalDurationMs ?? p.durationMs ?? 0,
           durationMs: p.durationMs ?? p.totalDurationMs ?? 0,
+          origin: p.origin || classified.origin,
+          intent: p.intent || classified.intent,
+          intentWeight: p.intentWeight ?? classified.intentWeight,
+          searchQuery: p.searchQuery,
+          contextMetadata: p.contextMetadata,
         };
         for (const store of pStores) {
           store.put(playRecord);
@@ -601,7 +671,48 @@ export class TelemetryDatabase {
           tx.onerror = () => resolve();
         });
       }
+      await this.classifyPastPlays().catch(() => {});
     } catch {}
+  }
+
+  public async classifyPastPlays(userContext?: UserAffinityContext): Promise<number> {
+    try {
+      const db = await this.getDb();
+      const playStores = ['track_plays', 'plays'].filter((name) => db.objectStoreNames.contains(name));
+      if (playStores.length === 0) return 0;
+
+      const allPlays = await this.getAllPlays();
+      if (allPlays.length === 0) return 0;
+
+      let updatedCount = 0;
+      for (const play of allPlays) {
+        if (!play.origin || play.origin === 'unknown' || !play.intent) {
+          const classified = listeningClassifier.classifyListeningRecord(play, userContext);
+          play.origin = classified.origin;
+          play.intent = classified.intent;
+          play.intentWeight = classified.intentWeight;
+          updatedCount++;
+        }
+      }
+
+      if (updatedCount > 0) {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(playStores, 'readwrite');
+          for (const storeName of playStores) {
+            const store = tx.objectStore(storeName);
+            for (const play of allPlays) {
+              store.put(play);
+            }
+          }
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+
+      return updatedCount;
+    } catch {
+      return 0;
+    }
   }
 
   public async getRecentTrackPlays(limit = 50): Promise<TrackPlayRecord[]> {

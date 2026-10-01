@@ -808,7 +808,7 @@ export async function applyAndReleaseForkUpgrade(requestId) {
     });
 
     const releaseScript = path.join(PROJECT_ROOT, 'scripts', 'release.mjs');
-    const releaseCmd = `node "${releaseScript}" patch --skip-build --notes "Implemented: ${reqDoc.title || 'Feature upgrade'}"`;
+    const releaseCmd = `node "${releaseScript}" patch --desktop-only --notes "Implemented: ${reqDoc.title || 'Feature upgrade'}"`;
     execSync(releaseCmd, { cwd: PROJECT_ROOT, stdio: 'pipe' });
 
     // 5. Read new version

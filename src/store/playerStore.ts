@@ -8,7 +8,8 @@ import { updateMediaSession, updateMediaSessionPlaybackState } from '../audio/me
 import { safeStorage } from '../utils/storage';
 import { telemetryDb } from '../services/telemetryDb';
 import { recommendationEngine } from '../services/recommendationEngine';
-import { DeviceType } from '../types/telemetry';
+import { DeviceType, PlayOrigin, PlayIntent, PlayContext } from '../types/telemetry';
+import { listeningClassifier } from '../services/listeningClassifier';
 import {
   ConnectMode,
   ConnectedDevice,
@@ -21,6 +22,7 @@ import { connectClient } from '../services/connectClient';
 import { authService } from '../services/authService';
 import { upgradeArtworkUrl } from '../utils/artwork';
 import { useMp3VaultStore } from '../services/mp3VaultService';
+import { communityListeningService } from '../services/communityListeningService';
 
 export class RemoteProgressInterpolator {
   private anchorPositionSec: number = 0;
@@ -201,8 +203,12 @@ export interface PlayerStoreState {
   playlists: CustomPlaylist[];
   followedArtists: FollowedArtist[];
 
-  // Actions
-  playTrack: (track: Track, newQueue?: Track[], trackIndex?: number) => void;
+  playTrack: (
+    track: Track,
+    newQueue?: Track[],
+    trackIndex?: number,
+    playContext?: PlayContext | PlayOrigin
+  ) => void;
   togglePlay: () => void;
   nextTrack: () => void;
   previousTrack: () => void;
@@ -367,6 +373,7 @@ export function scheduleCloudLibrarySync() {
 }
 
 let activePlaySessionId: string = `session_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+let currentQueueContext: PlayContext | null = null;
 let activePlayRecord: {
   playId: string;
   track: Track;
@@ -374,6 +381,7 @@ let activePlayRecord: {
   lastTick: number;
   durationPlayedMs: number;
   replayed: boolean;
+  playContext?: PlayContext;
 } | null = null;
 let lastPlayedTrackId: string | null = null;
 
@@ -423,9 +431,19 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         rec.track,
         rec.durationPlayedMs,
         totalMs,
-        rec.replayed
+        rec.replayed,
+        rec.playContext
       );
       await telemetryDb.updateSession(activePlaySessionId, rec.durationPlayedMs);
+
+      // Record to community listening if listened for at least 15s or 40% completed
+      if (
+        rec.durationPlayedMs >= 15000 ||
+        (rec.track.duration && rec.durationPlayedMs / (rec.track.duration * 1000) >= 0.4)
+      ) {
+        const u = authService.getCurrentUser();
+        communityListeningService.recordPlay(rec.track, u?.uid || 'guest');
+      }
     } catch (err) {
       console.warn('[PlayerStore] Failed to record play telemetry:', err);
     }
@@ -534,7 +552,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
           audioEngine.prebufferNextTrack(candidates[0]);
 
           if (reason === 'queue_exhausted' || (!stateNow.isPlaying && !stateNow.currentTrack) || (reason === 'approaching_end' && !get().isPlaying)) {
-            get().playTrack(candidates[0]);
+            get().playTrack(candidates[0], undefined, undefined, { origin: 'autoplay', intent: 'exploratory' });
           }
         }
       } catch (err) {
@@ -1018,8 +1036,25 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       sendThrottledRemoteVolume(clamped, targetDeviceId);
     },
 
-    playTrack: (track: Track, newQueue?: Track[], trackIndex?: number) => {
+    playTrack: (
+      track: Track,
+      newQueue?: Track[],
+      trackIndex?: number,
+      playContext?: PlayContext | PlayOrigin
+    ) => {
       finalizeCurrentPlayRecord();
+
+      const resolvedContext: PlayContext =
+        typeof playContext === 'string'
+          ? {
+              origin: playContext,
+              intent: listeningClassifier.isFavouredOrigin(playContext) ? 'favoured' : 'exploratory',
+            }
+          : playContext || listeningClassifier.resolveContextFromState(track, get());
+
+      if (newQueue) {
+        currentQueueContext = resolvedContext;
+      }
 
       if (get().connectMode === 'remote_controller') {
         const { queue } = get();
@@ -1072,6 +1107,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         lastTick: Date.now(),
         durationPlayedMs: 0,
         replayed,
+        playContext: resolvedContext,
       };
 
       audioEngine.playTrack(track);
@@ -1166,7 +1202,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
       const next = queue[nextIndex];
       if (next) {
-        get().playTrack(next, undefined, nextIndex);
+        get().playTrack(next, undefined, nextIndex, currentQueueContext || undefined);
       }
       broadcastCurrentState();
     },
@@ -1181,7 +1217,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       if (history.length > 0) {
         const prev = history[0];
         set({ history: history.slice(1) });
-        get().playTrack(prev);
+        get().playTrack(prev, undefined, undefined, currentQueueContext || undefined);
         broadcastCurrentState();
         return;
       }
@@ -1200,7 +1236,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       const prevIndex = Math.max(0, currentIndex - 1);
       const prev = queue[prevIndex];
       if (prev) {
-        get().playTrack(prev, undefined, prevIndex);
+        get().playTrack(prev, undefined, prevIndex, currentQueueContext || undefined);
       }
       broadcastCurrentState();
     },
@@ -1642,6 +1678,12 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         updated = likedTracks.filter((t) => t.id !== track.id);
       } else {
         updated = [track, ...likedTracks];
+        if (activePlayRecord && activePlayRecord.track.id === track.id) {
+          activePlayRecord.playContext = {
+            ...(activePlayRecord.playContext || { origin: 'library' }),
+            intent: 'favoured',
+          };
+        }
         // Cache full track for offline listening
         try {
           audioCache.cacheFullTrack(track);
@@ -1904,6 +1946,19 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         history: history || state.history,
         followedArtists: followedArtists !== undefined ? followedArtists : state.followedArtists,
       }));
+
+      try {
+        const userContext = {
+          likedTrackIds: new Set(cleanLiked.map((t) => t.id)),
+          followedArtistNames: new Set(
+            (followedArtists || []).map((a) => a.name.toLowerCase().trim())
+          ),
+          userPlaylistTrackIds: new Set(
+            cleanPlaylists.flatMap((p) => (p.tracks || []).map((t) => t.id))
+          ),
+        };
+        telemetryDb.classifyPastPlays(userContext).catch(() => {});
+      } catch {}
     },
   };
 });

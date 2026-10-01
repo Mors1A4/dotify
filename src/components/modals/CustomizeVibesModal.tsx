@@ -222,11 +222,11 @@ export const CustomizeVibesModal: React.FC<CustomizeVibesModalProps> = ({
             <div className="flex items-center gap-2.5">
               <SlidersHorizontal className="text-accent" size={20} />
               <h2 className="text-lg sm:text-xl font-bold text-primary tracking-tight">
-                {isOnboarding ? 'Set Up Your 5 Daily Vibes' : 'Customize Your 5 Daily Vibes'}
+                {isOnboarding ? 'Set Up Your 5 Vibe Playlists' : 'Customize Your 5 Vibe Playlists'}
               </h2>
             </div>
             <p className="text-xs text-secondary mt-1 max-w-lg">
-              Type the 5 vibes, activities, or moods you want soundtracks for. Dotify AI curates 20–30 tracks for each vibe daily, deeply tailored to your music taste.
+              Type the 5 vibes, activities, or moods you want soundtracks for. Dotify AI curates 20–30 tracks for each vibe, deeply tailored to your music taste. Refresh anytime for a brand new mix.
             </p>
           </div>
 
@@ -450,7 +450,7 @@ export const CustomizeVibesModal: React.FC<CustomizeVibesModalProps> = ({
               ) : (
                 <>
                   <Check size={14} />
-                  <span>{isOnboarding ? 'Start Daily Curation' : 'Save & Curate'}</span>
+                  <span>{isOnboarding ? 'Curate Playlists' : 'Save & Curate'}</span>
                 </>
               )}
             </button>

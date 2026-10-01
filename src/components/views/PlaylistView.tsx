@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { usePlayerStore } from '../../store/playerStore';
+import { useAuthStore } from '../../store/authStore';
 import { PLAYLIST_COVER_PRESETS } from '../modals/CreatePlaylistModal';
 import { PlaylistArtwork } from '../common/PlaylistArtwork';
 import { upgradeArtworkUrl } from '../../utils/artwork';
@@ -40,6 +41,7 @@ import {
   Music,
   Cpu,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 
 export const PlaylistView: React.FC = () => {
@@ -87,6 +89,8 @@ export const PlaylistView: React.FC = () => {
   const [isSearchingFinder, setIsSearchingFinder] = useState(false);
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [isRefreshingVibe, setIsRefreshingVibe] = useState(false);
+  const [, setRefreshTick] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const vibePlaylist = selectedPlaylistId ? dailyVibeManager.getVibePlaylistById(selectedPlaylistId) : null;
   const playlist = playlists.find((p) => p.id === selectedPlaylistId) || vibePlaylist || null;
@@ -100,6 +104,37 @@ export const PlaylistView: React.FC = () => {
   const showToast = (msg: string) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 2800);
+  };
+
+  const handleRefreshCurrentVibe = async () => {
+    if (isRefreshingVibe) return;
+    setIsRefreshingVibe(true);
+    try {
+      const user = useAuthStore.getState().user;
+      const accountId = user?.uid || 'guest';
+      const refreshed = await dailyVibeManager.getDailyVibes(accountId, true);
+
+      if (selectedPlaylistId) {
+        const currentVibeKey = selectedPlaylistId.replace(/^daily-vibe-/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
+        const matching = refreshed.find(
+          (p) =>
+            p.id === selectedPlaylistId ||
+            p.vibe === currentVibeKey ||
+            p.name.trim().toLowerCase() === playlist?.name.trim().toLowerCase()
+        );
+        if (matching && matching.id !== selectedPlaylistId && !playlists.some((p) => p.id === selectedPlaylistId)) {
+          usePlayerStore.setState({ selectedPlaylistId: matching.id });
+        }
+      }
+
+      setRefreshTick((t) => t + 1);
+      showToast('Refreshed vibe playlist with fresh tracks!');
+    } catch (err) {
+      console.error('Failed to refresh vibe playlist:', err);
+      showToast('Could not refresh vibe right now.');
+    } finally {
+      setIsRefreshingVibe(false);
+    }
   };
 
   useEffect(() => {
@@ -377,7 +412,7 @@ export const PlaylistView: React.FC = () => {
             {((playlist as any)?.isAIGenerated || vibePlaylist) && (
               <span className="text-[11px] font-bold text-accent px-2.5 py-0.5 rounded-full bg-accent/15 border border-accent/30 flex items-center gap-1 shadow-sm">
                 <Wand2 size={11} />
-                <span>Curated by Gemini 3.8 Flash</span>
+                <span>Curated by Dotify AI</span>
               </span>
             )}
             {playlist.sourceSpotifyUrl && (
@@ -482,6 +517,19 @@ export const PlaylistView: React.FC = () => {
               >
                 {isPlaylistInLibrary ? <Check size={14} /> : <Plus size={14} />}
                 <span>{isPlaylistInLibrary ? 'In Library' : 'Save to Library'}</span>
+              </button>
+            )}
+
+            {(vibePlaylist || (playlist as any)?.isAIGenerated) && (
+              <button
+                data-testid="refresh-vibe-playlist-btn"
+                onClick={handleRefreshCurrentVibe}
+                disabled={isRefreshingVibe}
+                className="flex items-center gap-1.5 px-4 py-3 rounded-full bg-elevated hover:bg-highlight border border-customBorder text-secondary hover:text-primary font-bold text-xs shadow transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                title="Refresh tracks for this vibe playlist"
+              >
+                <RefreshCw size={14} className={isRefreshingVibe ? 'animate-spin text-accent' : ''} />
+                <span>{isRefreshingVibe ? 'Refreshing...' : 'Refresh Vibe'}</span>
               </button>
             )}
 

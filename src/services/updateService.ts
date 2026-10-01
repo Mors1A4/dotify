@@ -38,13 +38,47 @@ export function compareSemver(vA: string, vB: string): number {
 }
 
 export async function getCurrentAppVersion(): Promise<string> {
+  const candidates: string[] = [];
+
+  // 1. Static bundle version
+  if (APP_VERSION) {
+    const cleaned = cleanVersion(APP_VERSION);
+    if (cleaned && cleaned !== '0.0.0') {
+      candidates.push(cleaned);
+    }
+  }
+
+  // 2. Installed or recent update attempts recorded in localStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const installedVer = localStorage.getItem('dotify_update_installed_version');
+      if (installedVer) {
+        const cleaned = cleanVersion(installedVer);
+        if (cleaned && cleaned !== '0.0.0') {
+          candidates.push(cleaned);
+        }
+      }
+
+      const attemptVer = localStorage.getItem('dotify_update_attempt_version');
+      const attemptTime = Number(localStorage.getItem('dotify_update_attempt_time')) || 0;
+      // Candidate if attempted within last 2 hours
+      if (attemptVer && Date.now() - attemptTime < 2 * 60 * 60 * 1000) {
+        const cleaned = cleanVersion(attemptVer);
+        if (cleaned && cleaned !== '0.0.0') {
+          candidates.push(cleaned);
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Android Native Bridge
   if (typeof window !== 'undefined' && (window as any).AndroidNativeUpdater?.getVersionName) {
     try {
       const androidVer = (window as any).AndroidNativeUpdater.getVersionName();
       if (androidVer && typeof androidVer === 'string') {
         const cleaned = cleanVersion(androidVer);
         if (cleaned && cleaned !== '0.0.0') {
-          return cleaned;
+          candidates.push(cleaned);
         }
       }
     } catch {
@@ -52,6 +86,7 @@ export async function getCurrentAppVersion(): Promise<string> {
     }
   }
 
+  // 4. Tauri Native Executable Metadata
   if (isTauriEnvironment()) {
     try {
       const { getVersion } = await import('@tauri-apps/api/app');
@@ -59,7 +94,7 @@ export async function getCurrentAppVersion(): Promise<string> {
       if (tauriVer && typeof tauriVer === 'string') {
         const cleaned = cleanVersion(tauriVer);
         if (cleaned && cleaned !== '0.0.0') {
-          return cleaned;
+          candidates.push(cleaned);
         }
       }
     } catch {
@@ -67,7 +102,12 @@ export async function getCurrentAppVersion(): Promise<string> {
     }
   }
 
-  return cleanVersion(APP_VERSION);
+  if (candidates.length === 0) {
+    return cleanVersion(APP_VERSION) || '1.0.0';
+  }
+
+  // Always return the highest resolved semver across all sources
+  return candidates.reduce((max, cur) => (compareSemver(cur, max) > 0 ? cur : max), candidates[0]);
 }
 
 function buildDefaultReleaseUrls(version: string): {
@@ -297,14 +337,35 @@ export async function performSelfUpdate(
       unlisten = await listen<UpdateProgressPayload>('update-download-progress', (event) => {
         if (event.payload) {
           onProgress(event.payload);
+          if (event.payload.percent >= 90 && typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('dotify_update_installed_version', release.version);
+            } catch {}
+          }
         }
       });
+
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('dotify_update_installed_version', release.version);
+          localStorage.setItem('dotify_update_attempt_version', release.version);
+          localStorage.setItem('dotify_update_attempt_time', String(Date.now()));
+        } catch {}
+      }
 
       onProgress({ percent: 5, status: 'Connecting to release server...' });
       await invoke('install_windows_update', {
         exeUrl: release.windowsExeUrl,
         setupUrl: release.windowsSetupUrl,
       });
+    } catch (err) {
+      // If the update installation failed, roll back the installed marker so user can retry
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.removeItem('dotify_update_installed_version');
+        } catch {}
+      }
+      throw err;
     } finally {
       if (unlisten) {
         try {

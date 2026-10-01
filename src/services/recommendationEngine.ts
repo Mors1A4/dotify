@@ -6,6 +6,7 @@ import { fetchTopCharts, searchCharts } from './chartsApi';
 import { telemetryDb } from './telemetryDb';
 import { usePlayerStore } from '../store/playerStore';
 import { getTrackArtwork, isUglyPlaceholder } from './artworkService';
+import { isUserFavouredPlay, getIntentWeight } from './listeningClassifier';
 
 export interface DailyMix {
   id: string;
@@ -23,6 +24,7 @@ export interface RecommendationShelves {
   dailyMixes: DailyMix[];
   heavyRotation: Track[];
   forgottenFavorites: Track[];
+  communityTracks?: Track[];
 }
 
 export class RecommendationEngine {
@@ -135,6 +137,9 @@ export class RecommendationEngine {
       const primary = extractPrimaryArtist(rawArtist).toLowerCase().trim();
       if (!primary) continue;
 
+      const isFavoured = isUserFavouredPlay(play);
+      const intentWeight = isFavoured ? 1.0 : (play.intentWeight !== undefined ? play.intentWeight : 0.15);
+
       const ageMs = Math.max(0, now - play.startTime);
       const recencyWeight = Math.exp(-lambda * ageMs);
       const completion =
@@ -143,7 +148,7 @@ export class RecommendationEngine {
           : 0.5;
       const replayBonus = play.replayed ? 0.5 : 0;
       const skipPenalty = play.skipped ? 1.5 : 0;
-      const playScore = recencyWeight * (completion * (1.0 + replayBonus) - skipPenalty);
+      const playScore = recencyWeight * (completion * (1.0 + replayBonus) - skipPenalty) * intentWeight;
 
       recentArtistScores.set(primary, (recentArtistScores.get(primary) || 0) + Math.max(0, playScore));
     }
@@ -161,10 +166,12 @@ export class RecommendationEngine {
     }
 
     for (const play of plays) {
+      const isFavoured = isUserFavouredPlay(play);
+      const intentMultiplier = isFavoured ? 1.0 : 0.2;
       const completion = typeof play.completionRate === 'number' ? play.completionRate : 0;
       const replayBonus = play.replayed ? 0.5 : 0;
       const skipPenalty = play.skipped ? 2.0 : 0;
-      const playScore = completion * (1.0 + replayBonus) - skipPenalty;
+      const playScore = (completion * (1.0 + replayBonus) - skipPenalty) * intentMultiplier;
       trackScores.set(play.trackId, (trackScores.get(play.trackId) || 0) + Math.max(0, playScore));
     }
 
@@ -363,6 +370,9 @@ export class RecommendationEngine {
       }
 
       // Compute time-decayed score for this play
+      const isFavoured = isUserFavouredPlay(play);
+      const intentWeight = isFavoured ? 1.0 : (play.intentWeight !== undefined ? play.intentWeight : 0.15);
+
       const ageMs = Math.max(0, now - play.startTime);
       const recencyWeight = Math.exp(-lambda * ageMs);
       const completion =
@@ -371,7 +381,7 @@ export class RecommendationEngine {
           : 0.5;
       const replayBonus = play.replayed ? 0.5 : 0;
       const skipPenalty = play.skipped ? 1.5 : 0;
-      const playScore = recencyWeight * (completion * (1.0 + replayBonus) - skipPenalty);
+      const playScore = recencyWeight * (completion * (1.0 + replayBonus) - skipPenalty) * intentWeight;
 
       agg.totalScore += Math.max(0, playScore);
     }
@@ -687,9 +697,11 @@ export class RecommendationEngine {
     const trackScores = new Map<string, number>();
     for (const play of plays) {
       if (play.skipped) continue;
+      const isFavoured = isUserFavouredPlay(play);
+      const intentMultiplier = isFavoured ? 1.0 : (play.replayed ? 1.0 : 0.05);
       const ageMs = Math.max(0, now - play.startTime);
       const replayMultiplier = play.replayed ? 1.6 : 1.0;
-      const weight = Math.exp(-lambda * ageMs) * play.completionRate * replayMultiplier;
+      const weight = Math.exp(-lambda * ageMs) * play.completionRate * replayMultiplier * intentMultiplier;
 
       trackScores.set(play.trackId, (trackScores.get(play.trackId) || 0) + weight);
     }
@@ -729,6 +741,8 @@ export class RecommendationEngine {
 
     for (const play of plays) {
       if (play.skipped) continue;
+      const isFavoured = isUserFavouredPlay(play);
+      if (!isFavoured && !play.replayed) continue;
       const existing = playStats.get(play.trackId) || {
         count: 0,
         totalCompletion: 0,
@@ -1144,6 +1158,104 @@ export class RecommendationEngine {
     return Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([g]) => g);
+  }
+
+  /**
+   * Generates a curated shelf of recommended songs from artists that others using the app
+   * have also been listening to.
+   * Enforces:
+   * - Prioritization of songs by community-popular artists
+   * - Anti-clumping: Maximum 2 tracks per artist to guarantee cross-artist diversity
+   * - Excludes skipped/disliked tracks by current user
+   */
+  public generateCommunityRecommendations(
+    communityArtists: { artist: string; listenerCount: number; recentTracks?: Track[] }[],
+    catalogue: Track[],
+    userPlays: TrackPlayRecord[] = [],
+    likedTracks: Track[] = [],
+    limit = 18
+  ): Track[] {
+    if (!communityArtists || communityArtists.length === 0) {
+      return catalogue.slice(0, limit);
+    }
+
+    const skippedIds = new Set(userPlays.filter((p) => p.skipped).map((p) => p.trackId));
+    const result: Track[] = [];
+    const seenTrackIds = new Set<string>();
+    const seenArtistCount = new Map<string, number>();
+
+    // 1. First pass: Songs other users directly listened to by these artists
+    for (const ca of communityArtists) {
+      const primary = extractPrimaryArtist(ca.artist || '').toLowerCase().trim();
+      if (!primary || primary === 'unknown' || primary.includes('synthetic pulse')) continue;
+
+      if (Array.isArray(ca.recentTracks)) {
+        for (const t of ca.recentTracks) {
+          if (seenTrackIds.has(t.id) || skippedIds.has(t.id)) continue;
+          const count = seenArtistCount.get(primary) || 0;
+          if (count >= 2) break; // Anti-clumping
+
+          seenArtistCount.set(primary, count + 1);
+          seenTrackIds.add(t.id);
+          result.push({
+            ...t,
+            sourceMetadata: {
+              ...t.sourceMetadata,
+              communityArtist: ca.artist,
+              listenerCount: ca.listenerCount,
+              communityReason: `Listened by other app users`,
+            },
+          });
+        }
+      }
+    }
+
+    // 2. Second pass: Catalogue tracks matching these community artists
+    for (const ca of communityArtists) {
+      const primary = extractPrimaryArtist(ca.artist || '').toLowerCase().trim();
+      if (!primary || primary === 'unknown') continue;
+      const count = seenArtistCount.get(primary) || 0;
+      if (count >= 2) continue;
+
+      for (const catTrack of catalogue) {
+        if (seenTrackIds.has(catTrack.id) || skippedIds.has(catTrack.id)) continue;
+        const catArtist = extractPrimaryArtist(catTrack.artist || '').toLowerCase().trim();
+        if (catArtist === primary) {
+          seenTrackIds.add(catTrack.id);
+          seenArtistCount.set(primary, (seenArtistCount.get(primary) || 0) + 1);
+          result.push({
+            ...catTrack,
+            sourceMetadata: {
+              ...catTrack.sourceMetadata,
+              communityArtist: ca.artist,
+              listenerCount: ca.listenerCount,
+              communityReason: `Trending with other listeners`,
+            },
+          });
+          if ((seenArtistCount.get(primary) || 0) >= 2) break;
+          if (result.length >= limit) break;
+        }
+      }
+      if (result.length >= limit) break;
+    }
+
+    // 3. Fallback padding from catalogue if needed (respecting anti-clumping)
+    if (result.length < 10 && catalogue.length > 0) {
+      for (const t of catalogue) {
+        if (!seenTrackIds.has(t.id) && !skippedIds.has(t.id)) {
+          const primary = extractPrimaryArtist(t.artist || '').toLowerCase().trim();
+          const count = seenArtistCount.get(primary) || 0;
+          if (count < 2) {
+            seenArtistCount.set(primary, count + 1);
+            seenTrackIds.add(t.id);
+            result.push(t);
+            if (result.length >= limit) break;
+          }
+        }
+      }
+    }
+
+    return result.slice(0, limit);
   }
 }
 

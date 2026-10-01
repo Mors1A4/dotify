@@ -5,6 +5,7 @@ import { genreProfiler } from './genreProfiler';
 import { geminiVibeService, RawVibePlaylist } from './geminiVibeService';
 import { telemetryDb } from './telemetryDb';
 import { usePlayerStore } from '../store/playerStore';
+import { useAuthStore } from '../store/authStore';
 import { getApiUrl, isAndroidApp } from './apiConfig';
 import { getTrackArtwork, resolveTrackArtwork, isUglyPlaceholder } from './artworkService';
 
@@ -188,10 +189,23 @@ export class DailyVibeManager {
     return `dotify_daily_vibes_${cleanId}_${dateString}`;
   }
 
+  public getActiveVibesKey(accountId: string = 'guest'): string {
+    const cleanId = (accountId || 'guest').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return `dotify_active_vibes_${cleanId}`;
+  }
+
   /**
-   * Retrieves today's vibe playlists for the given account.
-   * If already generated for today, loads immediately from cache.
-   * If not generated yet today, calls Gemini with search tool, saves them, and returns.
+   * Refreshes vibe playlists on user demand.
+   * Bypasses existing daily caches and generates a fresh, newly rotated tracklist.
+   */
+  public async refreshVibes(accountId: string = 'guest'): Promise<DailyVibePlaylist[]> {
+    return this.getDailyVibes(accountId, true);
+  }
+
+  /**
+   * Retrieves vibe playlists for the given account.
+   * If already generated, loads immediately from cache.
+   * When forceRegenerate is true (e.g. user pressed Refresh), generates fresh tracks on demand.
    */
   public async getDailyVibes(
     accountId: string = 'guest',
@@ -199,9 +213,15 @@ export class DailyVibeManager {
   ): Promise<DailyVibePlaylist[]> {
     const today = this.getTodayDateString();
     const storageKey = this.getStorageKey(accountId, today);
+    const activeKey = this.getActiveVibesKey(accountId);
+
+    if (forceRegenerate) {
+      this.inMemoryCache.delete(storageKey);
+      this.inMemoryCache.delete(activeKey);
+    }
 
     // 1. Check memory cache
-    const mem = this.inMemoryCache.get(storageKey);
+    const mem = this.inMemoryCache.get(storageKey) || this.inMemoryCache.get(activeKey);
     if (!forceRegenerate && mem && mem.length > 0) {
       return mem;
     }
@@ -214,7 +234,16 @@ export class DailyVibeManager {
       const cached = safeStorage.getItem<DailyVibesCache | null>(storageKey, null);
       if (cached && Array.isArray(cached.playlists) && cached.playlists.length >= 4) {
         this.inMemoryCache.set(storageKey, cached.playlists);
+        this.inMemoryCache.set(activeKey, cached.playlists);
         return cached.playlists;
+      }
+
+      // Check persistent active cache (so existing playlists remain playable without waiting)
+      const activeCached = safeStorage.getItem<DailyVibesCache | null>(activeKey, null);
+      if (activeCached && Array.isArray(activeCached.playlists) && activeCached.playlists.length >= 4) {
+        this.inMemoryCache.set(storageKey, activeCached.playlists);
+        this.inMemoryCache.set(activeKey, activeCached.playlists);
+        return activeCached.playlists;
       }
 
       // Check cross-instance persistent lock (e.g., user opening multiple windows simultaneously)
@@ -223,9 +252,12 @@ export class DailyVibeManager {
         console.log(`[DailyVibeManager] Another instance is currently curating daily vibes. Awaiting cache...`);
         for (let i = 0; i < 30; i++) {
           await new Promise((resolve) => setTimeout(resolve, 500));
-          const freshlyCached = safeStorage.getItem<DailyVibesCache | null>(storageKey, null);
+          const freshlyCached =
+            safeStorage.getItem<DailyVibesCache | null>(storageKey, null) ||
+            safeStorage.getItem<DailyVibesCache | null>(activeKey, null);
           if (freshlyCached && Array.isArray(freshlyCached.playlists) && freshlyCached.playlists.length >= 4) {
             this.inMemoryCache.set(storageKey, freshlyCached.playlists);
+            this.inMemoryCache.set(activeKey, freshlyCached.playlists);
             return freshlyCached.playlists;
           }
         }
@@ -242,7 +274,7 @@ export class DailyVibeManager {
       return this.activeGenerationPromise;
     }
 
-    this.activeGenerationPromise = this.generateAndSaveDailyVibes(accountId, today, storageKey);
+    this.activeGenerationPromise = this.generateAndSaveDailyVibes(accountId, today, storageKey, activeKey);
     try {
       const result = await this.activeGenerationPromise;
       return result;
@@ -314,13 +346,14 @@ export class DailyVibeManager {
   private async generateAndSaveDailyVibes(
     accountId: string,
     today: string,
-    storageKey: string
+    storageKey: string,
+    activeKey?: string
   ): Promise<DailyVibePlaylist[]> {
     const lockKey = `${storageKey}_lock`;
     safeStorage.setItem(lockKey, Date.now());
 
     try {
-      console.log(`[DailyVibeManager] Generating daily vibe playlists for account "${accountId}" on ${today}...`);
+      console.log(`[DailyVibeManager] Generating vibe playlists for account "${accountId}" on ${today}...`);
 
       // A. Gather listening history & library
       let plays: TrackPlayRecord[] = [];
@@ -339,7 +372,7 @@ export class DailyVibeManager {
       const userVibes = this.getUserVibes(accountId);
       const effectiveVibes = userVibes.length === 5 ? userVibes : DEFAULT_VIBE_PRESETS.slice(0, 5);
 
-      // D. Call Gemini 3.8 Flash with Search Grounding
+      // D. Call Gemini or Dynamic Multi-Domain Rotating Engine
       const geminiResult = await geminiVibeService.generateDailyVibePlaylists(tasteProfile, today, effectiveVibes);
 
       // E. Hydrate raw tracks into full Dotify playable tracks
@@ -360,10 +393,19 @@ export class DailyVibeManager {
       };
 
       safeStorage.setItem(storageKey, cacheRecord);
+      if (activeKey) {
+        safeStorage.setItem(activeKey, cacheRecord);
+      }
       this.inMemoryCache.set(storageKey, hydratedPlaylists);
+      if (activeKey) {
+        this.inMemoryCache.set(activeKey, hydratedPlaylists);
+      }
+
+      // Automatically sync playlists saved to the user's permanent library
+      this.syncSavedVibePlaylists(hydratedPlaylists);
 
       console.log(
-        `[DailyVibeManager] Saved ${hydratedPlaylists.length} daily vibe playlists to storage key "${storageKey}".`
+        `[DailyVibeManager] Saved ${hydratedPlaylists.length} vibe playlists to storage key "${storageKey}".`
       );
 
       return hydratedPlaylists;
@@ -502,13 +544,13 @@ export class DailyVibeManager {
   public getVibePlaylistById(playlistId: string): DailyVibePlaylist | null {
     if (!playlistId || !playlistId.startsWith('daily-vibe-')) return null;
 
-    // Check memory cache
+    // 1. Check memory cache
     for (const list of this.inMemoryCache.values()) {
       const found = list.find((p) => p.id === playlistId);
       if (found) return found;
     }
 
-    // Check safeStorage for today
+    // 2. Check safeStorage for today
     const today = this.getTodayDateString();
     const guestKey = this.getStorageKey('guest', today);
     const guestCached = safeStorage.getItem<DailyVibesCache | null>(guestKey, null);
@@ -517,7 +559,71 @@ export class DailyVibeManager {
       if (found) return found;
     }
 
+    // 3. Check safeStorage for active key
+    const authUser = useAuthStore.getState().user;
+    const currentUid = authUser?.uid || 'guest';
+    const activeKey = this.getActiveVibesKey(currentUid);
+    const activeCached = safeStorage.getItem<DailyVibesCache | null>(activeKey, null);
+    if (activeCached && Array.isArray(activeCached.playlists)) {
+      const found = activeCached.playlists.find((p) => p.id === playlistId);
+      if (found) return found;
+    }
+
+    // 4. Fallback: match across all caches by stripping date suffix or matching vibe category
+    const strippedVibe = playlistId.replace(/^daily-vibe-/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
+    const allKnownPlaylists: DailyVibePlaylist[] = [
+      ...Array.from(this.inMemoryCache.values()).flat(),
+      ...(activeCached?.playlists || []),
+      ...(guestCached?.playlists || []),
+    ];
+    const found = allKnownPlaylists.find(
+      (p) =>
+        p.id === playlistId ||
+        p.vibe === strippedVibe ||
+        p.id.replace(/^daily-vibe-/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '') === strippedVibe
+    );
+    if (found) return found;
+
     return null;
+  }
+
+  /**
+   * Synchronizes any playlists in the user's permanent library that originated from
+   * a daily vibe playlist so that pressing Refresh updates them automatically.
+   */
+  public syncSavedVibePlaylists(refreshedPlaylists: DailyVibePlaylist[]): void {
+    try {
+      const store = usePlayerStore.getState();
+      const libraryPlaylists = store.playlists || [];
+      if (libraryPlaylists.length === 0) return;
+
+      let changed = false;
+      const updated = libraryPlaylists.map((pl) => {
+        const matchingVibe = refreshedPlaylists.find(
+          (v) =>
+            v.id === pl.id ||
+            v.name.trim().toLowerCase() === pl.name.trim().toLowerCase() ||
+            (pl.id.startsWith('daily-vibe-') && pl.id.includes(`-${v.vibe}-`))
+        );
+
+        if (matchingVibe && matchingVibe.tracks && matchingVibe.tracks.length > 0) {
+          changed = true;
+          return {
+            ...pl,
+            tracks: matchingVibe.tracks,
+            updatedAt: Date.now(),
+          };
+        }
+        return pl;
+      });
+
+      if (changed) {
+        safeStorage.setItem('playlists', updated);
+        usePlayerStore.setState({ playlists: updated });
+      }
+    } catch (err) {
+      console.warn('[DailyVibeManager] Failed to sync saved vibe playlists:', err);
+    }
   }
 
   /**

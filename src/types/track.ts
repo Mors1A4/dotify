@@ -24,5 +24,9 @@ export interface Track {
     previewUrl?: string;
     fallbackUrl?: string;
     vibe?: string;
+    communityArtist?: string;
+    communityReason?: string;
+    listenerCount?: number;
+    [key: string]: any;
   };
 }

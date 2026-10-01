@@ -1,4 +1,5 @@
 import { UserTasteProfile, VibeCategory, UserVibeConfig, VibeDomainReasoning } from '../types/vibes';
+import { safeStorage } from '../utils/storage';
 
 export interface RawVibeTrack {
   title: string;
@@ -33,10 +34,10 @@ const GEMINI_API_KEYS: string[] = [
 ];
 
 const CANDIDATE_MODELS: string[] = [
-  'gemini-3.8-flash',
-  'gemini-3-flash-preview',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
   'gemini-flash-latest',
 ];
 
@@ -54,6 +55,12 @@ export class GeminiVibeService {
   }
 
   private getActiveKey(): string {
+    const userKey =
+      safeStorage.getItem<string>('gemini_api_key', '') ||
+      safeStorage.getItem<string>('dotify_gemini_api_key', '');
+    if (userKey && userKey.trim().length > 10) {
+      return userKey.trim();
+    }
     return GEMINI_API_KEYS[this.currentKeyIndex % GEMINI_API_KEYS.length];
   }
 
@@ -441,6 +448,31 @@ Strictly output valid JSON only. Now curate the playlists with domain reasoning 
   }
 
   /**
+   * Dynamically shuffles and samples from a track pool so that every press of "Refresh"
+   * yields a freshly rotated, unique sequencing of tracks.
+   */
+  private rotateAndShuffleTracks(
+    pool: RawVibeTrack[],
+    count: number,
+    preserveFirst: boolean = false
+  ): RawVibeTrack[] {
+    if (!pool || pool.length === 0) return [];
+    const head = preserveFirst ? pool[0] : null;
+    const tail = preserveFirst ? pool.slice(1) : [...pool];
+
+    // Fisher-Yates shuffle
+    for (let i = tail.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [tail[i], tail[j]] = [tail[j], tail[i]];
+    }
+
+    const targetCount = Math.max(10, count);
+    const needed = preserveFirst ? targetCount - 1 : targetCount;
+    const selected = tail.slice(0, Math.min(tail.length, needed));
+    return head ? [head, ...selected] : selected;
+  }
+
+  /**
    * Resilient, high-fidelity algorithmic fallback playlists with multi-domain reasoning
    * and extra-long 35-40 track collections for amended/custom vibes (like "singularity is coming").
    */
@@ -782,11 +814,66 @@ Strictly output valid JSON only. Now curate the playlists with domain reasoning 
           /\b(ai|agi|asi|tech|technology)\b/i.test(labelLower);
 
         if (isSingularityOrCyberTheme) {
+          const cyberPool: RawVibeTrack[] = [
+            { title: 'Singularity', artist: 'Jon Hopkins', genre: 'IDM / Melodic Techno', vibeReason: 'The quintessential titular anthem: evolving from microscopic synth pulses into massive tectonic electronic waves.' },
+            { title: 'Nightcall', artist: 'Kavinsky', genre: 'Synthwave', vibeReason: 'Iconic neo-noir vocoder and cruising cybernetic bassline.' },
+            { title: 'Future Club', artist: 'Perturbator', genre: 'Cyberpunk', vibeReason: 'Relentless dystopian neon arcade aggression.' },
+            { title: 'Contact', artist: 'Daft Punk', genre: 'Electronic / Space', vibeReason: 'Thunderous accelerative build featuring Apollo 17 telemetry and modular modular overdrive.' },
+            { title: 'Blade Runner Blues', artist: 'Vangelis', genre: 'Cinematic Ambient', vibeReason: 'The foundational Yamaha CS-80 synthetic soul of cyberpunk.' },
+            { title: 'Turbo Killer', artist: 'Carpenter Brut', genre: 'Darksynth', vibeReason: 'Maximum mechanical overdrive and synth violence.' },
+            { title: 'Pursuit', artist: 'Gesaffelstein', genre: 'Industrial Techno', vibeReason: 'Heavy metallic kicks and mechanical robotic precision.' },
+            { title: 'Acid Rain', artist: 'Lorn', genre: 'Experimental Beats', vibeReason: 'Haunting digital decay and analog pitch instability.' },
+            { title: 'Everything Connected', artist: 'Jon Hopkins', genre: 'Techno', vibeReason: 'Ten-minute sonic meditation on neural hyperconnectivity.' },
+            { title: 'Repetition', artist: 'Max Cooper', genre: 'Micro-Techno', vibeReason: 'Mathematical infinity expressed through crystalline rhythmic recursion.' },
+            { title: 'Dayvan Cowboy', artist: 'Boards of Canada', genre: 'IDM', vibeReason: 'Majestic drifting textures bridging human warmth and machine grandeur.' },
+            { title: 'Chrome Country', artist: 'Oneohtrix Point Never', genre: 'Deconstructed Club', vibeReason: 'Sacred cybernetic organ melodies and digital choir transcendence.' },
+            { title: 'Recovery', artist: 'Rival Consoles', genre: 'IDM', vibeReason: 'Pulsing organic synthesizers evolving with living breath.' },
+            { title: 'Star Eater', artist: 'Daniel Deluxe', genre: 'Darksynth', vibeReason: 'Cavernous retro-future space combat momentum.' },
+            { title: 'Compass', artist: 'Disasterpeace', genre: 'Chiptune / Ambient', vibeReason: 'Intricate digital geometry and sparkling melodic wonder.' },
+            { title: 'Tech Noir', artist: 'Gunship', genre: 'Synthwave', vibeReason: 'Cinematic vocoder and atmospheric highway synthesizers.' },
+            { title: 'Resonance', artist: 'HOME', genre: 'Chillwave', vibeReason: 'Smooth retro-future nostalgia for a digital utopia.' },
+            { title: 'Xtal', artist: 'Aphex Twin', genre: 'Ambient Techno', vibeReason: 'Celestial vocal chops and breakbeats from the birth of intelligent electronic music.' },
+            { title: 'Archangel', artist: 'Burial', genre: 'Future Garage', vibeReason: 'Ghostly pitch-shifted vocals and rain-slicked city reverb.' },
+            { title: '4:42', artist: 'Danger', genre: 'Darkwave', vibeReason: 'Sharp digital square-waves and clockwork precision.' },
+            { title: 'I Drive', artist: 'Cliff Martinez', genre: 'Minimal Synth', vibeReason: 'Hypnotic ambient pulse through dystopian streets.' },
+            { title: 'Subsonic', artist: 'Com Truise', genre: 'Mid-Fi Synth-Wave', vibeReason: 'Slow-motion galactic funk with saturated tape compression.' },
+            { title: 'Major Crimes', artist: 'HEALTH', genre: 'Industrial Rock', vibeReason: 'Cyberpunk 2077 soundtrack flagship of mechanical dread.' },
+            { title: 'Pacific Coast Highway', artist: 'Kavinsky', genre: 'Outrun', vibeReason: 'High-speed synthetic police pursuit.' },
+            { title: 'She Is Young, She Is Beautiful', artist: 'Perturbator', genre: 'Darksynth', vibeReason: 'Lethal melodic cyber-noir hook.' },
+            { title: 'Derezzed', artist: 'Daft Punk', genre: 'Electro House', vibeReason: 'Explosive TRON digital combat rhythm.' },
+            { title: 'Roller Mobster', artist: 'Carpenter Brut', genre: 'Darksynth', vibeReason: 'Aggressive polyphonic synth barrage.' },
+            { title: 'Opr', artist: 'Gesaffelstein', genre: 'Electro', vibeReason: 'Dark minimalist swagger and relentless hi-hats.' },
+            { title: 'Anvil', artist: 'Lorn', genre: 'Bass / Beats', vibeReason: 'Sub-bass weight and melancholy digital strings.' },
+            { title: 'Waves', artist: 'Max Cooper', genre: 'Neo-Classical / Techno', vibeReason: 'Complex acoustic piano and microscopic digital disintegration.' },
+            { title: 'Open Eye Signal', artist: 'Jon Hopkins', genre: 'Techno', vibeReason: 'Hypnotic relentless modular bassline driving through the night.' },
+            { title: 'Roygbiv', artist: 'Boards of Canada', genre: 'Downtempo', vibeReason: 'Iconic saturated bass and nostalgic analog colors.' },
+            { title: 'Boring Angel', artist: 'Oneohtrix Point Never', genre: 'Experimental', vibeReason: 'Overwhelming crystalline arpeggio crescendo.' },
+            { title: 'Untravel', artist: 'Rival Consoles', genre: 'Electronic', vibeReason: 'Intricate percussion clicks and soaring analog warmth.' },
+            { title: 'Darkness', artist: 'Daniel Deluxe', genre: 'Cyberpunk', vibeReason: 'Heavy cinematic cyber-overdrive.' },
+            { title: 'Tears in Rain', artist: 'Vangelis', genre: 'Cinematic Ambient', vibeReason: 'The poetic pinnacle of artificial life and mortality.' },
+            { title: 'Continuum', artist: 'Disasterpeace', genre: 'Ambient', vibeReason: 'Time-dilation ambient synthesizer architecture.' },
+            { title: 'Decay', artist: 'HOME', genre: 'Chillwave', vibeReason: 'Gentle post-human sunset.' },
+            { title: 'Alberto Balsalm', artist: 'Aphex Twin', genre: 'IDM', vibeReason: 'Acoustic steel chair scrapes turned into sublime melody.' },
+            { title: 'Solar Sailer', artist: 'Daft Punk', genre: 'Electronic', vibeReason: 'Graceful glides across infinite digital oceans.' },
+            { title: 'Harder, Better, Faster, Stronger', artist: 'Daft Punk', genre: 'Electro House', vibeReason: 'Algorithmic iteration and peak machine optimization.' },
+            { title: 'Genesis', artist: 'Justice', genre: 'Electro', vibeReason: 'Distorted synthetic brass and electronic creation.' },
+            { title: 'Phantom Pt. II', artist: 'Justice', genre: 'Electro', vibeReason: 'Relentless cybernetic pursuit momentum.' },
+            { title: 'Emerald Rush', artist: 'Jon Hopkins', genre: 'Melodic Techno', vibeReason: 'Hyper-accelerated consciousness and modular synthesis.' },
+            { title: 'Superconductive', artist: 'Jon Hopkins', genre: 'Techno', vibeReason: 'Zero electrical resistance in digital neural highways.' },
+            { title: 'C U R A T O R', artist: 'Lorn', genre: 'Experimental Beats', vibeReason: 'Dark sub-bass architecture of an artificial consciousness.' },
+            { title: 'Ghosst(s)', artist: 'Lorn', genre: 'Bass', vibeReason: 'Subterranean mechanical frequencies and digital phantoms.' },
+            { title: 'Neon Medusa', artist: 'The Midnight', genre: 'Synthwave', vibeReason: 'Lethal neon guitar leads and nocturnal swagger.' },
+            { title: 'Memory 9', artist: 'Com Truise', genre: 'Mid-Fi Synth', vibeReason: 'Warm analog saturation of decaying cybernetic memories.' },
+            { title: 'Cyanide Sisters', artist: 'Com Truise', genre: 'Synthwave', vibeReason: 'Slow-motion galactic synth funk.' },
+          ];
+
+          const curatedTracks = this.rotateAndShuffleTracks(cyberPool, 40, true);
+
           return {
             vibe: cv.id,
             title: cv.label.trim() ? `${cv.label.trim()} // The Event Horizon` : 'Singularity // The Event Horizon',
             description: cv.prompt || 'An extra-long master-grade soundscape traversing the event horizon of artificial superintelligence, machine consciousness, and neon digital transcendence.',
-            tagline: 'Extra-Long Multi-Domain Curated Edition · 40 Tracks',
+            tagline: `Curated on demand · ${curatedTracks.length} Tracks`,
             themeColor: 'purple',
             isExtraLong: true,
             domainReasoning: {
@@ -796,48 +883,7 @@ Strictly output valid JSON only. Now curate the playlists with domain reasoning 
               tasteAlignment: `Harmonizes your ${dominant} taste profile with foundational darksynth, IDM, and cinematic sci-fi milestones without any commercial pop dilution.`,
               curationStrategy: 'Zero generic pop filler; 40 legendary milestones balancing heavy cybernetic momentum with transcendent ambient spaces.',
             },
-            tracks: [
-              { title: 'Singularity', artist: 'Jon Hopkins', genre: 'IDM / Melodic Techno', vibeReason: 'The quintessential titular anthem: evolving from microscopic synth pulses into massive tectonic electronic waves.' },
-              { title: 'Nightcall', artist: 'Kavinsky', genre: 'Synthwave', vibeReason: 'Iconic neo-noir vocoder and cruising cybernetic bassline.' },
-              { title: 'Future Club', artist: 'Perturbator', genre: 'Cyberpunk', vibeReason: 'Relentless dystopian neon arcade aggression.' },
-              { title: 'Contact', artist: 'Daft Punk', genre: 'Electronic / Space', vibeReason: 'Thunderous accelerative build featuring Apollo 17 telemetry and modular modular overdrive.' },
-              { title: 'Blade Runner Blues', artist: 'Vangelis', genre: 'Cinematic Ambient', vibeReason: 'The foundational Yamaha CS-80 synthetic soul of cyberpunk.' },
-              { title: 'Turbo Killer', artist: 'Carpenter Brut', genre: 'Darksynth', vibeReason: 'Maximum mechanical overdrive and synth violence.' },
-              { title: 'Pursuit', artist: 'Gesaffelstein', genre: 'Industrial Techno', vibeReason: 'Heavy metallic kicks and mechanical robotic precision.' },
-              { title: 'Acid Rain', artist: 'Lorn', genre: 'Experimental Beats', vibeReason: 'Haunting digital decay and analog pitch instability.' },
-              { title: 'Everything Connected', artist: 'Jon Hopkins', genre: 'Techno', vibeReason: 'Ten-minute sonic meditation on neural hyperconnectivity.' },
-              { title: 'Repetition', artist: 'Max Cooper', genre: 'Micro-Techno', vibeReason: 'Mathematical infinity expressed through crystalline rhythmic recursion.' },
-              { title: 'Dayvan Cowboy', artist: 'Boards of Canada', genre: 'IDM', vibeReason: 'Majestic drifting textures bridging human warmth and machine grandeur.' },
-              { title: 'Chrome Country', artist: 'Oneohtrix Point Never', genre: 'Deconstructed Club', vibeReason: 'Sacred cybernetic organ melodies and digital choir transcendence.' },
-              { title: 'Recovery', artist: 'Rival Consoles', genre: 'IDM', vibeReason: 'Pulsing organic synthesizers evolving with living breath.' },
-              { title: 'Star Eater', artist: 'Daniel Deluxe', genre: 'Darksynth', vibeReason: 'Cavernous retro-future space combat momentum.' },
-              { title: 'Compass', artist: 'Disasterpeace', genre: 'Chiptune / Ambient', vibeReason: 'Intricate digital geometry and sparkling melodic wonder.' },
-              { title: 'Tech Noir', artist: 'Gunship', genre: 'Synthwave', vibeReason: 'Cinematic vocoder and atmospheric highway synthesizers.' },
-              { title: 'Resonance', artist: 'HOME', genre: 'Chillwave', vibeReason: 'Smooth retro-future nostalgia for a digital utopia.' },
-              { title: 'Xtal', artist: 'Aphex Twin', genre: 'Ambient Techno', vibeReason: 'Celestial vocal chops and breakbeats from the birth of intelligent electronic music.' },
-              { title: 'Archangel', artist: 'Burial', genre: 'Future Garage', vibeReason: 'Ghostly pitch-shifted vocals and rain-slicked city reverb.' },
-              { title: '4:42', artist: 'Danger', genre: 'Darkwave', vibeReason: 'Sharp digital square-waves and clockwork precision.' },
-              { title: 'I Drive', artist: 'Cliff Martinez', genre: 'Minimal Synth', vibeReason: 'Hypnotic ambient pulse through dystopian streets.' },
-              { title: 'Subsonic', artist: 'Com Truise', genre: 'Mid-Fi Synth-Wave', vibeReason: 'Slow-motion galactic funk with saturated tape compression.' },
-              { title: 'Major Crimes', artist: 'HEALTH', genre: 'Industrial Rock', vibeReason: 'Cyberpunk 2077 soundtrack flagship of mechanical dread.' },
-              { title: 'Pacific Coast Highway', artist: 'Kavinsky', genre: 'Outrun', vibeReason: 'High-speed synthetic police pursuit.' },
-              { title: 'She Is Young, She Is Beautiful', artist: 'Perturbator', genre: 'Darksynth', vibeReason: 'Lethal melodic cyber-noir hook.' },
-              { title: 'Derezzed', artist: 'Daft Punk', genre: 'Electro House', vibeReason: 'Explosive TRON digital combat rhythm.' },
-              { title: 'Roller Mobster', artist: 'Carpenter Brut', genre: 'Darksynth', vibeReason: 'Aggressive polyphonic synth barrage.' },
-              { title: 'Opr', artist: 'Gesaffelstein', genre: 'Electro', vibeReason: 'Dark minimalist swagger and relentless hi-hats.' },
-              { title: 'Anvil', artist: 'Lorn', genre: 'Bass / Beats', vibeReason: 'Sub-bass weight and melancholy digital strings.' },
-              { title: 'Waves', artist: 'Max Cooper', genre: 'Neo-Classical / Techno', vibeReason: 'Complex acoustic piano and microscopic digital disintegration.' },
-              { title: 'Open Eye Signal', artist: 'Jon Hopkins', genre: 'Techno', vibeReason: 'Hypnotic relentless modular bassline driving through the night.' },
-              { title: 'Roygbiv', artist: 'Boards of Canada', genre: 'Downtempo', vibeReason: 'Iconic saturated bass and nostalgic analog colors.' },
-              { title: 'Boring Angel', artist: 'Oneohtrix Point Never', genre: 'Experimental', vibeReason: 'Overwhelming crystalline arpeggio crescendo.' },
-              { title: 'Untravel', artist: 'Rival Consoles', genre: 'Electronic', vibeReason: 'Intricate percussion clicks and soaring analog warmth.' },
-              { title: 'Darkness', artist: 'Daniel Deluxe', genre: 'Cyberpunk', vibeReason: 'Heavy cinematic cyber-overdrive.' },
-              { title: 'Tears in Rain', artist: 'Vangelis', genre: 'Cinematic Ambient', vibeReason: 'The poetic pinnacle of artificial life and mortality.' },
-              { title: 'Continuum', artist: 'Disasterpeace', genre: 'Ambient', vibeReason: 'Time-dilation ambient synthesizer architecture.' },
-              { title: 'Decay', artist: 'HOME', genre: 'Chillwave', vibeReason: 'Gentle post-human sunset.' },
-              { title: 'Alberto Balsalm', artist: 'Aphex Twin', genre: 'IDM', vibeReason: 'Acoustic steel chair scrapes turned into sublime melody.' },
-              { title: 'Solar Sailer', artist: 'Daft Punk', genre: 'Electronic', vibeReason: 'Graceful glides across infinite digital oceans.' },
-            ],
+            tracks: curatedTracks,
           };
         }
 
@@ -851,6 +897,7 @@ Strictly output valid JSON only. Now curate the playlists with domain reasoning 
             description: cv.prompt || item.description,
             themeColor: cv.themeColor || item.themeColor,
             isExtraLong: false,
+            tracks: this.rotateAndShuffleTracks(item.tracks, item.tracks.length, false),
           };
         }
 
@@ -859,13 +906,13 @@ Strictly output valid JSON only. Now curate the playlists with domain reasoning 
           const isUpbeat = labelLower.includes('up') || labelLower.includes('hype') || labelLower.includes('gym') || labelLower.includes('party');
           const baseTracks = isUpbeat ? catalog.workout.tracks : catalog.working.tracks;
           const extraTracks = isUpbeat ? catalog.gaming.tracks : catalog.chilling.tracks;
-          const combined = [...baseTracks, ...extraTracks].slice(0, 35);
+          const combined = this.rotateAndShuffleTracks([...baseTracks, ...extraTracks], 35, false);
 
           return {
             vibe: cv.id,
             title: `${cv.label.trim()} // Curated Flow`,
             description: cv.prompt || `Deep multi-domain soundscape for ${cv.label.trim()} tailored to your listening taste.`,
-            tagline: `Extra-Long Curated Edition · ${combined.length} Tracks`,
+            tagline: `Curated on demand · ${combined.length} Tracks`,
             themeColor: cv.themeColor || this.getDefaultColorForVibe(cv.label),
             isExtraLong: true,
             domainReasoning: {
@@ -881,6 +928,7 @@ Strictly output valid JSON only. Now curate the playlists with domain reasoning 
 
         // 4. Standard custom vibe without amendment: construct from working / chilling pool
         const basePool = key.includes('up') || key.includes('hype') || key.includes('gym') ? catalog.workout.tracks : catalog.working.tracks;
+        const selectedPool = this.rotateAndShuffleTracks(basePool, 15, false);
         return {
           vibe: cv.id,
           title: `${cv.label} Soundscape`,
@@ -888,7 +936,7 @@ Strictly output valid JSON only. Now curate the playlists with domain reasoning 
           tagline: `Curated for ${cv.label}`,
           themeColor: cv.themeColor || this.getDefaultColorForVibe(cv.id),
           isExtraLong: false,
-          tracks: basePool.slice(0, 15),
+          tracks: selectedPool,
         };
       });
     }

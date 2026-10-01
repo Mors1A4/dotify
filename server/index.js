@@ -121,6 +121,93 @@ app.post('/api/user/:userId/library', (req, res) => {
   }
 });
 
+// Community Listening Aggregation across app users
+const communityListeningFile = path.join(userLibraryDir, 'community_listening.json');
+
+app.get('/api/community/listening', (req, res) => {
+  const currentUserId = req.query.excludeUserId ? String(req.query.excludeUserId).trim() : null;
+  let recentPlays = [];
+  try {
+    if (fs.existsSync(communityListeningFile)) {
+      recentPlays = JSON.parse(fs.readFileSync(communityListeningFile, 'utf8'));
+    }
+  } catch {}
+
+  // Also harvest listening history from other users' saved libraries
+  const otherUserPlays = [];
+  try {
+    const files = fs.readdirSync(userLibraryDir);
+    for (const f of files) {
+      if (!f.endsWith('.json') || f === 'community_listening.json') continue;
+      const fileUid = f.replace('.json', '');
+      if (currentUserId && fileUid === encodeURIComponent(currentUserId)) continue;
+
+      try {
+        const udata = JSON.parse(fs.readFileSync(path.join(userLibraryDir, f), 'utf8'));
+        if (Array.isArray(udata.history)) {
+          for (const item of udata.history.slice(0, 40)) {
+            if (item && item.artist) {
+              otherUserPlays.push({
+                trackId: item.id || `track_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                title: item.title || '',
+                artist: String(item.artist).trim(),
+                album: item.album || '',
+                artworkUrl: item.artworkUrl || '',
+                timestamp: item.timestamp || Date.now(),
+                genre: item.sourceMetadata?.genre || '',
+                userId: fileUid,
+              });
+            }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+
+  const filteredRecent = currentUserId
+    ? recentPlays.filter((p) => p.userId !== currentUserId)
+    : recentPlays;
+
+  const combined = [...filteredRecent, ...otherUserPlays];
+  res.json({ ok: true, plays: combined });
+});
+
+app.post('/api/community/listening', (req, res) => {
+  try {
+    const { trackId, title, artist, album, artworkUrl, timestamp, genre, userId } = req.body;
+    if (!artist) return res.status(400).json({ ok: false, error: 'Artist is required' });
+
+    let list = [];
+    if (fs.existsSync(communityListeningFile)) {
+      try {
+        list = JSON.parse(fs.readFileSync(communityListeningFile, 'utf8'));
+      } catch {}
+    }
+
+    const event = {
+      trackId: trackId || `track_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      title: title || '',
+      artist: String(artist).trim(),
+      album: album || '',
+      artworkUrl: artworkUrl || '',
+      timestamp: timestamp || Date.now(),
+      genre: genre || '',
+      userId: userId || 'anonymous',
+    };
+
+    // Prepend, de-duplicate recent exact duplicate plays from same user
+    list = [
+      event,
+      ...list.filter((p) => !(p.userId === event.userId && p.trackId === event.trackId)),
+    ].slice(0, 150);
+
+    fs.writeFileSync(communityListeningFile, JSON.stringify(list, null, 2), 'utf8');
+    res.json({ ok: true, count: list.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', name: 'dotify-backend', time: new Date().toISOString() });

@@ -2,6 +2,7 @@ import { TrackPlayRecord } from '../types/telemetry';
 import { Track } from '../types/track';
 import { FollowedArtist } from '../types/artist';
 import { MacroGenre, GenreGroupAffinity, UserTasteProfile } from '../types/vibes';
+import { isUserFavouredPlay } from './listeningClassifier';
 
 const MACRO_GENRE_KEYWORDS: Record<MacroGenre, string[]> = {
   'Electronic & Dance': [
@@ -266,7 +267,9 @@ export class GenreProfiler {
       const completion = typeof play.completionRate === 'number' ? play.completionRate : 0.5;
       const replayBonus = play.replayed ? 1.5 : 1.0;
       const skipPenalty = play.skipped ? 0.3 : 1.0;
-      const playWeight = Math.max(0.1, completion * replayBonus * skipPenalty);
+      const isFavoured = isUserFavouredPlay(play);
+      const intentMultiplier = isFavoured ? 1.0 : (play.intentWeight !== undefined ? play.intentWeight : 0.2);
+      const playWeight = Math.max(0.1, completion * replayBonus * skipPenalty) * intentMultiplier;
       stats.score += playWeight * 10;
 
       // Subgenre tracker

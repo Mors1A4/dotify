@@ -14,6 +14,7 @@ import {
   Clock,
   Headphones,
   SlidersHorizontal,
+  RefreshCw,
 } from 'lucide-react';
 import { recommendationEngine, DailyMix } from '../../services/recommendationEngine';
 import { telemetryDb } from '../../services/telemetryDb';
@@ -22,12 +23,14 @@ import { DailyVibePlaylist } from '../../types/vibes';
 import { useAuthStore } from '../../store/authStore';
 import { CustomizeVibesModal } from '../modals/CustomizeVibesModal';
 import { artistService, extractPrimaryArtist } from '../../services/artistService';
+import { communityListeningService, CommunityArtistTrend } from '../../services/communityListeningService';
 import {
   DEFAULT_MUSIC_ARTWORK,
   getTrackArtwork,
   resolveTrackArtwork,
   isUglyPlaceholder,
 } from '../../services/artworkService';
+import { isUserFavouredPlay } from '../../services/listeningClassifier';
 
 const ShelfTrackImage: React.FC<{ track: Track }> = ({ track }) => {
   const [imgSrc, setImgSrc] = useState(() => getTrackArtwork(track));
@@ -77,9 +80,15 @@ const ShelfTrackImage: React.FC<{ track: Track }> = ({ track }) => {
  */
 async function enrichCatalogueWithRecentArtists(plays: any[], baseCatalogue: Track[]): Promise<Track[]> {
   try {
+    const favouredPlays = plays.filter((p) => isUserFavouredPlay(p));
+    const candidatePlays =
+      favouredPlays.length > 0
+        ? favouredPlays
+        : plays.filter((p) => !p.skipped && p.completionRate >= 0.8 && !p.trackId?.startsWith('vibe:'));
+
     const recentArtistNames = Array.from(
       new Set(
-        [...plays]
+        [...candidatePlays]
           .sort((a, b) => b.startTime - a.startTime)
           .map((p) => extractPrimaryArtist(p.artist || '').trim())
           .filter((name) => name && name !== 'Unknown' && !name.toLowerCase().includes('synthetic pulse'))
@@ -150,6 +159,34 @@ export const HomeView: React.FC = () => {
   const [dailyMixes, setDailyMixes] = useState<DailyMix[]>([]);
   const [heavyRotation, setHeavyRotation] = useState<Track[]>([]);
   const [forgottenFavorites, setForgottenFavorites] = useState<Track[]>([]);
+
+  // Community Recommendations: Songs from artists others have been listening to
+  const [communityTracks, setCommunityTracks] = useState<Track[]>([]);
+  const [communityArtists, setCommunityArtists] = useState<CommunityArtistTrend[]>([]);
+  const [isCommunityLoading, setIsCommunityLoading] = useState(true);
+
+  const handleRefreshVibes = useCallback(async () => {
+    const accountId = user?.uid || 'guest';
+    const configured = dailyVibeManager.hasUserConfiguredVibes(accountId);
+    setHasVibesConfigured(configured);
+
+    if (!configured) {
+      setIsCustomizeVibesOpen(true);
+      return;
+    }
+
+    setIsVibesLoading(true);
+    try {
+      const fresh = await dailyVibeManager.getDailyVibes(accountId, true);
+      if (Array.isArray(fresh) && fresh.length > 0) {
+        setVibePlaylists(fresh);
+      }
+    } catch (err) {
+      console.warn('[HomeView] Failed refreshing vibes:', err);
+    } finally {
+      setIsVibesLoading(false);
+    }
+  }, [user?.uid]);
 
   const refreshVibes = useCallback(async () => {
     const accountId = user?.uid || 'guest';
@@ -239,6 +276,32 @@ export const HomeView: React.FC = () => {
             const enrichedCatalogue = await enrichCatalogueWithRecentArtists(plays, charts);
             if (!mounted) return;
             setMadeForYou(recommendationEngine.generateMadeForYou(plays, enrichedCatalogue, likedTracks, followedArtists));
+
+            // 3. Fetch community recommendations: songs from artists others have been listening to
+            communityListeningService
+              .getTrendingArtists(user?.uid)
+              .then((trends) => {
+                if (mounted && trends.length > 0) {
+                  setCommunityArtists(trends.slice(0, 8));
+                }
+              })
+              .catch(() => {});
+
+            communityListeningService
+              .getRecommendedSongsFromCommunityArtists({
+                excludeUserId: user?.uid,
+                userPlays: plays,
+                catalogue: enrichedCatalogue,
+              })
+              .then((tracks) => {
+                if (mounted && tracks.length > 0) {
+                  setCommunityTracks(tracks);
+                }
+              })
+              .catch(() => {})
+              .finally(() => {
+                if (mounted) setIsCommunityLoading(false);
+              });
           }).catch(() => {});
         }
       } catch (err) {
@@ -263,9 +326,20 @@ export const HomeView: React.FC = () => {
         setDailyMixes(recommendationEngine.generateDailyMixes(plays, enrichedCatalogue, followedArtists));
         setHeavyRotation(recommendationEngine.generateHeavyRotation(plays, enrichedCatalogue, likedTracks));
         setForgottenFavorites(recommendationEngine.generateForgottenFavorites(plays, enrichedCatalogue, likedTracks));
+
+        communityListeningService
+          .getRecommendedSongsFromCommunityArtists({
+            excludeUserId: user?.uid,
+            userPlays: plays,
+            catalogue: enrichedCatalogue,
+          })
+          .then((tracks) => {
+            if (tracks.length > 0) setCommunityTracks(tracks);
+          })
+          .catch(() => {});
       }).catch(() => {});
     }
-  }, [likedTracks, followedArtists]);
+  }, [likedTracks, followedArtists, user?.uid]);
 
   const handleArtistClick = (artist: TopArtist) => {
     setActiveArtistName(artist.name);
@@ -450,20 +524,32 @@ export const HomeView: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Disc3 className="text-accent" size={22} />
                     <div>
-                      <h2 className="text-xl font-bold text-primary">Daily Vibe Playlists</h2>
+                      <h2 className="text-xl font-bold text-primary">Vibe Playlists</h2>
                       <p className="text-xs text-muted font-medium">
-                        Curated daily playlists based on your listening history & taste profile
+                        Personalized soundscapes tailored to your taste · Click Refresh anytime for a fresh mix
                       </p>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <button
+                      data-testid="refresh-vibes-btn"
+                      onClick={handleRefreshVibes}
+                      disabled={isVibesLoading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-elevated/80 hover:bg-elevated text-secondary hover:text-primary text-xs font-semibold transition-all border border-subtle/50 hover:border-subtle cursor-pointer shadow-sm disabled:opacity-50"
+                      title="Curate a fresh rotation of tracks for all your 5 vibes"
+                    >
+                      <RefreshCw size={13} className={isVibesLoading ? 'animate-spin text-accent' : ''} />
+                      <span>{isVibesLoading ? 'Refreshing...' : 'Refresh Vibes'}</span>
+                    </button>
+
+                    <button
                       data-testid="customize-vibes-btn"
                       onClick={() => setIsCustomizeVibesOpen(true)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-elevated/80 hover:bg-elevated text-secondary hover:text-primary text-xs font-semibold transition-all border border-subtle/50 hover:border-subtle cursor-pointer shadow-sm"
-                      title="Customize your 5 daily curated vibes"
+                      title="Customize your 5 vibes"
                     >
+                      <SlidersHorizontal size={13} />
                       <span>Customize Vibes</span>
                     </button>
 
@@ -472,7 +558,11 @@ export const HomeView: React.FC = () => {
                         data-testid="play-shelf-daily-vibes"
                         onClick={() => {
                           if (vibePlaylists[0]?.tracks?.length > 0) {
-                            playTrack(vibePlaylists[0].tracks[0], vibePlaylists[0].tracks);
+                            playTrack(vibePlaylists[0].tracks[0], vibePlaylists[0].tracks, 0, {
+                              origin: 'vibe_playlist',
+                              playlistId: vibePlaylists[0].id,
+                              playlistName: vibePlaylists[0].name,
+                            });
                           }
                         }}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md cursor-pointer"
@@ -535,7 +625,11 @@ export const HomeView: React.FC = () => {
                                 if (isCurrentPlaylist) {
                                   togglePlay();
                                 } else if (vPl.tracks.length > 0) {
-                                  playTrack(vPl.tracks[0], vPl.tracks);
+                                  playTrack(vPl.tracks[0], vPl.tracks, 0, {
+                                    origin: 'vibe_playlist',
+                                    playlistId: vPl.id,
+                                    playlistName: vPl.name,
+                                  });
                                 }
                               }}
                               className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 cursor-pointer ${
@@ -575,6 +669,151 @@ export const HomeView: React.FC = () => {
             )
           )}
 
+          {/* Shelf: Trending Among Other Listeners (Recommended songs from artists others are listening to) */}
+          {(communityTracks.length > 0 || isCommunityLoading) && (
+            <section data-testid="community-recommendations-shelf" className="flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/25 flex items-center justify-center text-cyan-400 shrink-0">
+                    <Users size={20} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xl font-bold text-primary">Trending Among Other Listeners</h2>
+                      <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 text-[10px] font-bold uppercase tracking-wider">
+                        Community
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted font-medium">
+                      Songs from artists that others who have been using the app have been also listening to
+                    </p>
+                  </div>
+                </div>
+                {communityTracks.length > 0 && (
+                  <button
+                    data-testid="play-shelf-community"
+                    onClick={() => playTrack(communityTracks[0], communityTracks)}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md cursor-pointer self-start sm:self-auto"
+                  >
+                    <Play size={14} fill="currentColor" />
+                    <span>Play Shelf</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Active community artist pills */}
+              {communityArtists.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  <span className="text-[11px] font-semibold text-secondary whitespace-nowrap mr-1">
+                    Others are listening to:
+                  </span>
+                  {communityArtists.map((trend) => (
+                    <button
+                      key={`comm-artist-${trend.artist}`}
+                      onClick={() => navigateToArtist(trend.artist)}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-elevated/60 hover:bg-elevated text-secondary hover:text-primary text-xs font-medium transition-all border border-subtle/40 hover:border-subtle cursor-pointer whitespace-nowrap shrink-0 group"
+                      title={`Browse songs by ${trend.artist} (${trend.listenerCount} listeners)`}
+                    >
+                      <span className="group-hover:text-accent transition-colors font-semibold">
+                        {trend.artist}
+                      </span>
+                      <span className="text-[10px] text-muted bg-highlight/60 px-1.5 py-0.5 rounded-full">
+                        {trend.listenerCount} {trend.listenerCount === 1 ? 'listener' : 'listeners'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Track list carousel */}
+              {isCommunityLoading && communityTracks.length === 0 ? (
+                <div className="flex gap-4 overflow-x-auto pb-3 pt-1">
+                  {[...Array(6)].map((_, i) => (
+                    <div
+                      key={`comm-skeleton-${i}`}
+                      className="w-36 sm:w-44 p-3 rounded-xl bg-elevated/20 animate-pulse flex flex-col gap-2.5"
+                    >
+                      <div className="aspect-square w-full rounded-lg bg-highlight/40" />
+                      <div className="h-4 bg-highlight/40 rounded w-3/4" />
+                      <div className="h-3 bg-highlight/30 rounded w-1/2" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex gap-4 overflow-x-auto pb-3 pt-1 scrollbar-thin scrollbar-thumb-highlight scrollbar-track-transparent">
+                  {communityTracks.map((track) => {
+                    const isCurrent = currentTrack?.id === track.id;
+                    const communityArtist = track.sourceMetadata?.communityArtist || track.artist;
+                    const listenerCount = track.sourceMetadata?.listenerCount;
+
+                    return (
+                      <div
+                        key={`comm-${track.id}`}
+                        data-testid="track-item"
+                        onClick={() => playTrack(track, communityTracks)}
+                        onMouseEnter={() => prefetchTrack(track)}
+                        className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
+                      >
+                        <div className="relative aspect-square w-full rounded-lg overflow-hidden bg-highlight">
+                          <ShelfTrackImage track={track} />
+                          <button
+                            data-testid="track-play-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (isCurrent) togglePlay();
+                              else playTrack(track, communityTracks);
+                            }}
+                            className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
+                              isCurrent
+                                ? 'opacity-100 scale-100'
+                                : 'opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0'
+                            }`}
+                          >
+                            <Play size={16} fill="currentColor" className="ml-0.5" />
+                          </button>
+                          {listenerCount && listenerCount > 1 && (
+                            <div
+                              className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-cyan-500/40 text-[9px] font-bold text-cyan-300 flex items-center gap-1 shadow-sm"
+                              title={`${listenerCount} other users listening to this artist`}
+                            >
+                              <Users size={10} />
+                              <span>{listenerCount}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col min-w-0">
+                          <h3
+                            data-testid="track-title"
+                            className={`text-sm font-semibold truncate ${
+                              isCurrent ? 'text-accent' : 'text-primary'
+                            }`}
+                          >
+                            {track.title}
+                          </h3>
+                          <p
+                            data-testid="track-artist"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigateToArtist(track.artist);
+                            }}
+                            className="text-xs text-secondary truncate hover:underline hover:text-primary cursor-pointer transition-colors"
+                          >
+                            {track.artist}
+                          </p>
+                          <span className="text-[10px] text-cyan-400/90 truncate mt-0.5 font-medium flex items-center gap-1">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                            From {communityArtist}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
           {/* Shelf 3: Discover Weekly */}
           {discoverWeekly.length > 0 && (
             <section data-testid="discover-weekly-shelf" className="flex flex-col gap-4">
@@ -588,7 +827,7 @@ export const HomeView: React.FC = () => {
                 </div>
                 <button
                   data-testid="play-shelf-discover-weekly"
-                  onClick={() => playTrack(discoverWeekly[0], discoverWeekly)}
+                  onClick={() => playTrack(discoverWeekly[0], discoverWeekly, 0, { origin: 'discover_weekly' })}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md"
                 >
                   <Play size={14} fill="currentColor" />
@@ -603,7 +842,7 @@ export const HomeView: React.FC = () => {
                     <div
                       key={`dw-${track.id}`}
                       data-testid="track-item"
-                      onClick={() => playTrack(track, discoverWeekly)}
+                      onClick={() => playTrack(track, discoverWeekly, undefined, { origin: 'discover_weekly' })}
                       onMouseEnter={() => prefetchTrack(track)}
                       className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
                     >
@@ -614,7 +853,7 @@ export const HomeView: React.FC = () => {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (isCurrent) togglePlay();
-                            else playTrack(track, discoverWeekly);
+                            else playTrack(track, discoverWeekly, undefined, { origin: 'discover_weekly' });
                           }}
                           className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
                             isCurrent
