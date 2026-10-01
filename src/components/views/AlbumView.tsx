@@ -108,14 +108,22 @@ export const AlbumView: React.FC = () => {
 
   const handlePlayAll = () => {
     if (tracks.length > 0) {
-      playTrack(tracks[0], tracks);
+      playTrack(tracks[0], tracks, 0, {
+        origin: 'song',
+        albumTitle: selectedAlbum?.title,
+        artistName: selectedAlbum?.artist,
+      });
     }
   };
 
   const handleShufflePlay = () => {
     if (tracks.length > 0) {
       const shuffled = [...tracks].sort(() => Math.random() - 0.5);
-      playTrack(shuffled[0], shuffled);
+      playTrack(shuffled[0], shuffled, 0, {
+        origin: 'song',
+        albumTitle: selectedAlbum?.title,
+        artistName: selectedAlbum?.artist,
+      });
     }
   };
 
@@ -258,7 +266,7 @@ export const AlbumView: React.FC = () => {
             <span className="text-xs font-medium">Loading album tracks...</span>
           </div>
         ) : tracks.length > 0 ? (
-          <TrackTable tracks={tracks} showAlbum={false} showTrackNumber={true} />
+          <TrackTable tracks={tracks} showAlbum={false} showTrackNumber={true} playOrigin="song" />
         ) : (
           <div className="py-12 text-center text-xs text-muted bg-surface rounded-2xl border border-customBorder p-8">
             No streamable tracks found for this release.

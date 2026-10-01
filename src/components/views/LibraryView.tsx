@@ -133,9 +133,12 @@ export const LibraryView: React.FC = () => {
 
   const handlePlayAll = () => {
     if (activeTab === 'liked' && likedTracks.length > 0) {
-      playTrack(likedTracks[0], likedTracks);
+      playTrack(likedTracks[0], likedTracks, 0, { origin: 'library' });
     } else if (selectedPlaylist && selectedPlaylist.tracks.length > 0) {
-      playTrack(selectedPlaylist.tracks[0], selectedPlaylist.tracks);
+      playTrack(selectedPlaylist.tracks[0], selectedPlaylist.tracks, 0, {
+        origin: 'user_playlist',
+        playlistId: selectedPlaylist.id,
+      });
     }
   };
 
@@ -393,7 +396,10 @@ export const LibraryView: React.FC = () => {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        playTrack(pl.tracks[0], pl.tracks);
+                        playTrack(pl.tracks[0], pl.tracks, 0, {
+                          origin: 'user_playlist',
+                          playlistId: pl.id,
+                        });
                       }}
                       aria-label={`Play ${pl.name}`}
                       className="absolute bottom-2.5 right-2.5 w-10 h-10 rounded-full bg-accent text-accent-content shadow-xl opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all flex items-center justify-center hover:scale-105 cursor-pointer"
@@ -861,7 +867,12 @@ export const LibraryView: React.FC = () => {
                 <div
                   key={`${track.id}-${idx}`}
                   data-testid="track-item"
-                  onClick={() => playTrack(track, currentList)}
+                  onClick={() =>
+                    playTrack(track, currentList, idx, {
+                      origin: activeTab === 'liked' ? 'library' : 'user_playlist',
+                      playlistId: selectedPlaylist?.id,
+                    })
+                  }
                   className={`group grid grid-cols-12 items-center px-4 py-2.5 rounded-lg transition-colors cursor-pointer ${
                     isCurrent ? 'bg-elevated' : 'hover:bg-elevated/50'
                   }`}
@@ -872,7 +883,12 @@ export const LibraryView: React.FC = () => {
                       {idx + 1}
                     </span>
                     <span
-                      onClick={() => playTrack(track, currentList)}
+                      onClick={() =>
+                        playTrack(track, currentList, idx, {
+                          origin: activeTab === 'liked' ? 'library' : 'user_playlist',
+                          playlistId: selectedPlaylist?.id,
+                        })
+                      }
                       className="hidden group-hover:block text-accent cursor-pointer w-4 text-center"
                     >
                       <Play size={14} fill="currentColor" />

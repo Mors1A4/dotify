@@ -19,6 +19,16 @@ export type PlayOrigin =
 
 export type PlayIntent = 'favoured' | 'exploratory';
 
+export interface UserListeningContext {
+  likedTrackIds?: Set<string>;
+  followedArtists?: Set<string>;
+  followedArtistNames?: Set<string>;
+  userPlaylistTrackIds?: Set<string>;
+  playlistTrackIds?: Set<string>;
+  vibePlaylistTrackIds?: Set<string>;
+  searchHistoryQueries?: string[];
+}
+
 export interface PlayContext {
   origin: PlayOrigin;
   intent?: PlayIntent;
@@ -52,6 +62,7 @@ export interface TrackPlayRecord {
   genre?: string;
   source: TrackSource;
   startTime: number;
+  playedAt?: number;
   durationPlayedMs: number;
   timePlayedMs?: number;
   totalDurationMs: number;
@@ -60,6 +71,7 @@ export interface TrackPlayRecord {
   skipped: boolean;
   completed?: boolean;
   replayed: boolean;
+  userLiked?: boolean;
   artworkUrl?: string;
 
   // Origin & Intent classification

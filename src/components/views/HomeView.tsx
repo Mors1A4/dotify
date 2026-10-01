@@ -386,7 +386,7 @@ export const HomeView: React.FC = () => {
 
             <div className="flex items-center gap-3 mt-4">
               <button
-                onClick={() => playTrack(heroTrack, chartTracks)}
+                onClick={() => playTrack(heroTrack, chartTracks, 0, { origin: 'charts' })}
                 className="flex items-center gap-2 px-6 py-3 rounded-full bg-accent text-accent-content font-bold text-sm hover:scale-105 active:scale-95 transition-all shadow-lg cursor-pointer"
               >
                 <Play size={18} fill="currentColor" />
@@ -425,7 +425,7 @@ export const HomeView: React.FC = () => {
                 </div>
                 <button
                   data-testid="play-shelf-made-for-you"
-                  onClick={() => playTrack(madeForYou[0], madeForYou)}
+                  onClick={() => playTrack(madeForYou[0], madeForYou, 0, { origin: 'recommendation' })}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md cursor-pointer"
                 >
                   <Play size={14} fill="currentColor" />
@@ -440,7 +440,7 @@ export const HomeView: React.FC = () => {
                     <div
                       key={`mfy-${track.id}`}
                       data-testid="track-item"
-                      onClick={() => playTrack(track, madeForYou)}
+                      onClick={() => playTrack(track, madeForYou, undefined, { origin: 'recommendation' })}
                       onMouseEnter={() => prefetchTrack(track)}
                       className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
                     >
@@ -451,7 +451,7 @@ export const HomeView: React.FC = () => {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (isCurrent) togglePlay();
-                            else playTrack(track, madeForYou);
+                            else playTrack(track, madeForYou, undefined, { origin: 'recommendation' });
                           }}
                           className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
                             isCurrent
@@ -692,7 +692,7 @@ export const HomeView: React.FC = () => {
                 {communityTracks.length > 0 && (
                   <button
                     data-testid="play-shelf-community"
-                    onClick={() => playTrack(communityTracks[0], communityTracks)}
+                    onClick={() => playTrack(communityTracks[0], communityTracks, 0, { origin: 'recommendation' })}
                     className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md cursor-pointer self-start sm:self-auto"
                   >
                     <Play size={14} fill="currentColor" />
@@ -750,7 +750,7 @@ export const HomeView: React.FC = () => {
                       <div
                         key={`comm-${track.id}`}
                         data-testid="track-item"
-                        onClick={() => playTrack(track, communityTracks)}
+                        onClick={() => playTrack(track, communityTracks, undefined, { origin: 'recommendation' })}
                         onMouseEnter={() => prefetchTrack(track)}
                         className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
                       >
@@ -761,7 +761,7 @@ export const HomeView: React.FC = () => {
                             onClick={(e) => {
                               e.stopPropagation();
                               if (isCurrent) togglePlay();
-                              else playTrack(track, communityTracks);
+                              else playTrack(track, communityTracks, undefined, { origin: 'recommendation' });
                             }}
                             className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
                               isCurrent
@@ -905,7 +905,7 @@ export const HomeView: React.FC = () => {
                 </div>
                 <button
                   data-testid="play-shelf-heavy-rotation"
-                  onClick={() => playTrack(heavyRotation[0], heavyRotation)}
+                  onClick={() => playTrack(heavyRotation[0], heavyRotation, 0, { origin: 'recommendation' })}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md"
                 >
                   <Play size={14} fill="currentColor" />
@@ -920,7 +920,7 @@ export const HomeView: React.FC = () => {
                     <div
                       key={`hr-${track.id}`}
                       data-testid="track-item"
-                      onClick={() => playTrack(track, heavyRotation)}
+                      onClick={() => playTrack(track, heavyRotation, undefined, { origin: 'recommendation' })}
                       onMouseEnter={() => prefetchTrack(track)}
                       className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
                     >
@@ -931,7 +931,7 @@ export const HomeView: React.FC = () => {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (isCurrent) togglePlay();
-                            else playTrack(track, heavyRotation);
+                            else playTrack(track, heavyRotation, undefined, { origin: 'recommendation' });
                           }}
                           className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
                             isCurrent
@@ -983,7 +983,7 @@ export const HomeView: React.FC = () => {
                 </div>
                 <button
                   data-testid="play-shelf-forgotten-favorites"
-                  onClick={() => playTrack(forgottenFavorites[0], forgottenFavorites)}
+                  onClick={() => playTrack(forgottenFavorites[0], forgottenFavorites, 0, { origin: 'recommendation' })}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md"
                 >
                   <Play size={14} fill="currentColor" />
@@ -998,7 +998,7 @@ export const HomeView: React.FC = () => {
                     <div
                       key={`ff-${track.id}`}
                       data-testid="track-item"
-                      onClick={() => playTrack(track, forgottenFavorites)}
+                      onClick={() => playTrack(track, forgottenFavorites, undefined, { origin: 'recommendation' })}
                       onMouseEnter={() => prefetchTrack(track)}
                       className="group relative flex-shrink-0 w-36 sm:w-44 p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
                     >
@@ -1009,7 +1009,7 @@ export const HomeView: React.FC = () => {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (isCurrent) togglePlay();
-                            else playTrack(track, forgottenFavorites);
+                            else playTrack(track, forgottenFavorites, undefined, { origin: 'recommendation' });
                           }}
                           className={`absolute bottom-2 right-2 w-9 h-9 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
                             isCurrent
@@ -1068,7 +1068,7 @@ export const HomeView: React.FC = () => {
                   key={track.id}
                   data-testid="track-item"
                   data-source="charts"
-                  onClick={() => playTrack(track, chartTracks)}
+                  onClick={() => playTrack(track, chartTracks, undefined, { origin: 'charts' })}
                   onMouseEnter={() => prefetchTrack(track)}
                   className="group relative p-3 rounded-xl bg-elevated/40 hover:bg-elevated transition-all cursor-pointer border border-transparent hover:border-customBorder flex flex-col gap-2.5"
                 >
@@ -1079,7 +1079,7 @@ export const HomeView: React.FC = () => {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (isCurrent) togglePlay();
-                        else playTrack(track, chartTracks);
+                        else playTrack(track, chartTracks, undefined, { origin: 'charts' });
                       }}
                       className={`absolute bottom-2 right-2 w-10 h-10 rounded-full bg-accent text-accent-content flex items-center justify-center shadow-xl transition-all duration-200 ${
                         isCurrent

@@ -285,7 +285,10 @@ export const CreatePlaylistModal: React.FC = () => {
     if (newId) {
       navigateToPlaylist(newId);
       if (playImmediately && selectedTracks.length > 0) {
-        playTrack(selectedTracks[0], selectedTracks);
+        playTrack(selectedTracks[0], selectedTracks, 0, {
+          origin: 'user_playlist',
+          playlistId: newId,
+        });
       }
     }
   };
@@ -353,7 +356,10 @@ export const CreatePlaylistModal: React.FC = () => {
     closeCreatePlaylistModal();
     navigateToPlaylist(playlistId);
     if (playImmediately && finalTracks.length > 0) {
-      playTrack(finalTracks[0], finalTracks);
+      playTrack(finalTracks[0], finalTracks, 0, {
+        origin: 'user_playlist',
+        playlistId,
+      });
     }
   };
 

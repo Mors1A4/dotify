@@ -456,7 +456,7 @@ export const Sidebar: React.FC = () => {
                       if (isLikedPlaying && isPlaying) {
                         togglePlay();
                       } else {
-                        playTrack(likedTracks[0], likedTracks);
+                        playTrack(likedTracks[0], likedTracks, 0, { origin: 'library' });
                       }
                     }}
                     aria-label="Play Liked Songs"
@@ -545,7 +545,10 @@ export const Sidebar: React.FC = () => {
                           if (isPlaylistPlaying && isPlaying) {
                             togglePlay();
                           } else {
-                            playTrack(pl.tracks[0], pl.tracks);
+                            playTrack(pl.tracks[0], pl.tracks, 0, {
+                              origin: 'user_playlist',
+                              playlistId: pl.id,
+                            });
                           }
                         }}
                         aria-label={`Play ${pl.name}`}

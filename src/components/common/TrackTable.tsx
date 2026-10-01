@@ -11,6 +11,8 @@ import {
 import { SaveMp3Button } from './SaveMp3Button';
 import { prewarmCandidate } from '../../services/youtubeResolver';
 
+import { PlayOrigin } from '../../types/telemetry';
+
 export interface TrackTableProps {
   tracks: Track[];
   showArtwork?: boolean;
@@ -19,6 +21,7 @@ export interface TrackTableProps {
   showTrackNumber?: boolean;
   onPlayTrack?: (track: Track, queue: Track[]) => void;
   showActions?: boolean;
+  playOrigin?: PlayOrigin;
 }
 
 export const TrackTable: React.FC<TrackTableProps> = ({
@@ -29,6 +32,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
   showTrackNumber = true,
   onPlayTrack,
   showActions = true,
+  playOrigin,
 }) => {
   const {
     currentTrack,
@@ -61,7 +65,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
     if (onPlayTrack) {
       onPlayTrack(track, tracks);
     } else {
-      playTrack(track, tracks);
+      playTrack(track, tracks, undefined, { origin: playOrigin || 'song' });
     }
   };
 

@@ -84,7 +84,10 @@ export const ArtistView: React.FC = () => {
 
   const handlePlayTopHits = async () => {
     if (profile && profile.topTracks.length > 0) {
-      playTrack(profile.topTracks[0], profile.topTracks);
+      playTrack(profile.topTracks[0], profile.topTracks, 0, {
+        origin: 'artist',
+        artistName: profile.name,
+      });
       return;
     }
     // Fallback: If topTracks is empty but artist has albums, play from first album
@@ -102,7 +105,10 @@ export const ArtistView: React.FC = () => {
         { length: 50 }
       );
       if (radioTracks.length > 0) {
-        playTrack(radioTracks[0], radioTracks);
+        playTrack(radioTracks[0], radioTracks, 0, {
+          origin: 'radio',
+          artistName: profile.name,
+        });
       }
     } catch (err) {
       console.warn('[ArtistView] Failed to start Artist Radio:', err);
@@ -131,7 +137,11 @@ export const ArtistView: React.FC = () => {
     }
 
     if (tracks && tracks.length > 0) {
-      playTrack(tracks[0], tracks);
+      playTrack(tracks[0], tracks, 0, {
+        origin: 'artist',
+        artistName: profile?.name,
+        albumTitle: album.title,
+      });
     }
   };
 
@@ -308,7 +318,7 @@ export const ArtistView: React.FC = () => {
               )}
             </div>
 
-            <TrackTable tracks={displayedTracks} />
+            <TrackTable tracks={displayedTracks} playOrigin="artist" />
           </section>
         ) : profile.albums.length > 0 ? (
           <div className="p-4 rounded-xl bg-elevated/40 border border-customBorder/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

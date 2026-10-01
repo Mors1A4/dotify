@@ -34,11 +34,7 @@ const GEMINI_API_KEYS: string[] = [
 ];
 
 const CANDIDATE_MODELS: string[] = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
-  'gemini-flash-latest',
+  'gemini-3.8-flash',
 ];
 
 const STANDARD_PRESET_IDS = ['gaming', 'working', 'partying', 'chilling', 'workout'];

@@ -5,7 +5,9 @@ import { extractPrimaryArtist } from './artistService';
 export interface UserAffinityContext {
   likedTrackIds?: Set<string>;
   followedArtistNames?: Set<string>;
+  followedArtists?: Set<string>;
   userPlaylistTrackIds?: Set<string>;
+  playlistTrackIds?: Set<string>;
   vibePlaylistTrackIds?: Set<string>;
   searchHistoryQueries?: string[];
 }
@@ -69,16 +71,22 @@ export class ListeningClassifier {
     // Explicit replay is always a user-favoured signal
     if (play.replayed) return true;
 
+    // Explicit like on the track record
+    if (play.userLiked) return true;
+
     // If already marked as favoured
     if (play.intent === 'favoured') return true;
 
     // Explicit user context checks (liked track, followed artist, saved in custom playlist)
     if (play.trackId && context?.likedTrackIds?.has(play.trackId)) return true;
-    if (play.artist && context?.followedArtistNames) {
+    const followed = context?.followedArtistNames || context?.followedArtists;
+    if (play.artist && followed) {
       const primary = extractPrimaryArtist(play.artist).toLowerCase().trim();
-      if (context.followedArtistNames.has(primary)) return true;
+      const raw = play.artist.toLowerCase().trim();
+      if (followed.has(primary) || followed.has(raw)) return true;
     }
-    if (play.trackId && context?.userPlaylistTrackIds?.has(play.trackId)) return true;
+    const userPlaylists = context?.userPlaylistTrackIds || context?.playlistTrackIds;
+    if (play.trackId && userPlaylists?.has(play.trackId)) return true;
 
     // Explicit origin check
     if (play.origin) {
@@ -139,8 +147,8 @@ export class ListeningClassifier {
   ): { origin: PlayOrigin; intent: PlayIntent; intentWeight: number } {
     // 1. If explicit origin is already specified
     if (play.origin && play.origin !== 'unknown') {
-      const intent: PlayIntent =
-        play.replayed || this.isFavouredOrigin(play.origin) ? 'favoured' : 'exploratory';
+      const isFav = this.isUserFavouredPlay(play, context);
+      const intent: PlayIntent = isFav ? 'favoured' : 'exploratory';
       const intentWeight = intent === 'favoured' ? 1.0 : play.skipped ? 0.05 : 0.2;
       return { origin: play.origin, intent, intentWeight };
     }
@@ -292,6 +300,10 @@ export class ListeningClassifier {
 }
 
 export const listeningClassifier = ListeningClassifier.getInstance();
+export const isFavouredOrigin = (origin?: PlayOrigin) =>
+  listeningClassifier.isFavouredOrigin(origin);
+export const isExploratoryOrigin = (origin?: PlayOrigin) =>
+  listeningClassifier.isExploratoryOrigin(origin);
 export const isUserFavouredPlay = (play: Partial<TrackPlayRecord>, context?: UserAffinityContext) =>
   listeningClassifier.isUserFavouredPlay(play, context);
 export const getIntentWeight = (play: Partial<TrackPlayRecord>, context?: UserAffinityContext) =>

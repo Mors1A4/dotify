@@ -10,7 +10,7 @@ const HTTP_PORT = Number(process.env.PORT || 3001);
 const DIRECT_AUDIO_FORMAT =
   '140/251/250/249/139/ba[ext=m4a][protocol^=http][protocol!*=m3u8][protocol!*=dash]/ba[protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[ext=mp4][protocol^=http][protocol!*=m3u8][protocol!*=dash]/b[protocol^=http][protocol!*=m3u8][protocol!*=dash]';
 
-export function getMp3StorageDir() {
+export function getDefaultMp3Dir() {
   const home = os.homedir();
   if (home) {
     const musicDir = path.join(home, 'Music', 'Dotify');
@@ -27,6 +27,127 @@ export function getMp3StorageDir() {
     fs.mkdirSync(fallbackDir, { recursive: true });
   } catch {}
   return fallbackDir;
+}
+
+function getDownloadDirConfigPath() {
+  try {
+    const base =
+      process.env.LOCALAPPDATA ||
+      (os.homedir() ? path.join(os.homedir(), '.config') : '.');
+    const cfgDir = path.join(base, 'dotify');
+    return path.join(cfgDir, 'download-dir.json');
+  } catch {
+    return path.join('.', 'dotify-download-dir.json');
+  }
+}
+
+export function getCustomDownloadDir() {
+  try {
+    const cfgPath = getDownloadDirConfigPath();
+    if (!fs.existsSync(cfgPath)) return null;
+    const raw = fs.readFileSync(cfgPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const customPath = typeof parsed === 'string' ? parsed : parsed?.customPath;
+    if (typeof customPath === 'string' && customPath.trim()) {
+      return customPath.trim();
+    }
+  } catch {}
+  return null;
+}
+
+export function getDefaultMp3StorageDir() {
+  return getDefaultMp3Dir();
+}
+
+export function getMp3StorageDir() {
+  // Per-client override wins; initial value is the current (default) download location
+  // until the user picks a new folder on this device.
+  const custom = getCustomDownloadDir();
+  if (custom) {
+    try {
+      fs.mkdirSync(custom, { recursive: true });
+      return custom;
+    } catch {
+      // Fall through to default if the custom path is no longer usable
+    }
+  }
+  return getDefaultMp3Dir();
+}
+
+export function isDirWritable(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, '.dotify-write-test');
+    fs.writeFileSync(probe, 'ok', 'utf8');
+    fs.unlinkSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function moveMp3FilesToDir(oldDir, newDir) {
+  let movedCount = 0;
+  try {
+    fs.mkdirSync(newDir, { recursive: true });
+    if (!fs.existsSync(oldDir)) return movedCount;
+    const entries = fs.readdirSync(oldDir);
+    for (const fname of entries) {
+      if (fname.endsWith('.tmp')) continue;
+      if (fname === 'mp3-index.json') continue;
+      const src = path.join(oldDir, fname);
+      const dest = path.join(newDir, fname);
+      if (src === dest) continue;
+      try {
+        const stat = fs.statSync(src);
+        if (!stat.isFile()) continue;
+        if (fs.existsSync(dest)) {
+          // Keep the newest copy; skip identical names already present
+          try {
+            const destStat = fs.statSync(dest);
+            if (destStat.size === stat.size) continue;
+            fs.unlinkSync(dest);
+          } catch {}
+        }
+        try {
+          fs.renameSync(src, dest);
+        } catch {
+          fs.copyFileSync(src, dest);
+          fs.unlinkSync(src);
+        }
+        movedCount++;
+      } catch {}
+    }
+  } catch {}
+  return movedCount;
+}
+
+export function setCustomDownloadDir(newPath) {
+  const cleaned = String(newPath || '').trim();
+  if (!cleaned) {
+    throw new Error('Please choose a download folder');
+  }
+  const resolved = path.isAbsolute(cleaned) ? path.normalize(cleaned) : null;
+  if (!resolved) {
+    throw new Error('Download folder must be an absolute path on this device');
+  }
+  if (!isDirWritable(resolved)) {
+    throw new Error('That folder is not writable. Please choose another folder.');
+  }
+  const oldDir = mp3Dir;
+  if (path.normalize(oldDir) === resolved) {
+    return { path: oldDir, movedCount: 0, defaultPath: getDefaultMp3Dir(), customPath: getCustomDownloadDir() };
+  }
+  const movedCount = moveMp3FilesToDir(oldDir, resolved);
+  mp3Dir = resolved;
+  indexFilePath = path.join(mp3Dir, 'mp3-index.json');
+  try {
+    const cfgPath = getDownloadDirConfigPath();
+    fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+    fs.writeFileSync(cfgPath, JSON.stringify({ customPath: resolved }, null, 2), 'utf8');
+  } catch {}
+  reconcileDiskFiles();
+  return { path: mp3Dir, movedCount, defaultPath: getDefaultMp3Dir(), customPath: resolved };
 }
 
 export function getLocalLanIp() {
@@ -79,8 +200,8 @@ export function buildMp3FileName(track) {
   return `${artist} - ${title} [${hash}].mp3`;
 }
 
-const mp3Dir = getMp3StorageDir();
-const indexFilePath = path.join(mp3Dir, 'mp3-index.json');
+let mp3Dir = getMp3StorageDir();
+let indexFilePath = path.join(mp3Dir, 'mp3-index.json');
 
 // Persistent local device metadata + saved MP3 index
 let indexState = {
@@ -752,6 +873,34 @@ export function setupMp3SyncHub(app) {
       res.json({ ok: true, path: mp3Dir });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // 9. Download folder configuration (per-client: stored on this device only).
+  // Initial value is the current download location until the user changes it.
+  app.get('/api/mp3s/download-dir', (req, res) => {
+    try {
+      const defaultPath = getDefaultMp3Dir();
+      const customPath = getCustomDownloadDir();
+      res.json({
+        ok: true,
+        path: mp3Dir,
+        defaultPath,
+        customPath: customPath || null,
+        writable: isDirWritable(mp3Dir),
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/mp3s/download-dir', async (req, res) => {
+    try {
+      const target = req.body?.path ?? req.body?.customPath ?? '';
+      const result = setCustomDownloadDir(String(target || ''));
+      res.json({ ok: true, ...result, writable: isDirWritable(result.path) });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message || 'Could not set download folder' });
     }
   });
 }

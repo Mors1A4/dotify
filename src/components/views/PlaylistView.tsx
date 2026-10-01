@@ -7,6 +7,7 @@ import { upgradeArtworkUrl } from '../../utils/artwork';
 import { fetchTopCharts, searchCharts } from '../../services/chartsApi';
 import { fetchSpotifyPreview } from '../../services/spotifyImporter';
 import { Track } from '../../types/track';
+import { PlayOrigin } from '../../types/telemetry';
 import {
   getTrackArtwork,
   resolveTrackArtwork,
@@ -100,6 +101,8 @@ export const PlaylistView: React.FC = () => {
       )
     : null;
   const isPlaylistInLibrary = Boolean(libraryPlaylist);
+  const isVibe = Boolean(vibePlaylist || selectedPlaylistId?.startsWith('daily-vibe-'));
+  const playlistOrigin: PlayOrigin = isVibe ? 'vibe_playlist' : 'user_playlist';
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -292,14 +295,20 @@ export const PlaylistView: React.FC = () => {
     if (isPlaylistCurrentlyPlaying) {
       togglePlay();
     } else {
-      playTrack(playlist.tracks[0], playlist.tracks);
+      playTrack(playlist.tracks[0], playlist.tracks, 0, {
+        origin: playlistOrigin,
+        playlistId: playlist.id,
+      });
     }
   };
 
   const handleShufflePlay = () => {
     if (playlist.tracks.length > 0) {
       const shuffled = [...playlist.tracks].sort(() => Math.random() - 0.5);
-      playTrack(shuffled[0], shuffled);
+      playTrack(shuffled[0], shuffled, 0, {
+        origin: playlistOrigin,
+        playlistId: playlist.id,
+      });
     }
   };
 
@@ -412,7 +421,7 @@ export const PlaylistView: React.FC = () => {
             {((playlist as any)?.isAIGenerated || vibePlaylist) && (
               <span className="text-[11px] font-bold text-accent px-2.5 py-0.5 rounded-full bg-accent/15 border border-accent/30 flex items-center gap-1 shadow-sm">
                 <Wand2 size={11} />
-                <span>Curated by Dotify AI</span>
+                <span>Curated by Gemini 3.8 Flash</span>
               </span>
             )}
             {playlist.sourceSpotifyUrl && (
@@ -906,7 +915,12 @@ export const PlaylistView: React.FC = () => {
                 <div
                   key={`${track.id}-${originalIndex}`}
                   data-testid="track-item"
-                  onClick={() => playTrack(track, playlist.tracks)}
+                  onClick={() =>
+                    playTrack(track, playlist.tracks, originalIndex, {
+                      origin: playlistOrigin,
+                      playlistId: playlist.id,
+                    })
+                  }
                   className={`group grid grid-cols-12 items-center px-4 py-2.5 rounded-xl transition-colors cursor-pointer ${
                     isCurrent ? 'bg-elevated' : 'hover:bg-elevated/50'
                   }`}
@@ -924,7 +938,12 @@ export const PlaylistView: React.FC = () => {
                       )}
                     </span>
                     <span
-                      onClick={() => playTrack(track, playlist.tracks)}
+                      onClick={() =>
+                        playTrack(track, playlist.tracks, originalIndex, {
+                          origin: playlistOrigin,
+                          playlistId: playlist.id,
+                        })
+                      }
                       className="hidden group-hover:block text-accent cursor-pointer w-5 text-center"
                     >
                       <Play size={14} fill="currentColor" />
@@ -1170,7 +1189,18 @@ export const PlaylistView: React.FC = () => {
                   className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-elevated/60 transition-colors"
                 >
                   <div
-                    onClick={() => playTrack(track, finderPool)}
+                    onClick={() => {
+                      const finderOrigin: PlayOrigin =
+                        finderTab === 'liked'
+                          ? 'library'
+                          : finderTab === 'search'
+                          ? 'search'
+                          : 'charts';
+                      playTrack(track, finderPool, undefined, {
+                        origin: finderOrigin,
+                        searchQuery: finderTab === 'search' ? finderQuery : undefined,
+                      });
+                    }}
                     className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer group"
                   >
                     <div className="relative w-10 h-10 rounded-lg overflow-hidden bg-highlight shrink-0">

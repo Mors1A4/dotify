@@ -919,6 +919,125 @@ fn open_mp3_folder() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_download_dir() -> Result<serde_json::Value, String> {
+    let current = mp3_sync::get_mp3_storage_dir();
+    let default_dir = mp3_sync::get_default_mp3_dir();
+    let custom = mp3_sync::get_custom_download_dir();
+    Ok(serde_json::json!({
+        "ok": true,
+        "path": current.to_string_lossy(),
+        "defaultPath": default_dir.to_string_lossy(),
+        "customPath": custom.map(|p| p.to_string_lossy().to_string()),
+        "writable": mp3_sync::is_dir_writable(&current),
+    }))
+}
+
+#[tauri::command]
+fn set_download_dir(path: String) -> Result<serde_json::Value, String> {
+    let default_dir = mp3_sync::get_default_mp3_dir();
+    match mp3_sync::set_custom_download_dir(&path) {
+        Ok((resolved, moved_count)) => Ok(serde_json::json!({
+            "ok": true,
+            "path": resolved.to_string_lossy(),
+            "defaultPath": default_dir.to_string_lossy(),
+            "customPath": resolved.to_string_lossy(),
+            "movedCount": moved_count,
+            "writable": mp3_sync::is_dir_writable(&resolved),
+        })),
+        Err(e) => Err(e),
+    }
+}
+
+#[tauri::command]
+fn pick_download_dir() -> Result<Option<String>, String> {
+    // System-native folder browser (per-client). No extra plugin dependency:
+    // Windows uses FolderBrowserDialog via PowerShell, macOS uses osascript,
+    // Linux tries zenity/kdialog, Android returns null (app-private storage).
+    #[cfg(target_os = "android")]
+    {
+        return Ok(None);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let current = mp3_sync::get_mp3_storage_dir();
+        let current_str = current.to_string_lossy().replace('\'', "''");
+        let ps = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
+             $d.Description = 'Choose Dotify download folder'; \
+             $d.ShowNewFolderButton = $true; \
+             $d.SelectedPath = '{cur}'; \
+             if ($d.ShowDialog() -eq 'OK') {{ [Console]::Write($d.SelectedPath) }}",
+            cur = current_str
+        );
+        match std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-STA",
+                "-Command",
+                &ps,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            Ok(out) => {
+                let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if picked.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(picked))
+                }
+            }
+            Err(e) => Err(format!("Could not open system folder browser: {}", e)),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        match std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "POSIX path of (choose folder with prompt \"Choose Dotify download folder\")",
+            ])
+            .output()
+        {
+            Ok(out) => {
+                let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if picked.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(picked))
+                }
+            }
+            Err(e) => Err(format!("Could not open system folder browser: {}", e)),
+        }
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos"), not(target_os = "android")))]
+    {
+        for candidate in [
+            ("zenity", vec!["--file-selection", "--directory", "--title=Choose Dotify download folder"]),
+            ("kdialog", vec!["--getexistingdirectory", "."]),
+        ] {
+            if let Ok(out) = std::process::Command::new(candidate.0)
+                .args(&candidate.1)
+                .output()
+            {
+                if out.status.success() {
+                    let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !picked.is_empty() {
+                        return Ok(Some(picked));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
+#[tauri::command]
 fn install_windows_update(
     app: AppHandle,
     exe_url: String,
@@ -1142,6 +1261,9 @@ pub fn run() {
             set_app_icon_rgba,
             set_android_app_icon,
             open_mp3_folder,
+            get_download_dir,
+            set_download_dir,
+            pick_download_dir,
             install_windows_update,
             search_youtube_candidates,
             scan_cast_devices,

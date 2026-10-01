@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useUpgradeStore } from '../../store/upgradeStore';
-import { LogOut, Cloud, Loader2, User as UserIcon, Wand2 } from 'lucide-react';
+import { LogOut, Cloud, Loader2, User as UserIcon, Wand2, FolderOpen } from 'lucide-react';
 import { ColourSchemeSection } from '../theme/ColourSchemeSection';
+import { DownloadFolderModal } from '../common/DownloadFolderModal';
+import { fetchDownloadDir } from '../../services/downloadFolderService';
 
 export const AuthButton: React.FC = () => {
   const { user, isLoading, isSyncing, signOut, openAuthModal } = useAuthStore();
@@ -10,6 +12,8 @@ export const AuthButton: React.FC = () => {
   const hasProcessingUpgrade = upgradeRequests.some((r) => r.status === 'processing');
 
   const [isOpen, setIsOpen] = useState(false);
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
+  const [downloadPath, setDownloadPath] = useState<string>('');
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -24,6 +28,33 @@ export const AuthButton: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
+  // Per-client download folder (device-local, never per-user): refresh whenever the
+  // profile menu opens so the button subtitle always shows this device's folder.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    fetchDownloadDir()
+      .then((info) => {
+        if (!cancelled) setDownloadPath(info.path);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  const openDownloadSettings = () => {
+    setIsOpen(false);
+    setIsDownloadModalOpen(true);
+  };
+
+  const closeDownloadSettings = () => {
+    setIsDownloadModalOpen(false);
+    fetchDownloadDir()
+      .then((info) => setDownloadPath(info.path))
+      .catch(() => {});
+  };
+
   if (isLoading) {
     return (
       <div className="h-8 w-8 rounded-full bg-elevated flex items-center justify-center animate-pulse">
@@ -34,6 +65,7 @@ export const AuthButton: React.FC = () => {
 
   if (!user) {
     return (
+      <>
       <div className="relative" ref={dropdownRef}>
         <button
           onClick={() => setIsOpen(!isOpen)}
@@ -82,6 +114,30 @@ export const AuthButton: React.FC = () => {
             {/* Colour scheme (moved from TopBar to save title space) */}
             <ColourSchemeSection />
 
+            {/* Download folder (per-client: this device only, OS paths differ) */}
+            <button
+              type="button"
+              onClick={openDownloadSettings}
+              data-testid="profile-download-folder-btn"
+              title={downloadPath || 'Set the folder where MP3 downloads are saved on this device'}
+              className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-xl transition-colors text-left group cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <FolderOpen size={15} className="text-accent flex-shrink-0" />
+                <div className="min-w-0">
+                  <span className="block">Download Folder</span>
+                  {downloadPath && (
+                    <span className="block text-[10px] text-muted font-mono truncate max-w-[180px]">
+                      {downloadPath}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <span className="text-[10px] text-muted font-mono px-2 py-0.5 rounded-md bg-elevated border border-customBorder/50 flex-shrink-0 ml-2">
+                This device
+              </span>
+            </button>
+
             {/* Help & AI Studio */}
             <button
               type="button"
@@ -112,12 +168,15 @@ export const AuthButton: React.FC = () => {
           </div>
         )}
       </div>
+      <DownloadFolderModal open={isDownloadModalOpen} onClose={closeDownloadSettings} />
+    </>
     );
   }
 
   const firstName = user.displayName ? user.displayName.split(' ')[0] : 'User';
 
   return (
+    <>
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
@@ -170,6 +229,30 @@ export const AuthButton: React.FC = () => {
           {/* Colour scheme (moved from TopBar to save title space) */}
           <ColourSchemeSection />
 
+          {/* Download folder (per-client: this device only, OS paths differ) */}
+          <button
+            type="button"
+            onClick={openDownloadSettings}
+            data-testid="profile-download-folder-btn"
+            title={downloadPath || 'Set the folder where MP3 downloads are saved on this device'}
+            className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-xl transition-colors text-left group cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <FolderOpen size={15} className="text-accent flex-shrink-0" />
+              <div className="min-w-0">
+                <span className="block">Download Folder</span>
+                {downloadPath && (
+                  <span className="block text-[10px] text-muted font-mono truncate max-w-[160px]">
+                    {downloadPath}
+                  </span>
+                )}
+              </div>
+            </div>
+            <span className="text-[10px] text-muted font-mono px-2 py-0.5 rounded-md bg-elevated border border-customBorder/50 flex-shrink-0 ml-2">
+              This device
+            </span>
+          </button>
+
           {/* Help & AI Studio item */}
           <button
             type="button"
@@ -215,5 +298,7 @@ export const AuthButton: React.FC = () => {
         </div>
       )}
     </div>
+    <DownloadFolderModal open={isDownloadModalOpen} onClose={closeDownloadSettings} />
+    </>
   );
 };

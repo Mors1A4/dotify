@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useMp3VaultStore, SavedMp3Track, PeerMp3Track } from '../../services/mp3VaultService';
 import { usePlayerStore } from '../../store/playerStore';
+import { DownloadFolderModal } from '../common/DownloadFolderModal';
 import {
   Download,
   Trash2,
@@ -76,6 +77,7 @@ export const Mp3VaultPanel: React.FC = () => {
   const [manualIpInput, setManualIpInput] = useState('');
   const [isAddingIp, setIsAddingIp] = useState(false);
   const [deletePropagateWifi, setDeletePropagateWifi] = useState(false);
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
 
   useEffect(() => {
     refreshVault();
@@ -224,6 +226,17 @@ export const Mp3VaultPanel: React.FC = () => {
                   {localDevice?.ip || '127.0.0.1'}:{localDevice?.port || 3001}
                 </span>
                 {localDevice?.mp3Dir ? ` • Folder: ${localDevice.mp3Dir}` : ''}
+                {localDevice?.mp3Dir && (
+                  <button
+                    type="button"
+                    onClick={() => setIsDownloadModalOpen(true)}
+                    data-testid="vault-change-download-folder-btn"
+                    className="ml-2 underline hover:text-primary transition-colors cursor-pointer"
+                    title="Change the download folder for this device (also available in the profile menu)"
+                  >
+                    Change
+                  </button>
+                )}
               </p>
             </div>
           </div>
@@ -658,6 +671,13 @@ export const Mp3VaultPanel: React.FC = () => {
           </div>
         </div>
       )}
+      <DownloadFolderModal
+        open={isDownloadModalOpen}
+        onClose={() => {
+          setIsDownloadModalOpen(false);
+          refreshVault().catch(() => {});
+        }}
+      />
     </div>
   );
 };

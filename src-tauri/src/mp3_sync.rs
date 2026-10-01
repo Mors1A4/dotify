@@ -24,7 +24,7 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-pub fn get_mp3_storage_dir() -> PathBuf {
+pub fn get_default_mp3_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Ok(profile) = std::env::var("USERPROFILE") {
@@ -50,6 +50,137 @@ pub fn get_mp3_storage_dir() -> PathBuf {
     let tmp = std::env::temp_dir().join("dotify_mp3s");
     let _ = fs::create_dir_all(&tmp);
     tmp
+}
+
+fn get_download_dir_config_path() -> PathBuf {
+    if let Some(app_dir) = APP_DATA_DIR.get() {
+        return app_dir.join("download-dir.json");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(local_app_data)
+                .join("dotify")
+                .join("download-dir.json");
+        }
+    }
+    std::env::temp_dir().join("dotify-download-dir.json")
+}
+
+pub fn get_custom_download_dir() -> Option<PathBuf> {
+    let cfg = get_download_dir_config_path();
+    let raw = fs::read_to_string(&cfg).ok()?;
+    // Accept either {"customPath": "..."} or a bare "..." string
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+        if let Some(s) = val.get("customPath").and_then(|v| v.as_str()) {
+            if !s.trim().is_empty() {
+                return Some(PathBuf::from(s.trim()));
+            }
+        }
+        if let Some(s) = val.as_str() {
+            if !s.trim().is_empty() {
+                return Some(PathBuf::from(s.trim()));
+            }
+        }
+    }
+    let trimmed = raw.trim().trim_matches('"').trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+pub fn is_dir_writable(dir: &std::path::Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".dotify-write-test");
+    match fs::write(&probe, b"ok") {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+pub fn get_mp3_storage_dir() -> PathBuf {
+    // Per-client override wins; initial value is the current (default) download
+    // location until the user picks a new folder on this device.
+    if let Some(custom) = get_custom_download_dir() {
+        if fs::create_dir_all(&custom).is_ok() {
+            return custom;
+        }
+    }
+    get_default_mp3_dir()
+}
+
+pub fn set_custom_download_dir(new_path: &str) -> Result<(PathBuf, usize), String> {
+    let cleaned = new_path.trim();
+    if cleaned.is_empty() {
+        return Err(String::from("Please choose a download folder"));
+    }
+    let resolved = PathBuf::from(cleaned);
+    if !resolved.is_absolute() {
+        return Err(String::from(
+            "Download folder must be an absolute path on this device",
+        ));
+    }
+    if !is_dir_writable(&resolved) {
+        return Err(String::from(
+            "That folder is not writable. Please choose another folder.",
+        ));
+    }
+    let old_dir = get_mp3_storage_dir();
+    if old_dir == resolved {
+        return Ok((old_dir, 0));
+    }
+    let mut moved_count: usize = 0;
+    if let Ok(entries) = fs::read_dir(&old_dir) {
+        for entry in entries.flatten() {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if fname.ends_with(".tmp") || fname == "mp3-index.json" {
+                continue;
+            }
+            let src = old_dir.join(&fname);
+            let dest = resolved.join(&fname);
+            if src == dest {
+                continue;
+            }
+            if let Ok(meta) = fs::metadata(&src) {
+                if !meta.is_file() {
+                    continue;
+                }
+                if dest.exists() {
+                    // Keep existing file if sizes match; otherwise replace
+                    if let (Ok(a), Ok(b)) = (fs::metadata(&src), fs::metadata(&dest)) {
+                        if a.len() == b.len() {
+                            continue;
+                        }
+                    }
+                    let _ = fs::remove_file(&dest);
+                }
+                if fs::rename(&src, &dest).is_err() {
+                    if fs::copy(&src, &dest).is_ok() {
+                        let _ = fs::remove_file(&src);
+                        moved_count += 1;
+                    }
+                } else {
+                    moved_count += 1;
+                }
+            }
+        }
+    }
+    let cfg = get_download_dir_config_path();
+    if let Some(parent) = cfg.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let payload = serde_json::json!({ "customPath": resolved.to_string_lossy() }).to_string();
+    let _ = fs::write(&cfg, payload);
+    // Reconcile so the in-memory index reflects files in the new folder
+    reconcile_disk_files();
+    Ok((resolved, moved_count))
 }
 
 pub fn get_local_lan_ip() -> String {
@@ -1191,6 +1322,59 @@ pub fn try_handle_mp3_route(
                 "path": dir.to_string_lossy(),
             }),
         );
+        return true;
+    }
+
+    if path_only == "/api/mp3s/download-dir" {
+        // body_json is only populated for POST-like routes below, but GET may also
+        // carry an empty body; detect method from the request line.
+        let is_post = req_str.starts_with("POST");
+        if !is_post {
+            let current = get_mp3_storage_dir();
+            let default_dir = get_default_mp3_dir();
+            let custom = get_custom_download_dir();
+            write_json_response(
+                stream,
+                "HTTP/1.1 200 OK",
+                &serde_json::json!({
+                    "ok": true,
+                    "path": current.to_string_lossy(),
+                    "defaultPath": default_dir.to_string_lossy(),
+                    "customPath": custom.map(|p| p.to_string_lossy().to_string()),
+                    "writable": is_dir_writable(&current),
+                }),
+            );
+            return true;
+        }
+        let target = body_json
+            .get("path")
+            .and_then(|v| v.as_str())
+            .or_else(|| body_json.get("customPath").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        match set_custom_download_dir(target) {
+            Ok((resolved, moved_count)) => {
+                let default_dir = get_default_mp3_dir();
+                write_json_response(
+                    stream,
+                    "HTTP/1.1 200 OK",
+                    &serde_json::json!({
+                        "ok": true,
+                        "path": resolved.to_string_lossy(),
+                        "defaultPath": default_dir.to_string_lossy(),
+                        "customPath": resolved.to_string_lossy(),
+                        "movedCount": moved_count,
+                        "writable": is_dir_writable(&resolved),
+                    }),
+                );
+            }
+            Err(err) => {
+                write_json_response(
+                    stream,
+                    "HTTP/1.1 400 Bad Request",
+                    &serde_json::json!({ "ok": false, "error": err }),
+                );
+            }
+        }
         return true;
     }
 

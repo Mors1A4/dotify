@@ -686,7 +686,9 @@ export class TelemetryDatabase {
 
       let updatedCount = 0;
       for (const play of allPlays) {
-        if (!play.origin || play.origin === 'unknown' || !play.intent) {
+        const needsInitial = !play.origin || play.origin === 'unknown' || !play.intent;
+        const couldBeElevated = play.intent === 'exploratory' && userContext && listeningClassifier.isUserFavouredPlay(play, userContext);
+        if (needsInitial || couldBeElevated) {
           const classified = listeningClassifier.classifyListeningRecord(play, userContext);
           play.origin = classified.origin;
           play.intent = classified.intent;
@@ -730,9 +732,17 @@ export class TelemetryDatabase {
     return this.getAllFromStores<GenreAffinityRecord>(db, ['genre_affinity', 'genreAffinities']);
   }
 
+  public async getAllGenreAffinities(): Promise<GenreAffinityRecord[]> {
+    return this.getGenreAffinities();
+  }
+
   public async getArtistAffinities(): Promise<ArtistAffinityRecord[]> {
     const db = await this.getDb();
     return this.getAllFromStores<ArtistAffinityRecord>(db, ['artist_affinity', 'artistAffinities']);
+  }
+
+  public async getAllArtistAffinities(): Promise<ArtistAffinityRecord[]> {
+    return this.getArtistAffinities();
   }
 
   public async clearTelemetry(): Promise<void> {

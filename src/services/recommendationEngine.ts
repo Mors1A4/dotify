@@ -357,8 +357,9 @@ export class RecommendationEngine {
       }
 
       agg.playCount += 1;
-      if (play.startTime > agg.lastPlayedAt) {
-        agg.lastPlayedAt = play.startTime;
+      const playTime = play.startTime ?? (play as any).playedAt ?? (play as any).timestamp ?? now;
+      if (playTime > agg.lastPlayedAt) {
+        agg.lastPlayedAt = playTime;
         if (play.title) agg.recentTrackTitle = play.title;
         if (play.artworkUrl && !isUglyPlaceholder(play.artworkUrl)) {
           agg.artworkFallback = play.artworkUrl;
@@ -373,12 +374,12 @@ export class RecommendationEngine {
       const isFavoured = isUserFavouredPlay(play);
       const intentWeight = isFavoured ? 1.0 : (play.intentWeight !== undefined ? play.intentWeight : 0.15);
 
-      const ageMs = Math.max(0, now - play.startTime);
+      const ageMs = Math.max(0, now - playTime);
       const recencyWeight = Math.exp(-lambda * ageMs);
       const completion =
         typeof play.completionRate === 'number'
           ? Math.max(0, Math.min(1, play.completionRate))
-          : 0.5;
+          : 1.0;
       const replayBonus = play.replayed ? 0.5 : 0;
       const skipPenalty = play.skipped ? 1.5 : 0;
       const playScore = recencyWeight * (completion * (1.0 + replayBonus) - skipPenalty) * intentWeight;
@@ -699,9 +700,11 @@ export class RecommendationEngine {
       if (play.skipped) continue;
       const isFavoured = isUserFavouredPlay(play);
       const intentMultiplier = isFavoured ? 1.0 : (play.replayed ? 1.0 : 0.05);
-      const ageMs = Math.max(0, now - play.startTime);
+      const playTime = play.startTime ?? (play as any).playedAt ?? (play as any).timestamp ?? now;
+      const ageMs = Math.max(0, now - playTime);
+      const completion = typeof play.completionRate === 'number' ? play.completionRate : 1.0;
       const replayMultiplier = play.replayed ? 1.6 : 1.0;
-      const weight = Math.exp(-lambda * ageMs) * play.completionRate * replayMultiplier * intentMultiplier;
+      const weight = Math.exp(-lambda * ageMs) * completion * replayMultiplier * intentMultiplier;
 
       trackScores.set(play.trackId, (trackScores.get(play.trackId) || 0) + weight);
     }
@@ -743,6 +746,8 @@ export class RecommendationEngine {
       if (play.skipped) continue;
       const isFavoured = isUserFavouredPlay(play);
       if (!isFavoured && !play.replayed) continue;
+      const playTime = play.startTime ?? (play as any).playedAt ?? (play as any).timestamp ?? now;
+      const completion = typeof play.completionRate === 'number' ? play.completionRate : 1.0;
       const existing = playStats.get(play.trackId) || {
         count: 0,
         totalCompletion: 0,
@@ -750,9 +755,9 @@ export class RecommendationEngine {
         totalDuration: 0,
       };
       existing.count += 1;
-      existing.totalCompletion += play.completionRate;
-      if (play.startTime > existing.lastPlay) existing.lastPlay = play.startTime;
-      existing.totalDuration += play.durationPlayedMs;
+      existing.totalCompletion += completion;
+      if (playTime > existing.lastPlay) existing.lastPlay = playTime;
+      existing.totalDuration += (play.durationPlayedMs || 0);
       playStats.set(play.trackId, existing);
     }
 
