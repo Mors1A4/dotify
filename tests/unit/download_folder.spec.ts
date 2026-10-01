@@ -95,4 +95,31 @@ describe('Download folder configuration (per-client)', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(setDownloadFolder('Z:\\Nope')).rejects.toThrow(/not writable/i);
   });
+
+  it('renders a Download Folder button in BOTH guest and user profile dropdowns', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const authBtnPath = path.resolve(__dirname, '../../src/components/auth/AuthButton.tsx');
+    const src = fs.readFileSync(authBtnPath, 'utf8');
+    const occurrences = src.match(/profile-download-folder-btn/g) || [];
+    // Guest menu + signed-in user menu must each contain the button —
+    // regression guard for "Did you forget to add the button? I can't see it."
+    expect(occurrences.length).toBeGreaterThanOrEqual(2);
+    expect(src).toContain('guest-dropdown-menu');
+    expect(src).toContain('user-dropdown-menu');
+    expect(src).toContain('DownloadFolderModal');
+    expect(src).toContain('Download Folder');
+  });
+
+  it('opens the system file browser via the Browse action (not a plain text field)', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const modalPath = path.resolve(__dirname, '../../src/components/common/DownloadFolderModal.tsx');
+    const src = fs.readFileSync(modalPath, 'utf8');
+    expect(src).toContain('download-folder-browse-btn');
+    expect(src).toContain('download-folder-path-input');
+    expect(src).toContain('download-folder-save-btn');
+    // Must use the OS-native picker (Tauri dialog / File System Access API)
+    expect(src).toMatch(/pickDownloadFolderViaSystemBrowser|showDirectoryPicker|pick_download_dir/);
+  });
 });

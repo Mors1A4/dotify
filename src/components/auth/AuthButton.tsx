@@ -115,28 +115,34 @@ export const AuthButton: React.FC = () => {
             <ColourSchemeSection />
 
             {/* Download folder (per-client: this device only, OS paths differ) */}
-            <button
-              type="button"
-              onClick={openDownloadSettings}
-              data-testid="profile-download-folder-btn"
-              title={downloadPath || 'Set the folder where MP3 downloads are saved on this device'}
-              className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-xl transition-colors text-left group cursor-pointer"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <FolderOpen size={15} className="text-accent flex-shrink-0" />
-                <div className="min-w-0">
-                  <span className="block">Download Folder</span>
-                  {downloadPath && (
-                    <span className="block text-[10px] text-muted font-mono truncate max-w-[180px]">
-                      {downloadPath}
+            <div className="rounded-xl border border-customBorder/60 bg-elevated/30 px-1 py-1">
+              <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-wide text-muted">
+                Downloads · This device
+              </p>
+              <button
+                type="button"
+                onClick={openDownloadSettings}
+                data-testid="profile-download-folder-btn"
+                title={downloadPath || 'Set the folder where MP3 downloads are saved on this device'}
+                className="w-full flex items-center justify-between px-2 py-2 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-lg transition-colors text-left group cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <FolderOpen size={16} className="text-accent flex-shrink-0" />
+                  <div className="min-w-0">
+                    <span className="block font-semibold text-primary">Download Folder</span>
+                    <span
+                      className="block text-[10px] text-muted font-mono truncate max-w-[180px]"
+                      data-testid="profile-download-folder-path"
+                    >
+                      {downloadPath || 'Choose where MP3s are saved…'}
                     </span>
-                  )}
+                  </div>
                 </div>
-              </div>
-              <span className="text-[10px] text-muted font-mono px-2 py-0.5 rounded-md bg-elevated border border-customBorder/50 flex-shrink-0 ml-2">
-                This device
-              </span>
-            </button>
+                <span className="text-[10px] font-bold text-accent px-2 py-1 rounded-md bg-accent/15 border border-accent/25 flex-shrink-0 ml-2">
+                  Change
+                </span>
+              </button>
+            </div>
 
             {/* Help & AI Studio */}
             <button
@@ -230,28 +236,34 @@ export const AuthButton: React.FC = () => {
           <ColourSchemeSection />
 
           {/* Download folder (per-client: this device only, OS paths differ) */}
-          <button
-            type="button"
-            onClick={openDownloadSettings}
-            data-testid="profile-download-folder-btn"
-            title={downloadPath || 'Set the folder where MP3 downloads are saved on this device'}
-            className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-xl transition-colors text-left group cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <FolderOpen size={15} className="text-accent flex-shrink-0" />
-              <div className="min-w-0">
-                <span className="block">Download Folder</span>
-                {downloadPath && (
-                  <span className="block text-[10px] text-muted font-mono truncate max-w-[160px]">
-                    {downloadPath}
+          <div className="rounded-xl border border-customBorder/60 bg-elevated/30 px-1 py-1">
+            <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-wide text-muted">
+              Downloads · This device
+            </p>
+            <button
+              type="button"
+              onClick={openDownloadSettings}
+              data-testid="profile-download-folder-btn"
+              title={downloadPath || 'Set the folder where MP3 downloads are saved on this device'}
+              className="w-full flex items-center justify-between px-2 py-2 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-lg transition-colors text-left group cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <FolderOpen size={16} className="text-accent flex-shrink-0" />
+                <div className="min-w-0">
+                  <span className="block font-semibold text-primary">Download Folder</span>
+                  <span
+                    className="block text-[10px] text-muted font-mono truncate max-w-[160px]"
+                    data-testid="profile-download-folder-path"
+                  >
+                    {downloadPath || 'Choose where MP3s are saved…'}
                   </span>
-                )}
+                </div>
               </div>
-            </div>
-            <span className="text-[10px] text-muted font-mono px-2 py-0.5 rounded-md bg-elevated border border-customBorder/50 flex-shrink-0 ml-2">
-              This device
-            </span>
-          </button>
+              <span className="text-[10px] font-bold text-accent px-2 py-1 rounded-md bg-accent/15 border border-accent/25 flex-shrink-0 ml-2">
+                Change
+              </span>
+            </button>
+          </div>
 
           {/* Help & AI Studio item */}
           <button
