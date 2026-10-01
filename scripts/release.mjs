@@ -165,6 +165,7 @@ function buildTargets(newVersion, opts) {
   if (!opts.androidOnly) {
     try { fs.unlinkSync(path.join(ROOT_DIR, 'dotify.exe')); } catch {}
     try { fs.unlinkSync(path.join(ROOT_DIR, 'dotify-setup.exe')); } catch {}
+    try { fs.unlinkSync(path.join(ROOT_DIR, 'src-tauri', 'target', 'release', 'app.exe')); } catch {}
   }
   if (!opts.desktopOnly) {
     try { fs.unlinkSync(path.join(ROOT_DIR, 'dotify.apk')); } catch {}
