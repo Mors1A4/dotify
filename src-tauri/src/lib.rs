@@ -1128,7 +1128,11 @@ fn install_windows_update(
         emit_progress(94, "Applying update to Dotify...", None);
 
         let current_exe = std::env::current_exe().unwrap_or_else(|_| dotify_dir.join("app.exe"));
-        let old_exe = current_exe.with_extension("exe.old");
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let old_exe = current_exe.with_extension(format!("old.{}.tmp", ts));
         let _ = std::fs::remove_file(&old_exe);
 
         let mut replaced_in_place = false;
@@ -1144,7 +1148,7 @@ fn install_windows_update(
         // Also keep %LOCALAPPDATA%\dotify\app.exe synced if running from another path
         let installed_exe = dotify_dir.join("app.exe");
         if installed_exe.exists() && installed_exe != current_exe {
-            let installed_old = installed_exe.with_extension("exe.old");
+            let installed_old = installed_exe.with_extension(format!("old.{}.tmp", ts));
             let _ = std::fs::remove_file(&installed_old);
             if std::fs::rename(&installed_exe, &installed_old).is_ok() {
                 if std::fs::copy(&tmp_path, &installed_exe).is_err() {
@@ -1234,7 +1238,15 @@ pub fn run() {
             }
             #[cfg(target_os = "windows")]
             {
-                let _ = std::fs::remove_file(get_dotify_local_dir().join("app.exe.old"));
+                let dotify_dir = get_dotify_local_dir();
+                if let Ok(entries) = std::fs::read_dir(&dotify_dir) {
+                    for entry in entries.flatten() {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if fname.contains(".old") || (fname.starts_with("dotify-") && fname.ends_with(".tmp")) {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
                 if let Ok(exe) = std::env::current_exe() {
                     let _ = std::fs::remove_file(exe.with_extension("exe.old"));
                 }
