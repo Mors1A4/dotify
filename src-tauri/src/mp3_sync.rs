@@ -1427,6 +1427,11 @@ pub fn probe_cast_device(ip: &str, timeout_ms: u64) -> Option<DiscoveredCastDevi
                 let udn = val.get("ssdp_udn").and_then(|v| v.as_str()).unwrap_or("");
 
                 let dev_id = format!("cast:{}:8009", ip);
+                let preserved_vol = if let Ok(map) = get_cast_devices_map().lock() {
+                    map.get(&dev_id).map(|d| d.volume).unwrap_or(0.7)
+                } else {
+                    0.7
+                };
                 let dev = DiscoveredCastDevice {
                     deviceId: dev_id.clone(),
                     deviceName: name.to_string(),
@@ -1434,7 +1439,7 @@ pub fn probe_cast_device(ip: &str, timeout_ms: u64) -> Option<DiscoveredCastDevi
                     role: "active_host".to_string(),
                     isCurrentDevice: false,
                     isActive: false,
-                    volume: 0.7,
+                    volume: preserved_vol,
                     lastSeen: now_ms(),
                     capabilities: serde_json::json!({
                         "canPlayAudio": true,
@@ -1461,6 +1466,11 @@ pub fn probe_cast_device(ip: &str, timeout_ms: u64) -> Option<DiscoveredCastDevi
     let addr = SocketAddr::new(IpAddr::V4(ipv4), 8009);
     if let Ok(_stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(timeout_ms.min(500))) {
         let dev_id = format!("cast:{}:8009", ip);
+        let preserved_vol = if let Ok(map) = get_cast_devices_map().lock() {
+            map.get(&dev_id).map(|d| d.volume).unwrap_or(0.7)
+        } else {
+            0.7
+        };
         let dev = DiscoveredCastDevice {
             deviceId: dev_id.clone(),
             deviceName: format!("Google Cast Speaker ({})", ip),
@@ -1468,7 +1478,7 @@ pub fn probe_cast_device(ip: &str, timeout_ms: u64) -> Option<DiscoveredCastDevi
             role: "active_host".to_string(),
             isCurrentDevice: false,
             isActive: false,
-            volume: 0.7,
+            volume: preserved_vol,
             lastSeen: now_ms(),
             capabilities: serde_json::json!({
                 "canPlayAudio": true,

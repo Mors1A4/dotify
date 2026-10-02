@@ -19,6 +19,7 @@ let activeCastPlayer = null;
 let activeCastDeviceId = null;
 let activeCastSessionTrack = null;
 let activeCastPlaybackState = null;
+let lastCastSeekTimestamp = 0;
 
 // Callbacks wired to ConnectHub
 let onDevicesUpdatedCallback = null;
@@ -91,6 +92,8 @@ export async function probeEurekaDevice(ip) {
             const name = data?.name || data?.device_info?.name;
             if (name) {
               const deviceId = `cast:${ip}:8009`;
+              const existingSpeaker = discoveredSpeakers.get(deviceId);
+              const resolvedVolume = existingSpeaker?.volume ?? (deviceId === activeCastDeviceId && activeCastPlaybackState?.volume != null ? activeCastPlaybackState.volume : 0.7);
               const dev = {
                 deviceId,
                 deviceName: name,
@@ -98,7 +101,7 @@ export async function probeEurekaDevice(ip) {
                 role: 'active_host',
                 isCurrentDevice: false,
                 isActive: deviceId === activeCastDeviceId,
-                volume: 0.7,
+                volume: resolvedVolume,
                 lastSeen: Date.now(),
                 capabilities: {
                   canPlayAudio: true,
@@ -136,6 +139,8 @@ export async function probeEurekaDevice(ip) {
     socket.on('connect', () => {
       socket.destroy();
       const deviceId = `cast:${ip}:8009`;
+      const existingSpeaker = discoveredSpeakers.get(deviceId);
+      const resolvedVolume = existingSpeaker?.volume ?? (deviceId === activeCastDeviceId && activeCastPlaybackState?.volume != null ? activeCastPlaybackState.volume : 0.7);
       const dev = {
         deviceId,
         deviceName: `Google Cast Speaker (${ip})`,
@@ -143,7 +148,7 @@ export async function probeEurekaDevice(ip) {
         role: 'active_host',
         isCurrentDevice: false,
         isActive: deviceId === activeCastDeviceId,
-        volume: 0.7,
+        volume: resolvedVolume,
         lastSeen: Date.now(),
         capabilities: {
           canPlayAudio: true,
@@ -414,6 +419,7 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
           contentId: streamUrl,
           contentType: 'audio/mp3',
           streamType: 'BUFFERED',
+          duration: Number(track.duration) || 0,
           metadata: {
             type: 0,
             metadataType: 0,
@@ -465,12 +471,14 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
           const duration = status.media?.duration || track.duration || 0;
 
           if (activeCastPlaybackState) {
-            // Keep isPlaying true while buffering so remote controller seekbar doesn't stall
-            const effectivePlaying = isPlaying || (isBuffering && activeCastPlaybackState.isPlaying);
-            const reportedPositionMs =
-              currentTime === 0 && (isBuffering || isPaused) && activeCastPlaybackState.positionMs > 0
-                ? activeCastPlaybackState.positionMs
-                : Math.round(currentTime * 1000);
+            // Guard against stale currentTime during buffering right after seek
+            const isRecentSeek = Date.now() - lastCastSeekTimestamp < 2500;
+            let reportedPositionMs = Math.round(currentTime * 1000);
+            if (isRecentSeek && (isBuffering || currentTime === 0)) {
+              reportedPositionMs = activeCastPlaybackState.positionMs;
+            } else if (currentTime === 0 && (isBuffering || isPaused) && activeCastPlaybackState.positionMs > 0) {
+              reportedPositionMs = activeCastPlaybackState.positionMs;
+            }
 
             activeCastPlaybackState = {
               ...activeCastPlaybackState,
@@ -617,9 +625,27 @@ export async function sendCastCommand(action, data = {}, targetDeviceId = null) 
       case 'seek':
       case 'CMD_SEEK':
         if (player) {
-          const seconds = data.seconds ?? (data.positionMs ? data.positionMs / 1000 : 0);
-          player.seek(seconds, () => {});
-          if (activeCastPlaybackState) activeCastPlaybackState.positionMs = Math.round(seconds * 1000);
+          const seconds = Math.max(0, data.seconds ?? (data.positionMs ? data.positionMs / 1000 : 0));
+          lastCastSeekTimestamp = Date.now();
+          if (activeCastPlaybackState) {
+            activeCastPlaybackState.positionMs = Math.round(seconds * 1000);
+            activeCastPlaybackState.timestamp = Date.now();
+            if (onPlaybackStateCallback && activeCastDeviceId) {
+              onPlaybackStateCallback(activeCastPlaybackState, activeCastDeviceId);
+            }
+          }
+          player.seek(seconds, (err, status) => {
+            if (err) {
+              console.warn('[CastHub] Cast seek error:', err.message);
+            } else if (status && activeCastPlaybackState) {
+              const cur = status.currentTime != null ? status.currentTime : seconds;
+              activeCastPlaybackState.positionMs = Math.round(cur * 1000);
+              activeCastPlaybackState.timestamp = Date.now();
+              if (onPlaybackStateCallback && activeCastDeviceId) {
+                onPlaybackStateCallback(activeCastPlaybackState, activeCastDeviceId);
+              }
+            }
+          });
           return true;
         }
         break;

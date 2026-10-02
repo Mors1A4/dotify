@@ -31,6 +31,7 @@ export class RemoteProgressInterpolator {
   private isPlaying: boolean = false;
   private intervalId: any = null;
   private clockOffsetMs: number = 0;
+  private lastSeekTime: number = 0;
 
   public setClockOffset(offsetMs: number) {
     this.clockOffsetMs = offsetMs;
@@ -55,6 +56,13 @@ export class RemoteProgressInterpolator {
 
     const currentEst = this.getCurrentPosition();
     const diff = Math.abs(newPositionSec - currentEst);
+
+    // Guard against stale pre-seek updates within 2.5s of a local seek
+    if (Date.now() - this.lastSeekTime < 2500) {
+      if (Math.abs(newPositionSec - this.anchorPositionSec) > 3.0) {
+        return;
+      }
+    }
 
     this.isPlaying = params.isPlaying;
     this.durationSec = newDurationSec;
@@ -100,6 +108,7 @@ export class RemoteProgressInterpolator {
   public seek(seconds: number) {
     this.anchorPositionSec = Math.max(0, seconds);
     this.anchorLocalPerfTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.lastSeekTime = Date.now();
     this.tick();
   }
 
@@ -515,7 +524,11 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
   // Wire connectClient listeners
   connectClient.onDeviceListUpdate((devices, activeId) => {
-    const active = devices.find((d) => d.deviceId === activeId) || null;
+    const curActive = get().activeDevice;
+    const target = devices.find((d) => d.deviceId === activeId) || null;
+    const active = target && curActive && target.deviceId === curActive.deviceId
+      ? { ...target, volume: curActive.volume ?? target.volume }
+      : target;
     set({
       remoteDevices: devices,
       activeDevice: active,
@@ -819,6 +832,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       set({ connectMode: mode, activeDevice: activeDevice || null });
       if (mode === 'remote_controller') {
         audioEngine.setControllerMode(true, (action, data) => {
+          if (action === 'seek') {
+            const sec = data?.seconds ?? (data?.positionMs ? data.positionMs / 1000 : 0);
+            remoteProgressInterpolator.seek(sec);
+          }
           connectClient.sendRemoteCommand(action as any, data);
         });
         remoteProgressInterpolator.start();
@@ -879,6 +896,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
           activeDevice: foundDev,
         });
         audioEngine.setControllerMode(true, (action, data) => {
+          if (action === 'seek') {
+            const sec = data?.seconds ?? (data?.positionMs ? data.positionMs / 1000 : 0);
+            remoteProgressInterpolator.seek(sec);
+          }
           connectClient.sendRemoteCommand(action as any, data);
         });
         remoteProgressInterpolator.start();

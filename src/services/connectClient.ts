@@ -78,6 +78,8 @@ export class ConnectClient {
   private customWsUrl?: string;
 
   private discoveredDevices: Map<string, ConnectedDevice> = new Map();
+  private rememberedVolumes: Map<string, number> = new Map();
+  private notifyDeviceListTimer: any = null;
   private activeDeviceId: string | null = null;
   private reconnectAttempt: number = 0;
   private reconnectTimeout: any = null;
@@ -128,6 +130,14 @@ export class ConnectClient {
       this.activeDeviceId = this.localDevice.deviceId;
     }
 
+    // Load remembered device volumes
+    const savedVols = safeStorage.getItem<Record<string, number>>('dotify_device_volumes', {});
+    if (savedVols && typeof savedVols === 'object') {
+      for (const [k, v] of Object.entries(savedVols)) {
+        if (typeof v === 'number') this.rememberedVolumes.set(k, v);
+      }
+    }
+
     this.initBroadcastChannel();
     if (this.enableWebSocket) {
       this.initWebSocket();
@@ -142,6 +152,9 @@ export class ConnectClient {
   }
 
   public setLocalDevice(partial: Partial<ConnectedDevice>) {
+    if (typeof partial.volume === 'number') {
+      this.rememberedVolumes.set(this.localDevice.deviceId, partial.volume);
+    }
     this.localDevice = { ...this.localDevice, ...partial };
     this.discoveredDevices.set(this.localDevice.deviceId, { ...this.localDevice });
     this.announceDevice();
@@ -171,10 +184,43 @@ export class ConnectClient {
     this.notifyDeviceList();
   }
 
+  public updateDeviceVolume(deviceId: string, volume: number) {
+    if (!deviceId) return;
+    const clamped = Math.max(0, Math.min(1, volume));
+    this.rememberedVolumes.set(deviceId, clamped);
+    try {
+      const obj: Record<string, number> = {};
+      for (const [k, v] of this.rememberedVolumes.entries()) {
+        obj[k] = v;
+      }
+      safeStorage.setItem('dotify_device_volumes', obj);
+    } catch {}
+
+    const dev = this.discoveredDevices.get(deviceId);
+    if (dev) {
+      this.discoveredDevices.set(deviceId, {
+        ...dev,
+        volume: clamped,
+      });
+      this.notifyDeviceList();
+    }
+  }
+
+  public getRememberedVolume(deviceId: string): number | undefined {
+    return this.rememberedVolumes.get(deviceId);
+  }
+
   public registerExternalDevice(dev: ConnectedDevice) {
     if (!dev || !dev.deviceId || dev.deviceId === this.localDevice.deviceId) return;
+    const existing = this.discoveredDevices.get(dev.deviceId);
+    const rememberedVol = this.rememberedVolumes.get(dev.deviceId);
+    const resolvedVolume = typeof dev.volume === 'number' && dev.volume !== 0.7
+      ? dev.volume
+      : (rememberedVol ?? existing?.volume ?? dev.volume ?? 0.8);
+
     this.discoveredDevices.set(dev.deviceId, {
       ...dev,
+      volume: resolvedVolume,
       isCurrentDevice: false,
       lastSeen: Date.now(),
     });
@@ -185,8 +231,15 @@ export class ConnectClient {
     if (!Array.isArray(devices)) return;
     for (const dev of devices) {
       if (!dev || !dev.deviceId || dev.deviceId === this.localDevice.deviceId) continue;
+      const existing = this.discoveredDevices.get(dev.deviceId);
+      const rememberedVol = this.rememberedVolumes.get(dev.deviceId);
+      const resolvedVolume = typeof dev.volume === 'number' && dev.volume !== 0.7
+        ? dev.volume
+        : (rememberedVol ?? existing?.volume ?? dev.volume ?? 0.8);
+
       this.discoveredDevices.set(dev.deviceId, {
         ...dev,
+        volume: resolvedVolume,
         isCurrentDevice: false,
         lastSeen: Date.now(),
       });
@@ -797,10 +850,14 @@ export class ConnectClient {
   }
 
   private notifyDeviceList() {
-    const list = this.getDiscoveredDevices();
-    for (const listener of this.deviceListListeners) {
-      listener(list, this.activeDeviceId);
-    }
+    if (this.notifyDeviceListTimer) return;
+    this.notifyDeviceListTimer = setTimeout(() => {
+      this.notifyDeviceListTimer = null;
+      const list = this.getDiscoveredDevices();
+      for (const listener of this.deviceListListeners) {
+        listener(list, this.activeDeviceId);
+      }
+    }, 20);
   }
 
   // Subscription methods
