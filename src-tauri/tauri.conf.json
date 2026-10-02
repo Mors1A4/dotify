@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "dotify",
-  "version": "1.0.18",
+  "version": "1.0.20",
   "identifier": "com.dotify.music",
   "build": {
     "frontendDist": "../dist",

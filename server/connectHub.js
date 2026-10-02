@@ -180,6 +180,15 @@ export function setupConnectHub(server, options = {}) {
                 break;
               }
 
+              const senderClient = senderId ? clients.get(senderId) : null;
+              // If sender is marked as remote_controller, or if active host is a Cast speaker, do NOT usurp or pause
+              if (senderClient?.device?.role === 'remote_controller') {
+                break;
+              }
+              if (activeDeviceId && isCastDeviceId(activeDeviceId) && senderId !== activeDeviceId) {
+                break;
+              }
+
               activePlaybackState = state;
               if (senderId) {
                 const prevActiveId = activeDeviceId;
@@ -314,6 +323,18 @@ export function setupConnectHub(server, options = {}) {
                 broadcastDeviceList();
 
                 if (snapshot && snapshot.track) {
+                  activePlaybackState = {
+                    currentTrack: snapshot.track,
+                    activeTrack: snapshot.track,
+                    queue: snapshot.queue || [snapshot.track],
+                    currentTrackIndex: snapshot.currentTrackIndex ?? 0,
+                    isPlaying: true,
+                    positionMs: snapshot.positionMs || 0,
+                    durationMs: (snapshot.track.duration || 0) * 1000,
+                    volume: snapshot.volume ?? 0.8,
+                    timestamp: Date.now(),
+                  };
+
                   playOnCastDevice(targetId, snapshot.track, {
                     positionMs: snapshot.positionMs,
                     volume: snapshot.volume,
@@ -519,7 +540,10 @@ export function setupConnectHub(server, options = {}) {
     setupCastHub({
       onDevicesUpdated: () => broadcastDeviceList(),
       onPlaybackState: (state, castId) => {
-        activePlaybackState = state;
+        activePlaybackState = {
+          ...(activePlaybackState || {}),
+          ...state,
+        };
         activeDeviceId = castId;
         for (const client of clients.values()) {
           if (client.ws.readyState === WebSocket.OPEN) {
@@ -529,6 +553,8 @@ export function setupConnectHub(server, options = {}) {
                   type: 'PLAYBACK_STATE',
                   state: activePlaybackState,
                   activeDeviceId: castId,
+                  senderDeviceId: castId,
+                  fromDeviceId: castId,
                   timestamp: Date.now(),
                 })
               );
@@ -537,19 +563,23 @@ export function setupConnectHub(server, options = {}) {
         }
       },
       onTrackFinished: (castId) => {
-        for (const client of clients.values()) {
-          if (client.device.role === 'remote_controller' && client.ws.readyState === WebSocket.OPEN) {
-            try {
-              client.ws.send(
-                JSON.stringify({
-                  type: 'REMOTE_COMMAND',
-                  command: { action: 'next' },
-                  fromDeviceId: castId,
-                  timestamp: Date.now(),
-                })
-              );
-            } catch {}
-          }
+        // Elect exactly one authoritative controller to advance the queue
+        const controllers = Array.from(clients.values()).filter(
+          (c) => c.device.role === 'remote_controller' && c.ws.readyState === WebSocket.OPEN
+        );
+        if (controllers.length > 0) {
+          const primary = controllers[0];
+          try {
+            primary.ws.send(
+              JSON.stringify({
+                type: 'REMOTE_COMMAND',
+                command: { action: 'next' },
+                fromDeviceId: castId,
+                targetDeviceId: primary.device.deviceId,
+                timestamp: Date.now(),
+              })
+            );
+          } catch {}
         }
       },
     });

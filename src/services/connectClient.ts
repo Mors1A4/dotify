@@ -50,6 +50,25 @@ export interface ConnectClientOptions {
 
 import { getWsUrl } from './apiConfig';
 
+let firestoreDb: any = null;
+let firestoreApi: any = null;
+
+async function getFirestoreRelay() {
+  if (firestoreDb && firestoreApi) return { db: firestoreDb, ...firestoreApi };
+  try {
+    const fb = await import('./firebase');
+    const fs = await import('firebase/firestore');
+    if (fb && fb.db) {
+      firestoreDb = fb.db;
+      firestoreApi = fs;
+      return { db: firestoreDb, ...fs };
+    }
+  } catch {
+    // Graceful fallback if in offline or test mode
+  }
+  return null;
+}
+
 export class ConnectClient {
   private localDevice: ConnectedDevice;
   private ws: WebSocket | null = null;
@@ -64,6 +83,9 @@ export class ConnectClient {
   private reconnectTimeout: any = null;
   private isDestroyed: boolean = false;
   private processedMessageIds: Set<string> = new Set();
+  private firestoreUnsubscribers: Array<() => void> = [];
+  private isFirestoreInitialized: boolean = false;
+  private initTimestamp: number = Date.now();
 
   // Listeners
   private deviceListListeners: Set<(devices: ConnectedDevice[], activeId: string | null) => void> = new Set();
@@ -109,6 +131,9 @@ export class ConnectClient {
     this.initBroadcastChannel();
     if (this.enableWebSocket) {
       this.initWebSocket();
+    }
+    if (typeof window !== 'undefined' && options.enableWebSocket !== false) {
+      this.initFirestoreRelay().catch(() => {});
     }
   }
 
@@ -167,6 +192,145 @@ export class ConnectClient {
       });
     }
     this.notifyDeviceList();
+  }
+
+  private getSessionId(): string {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const uid = localStorage.getItem('dotify_user_id') || localStorage.getItem('dotify_connect_session_id');
+        if (uid && uid.trim()) {
+          return `sess_${uid.trim().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+        }
+      }
+    } catch {}
+    return 'sess_default_network';
+  }
+
+  private async initFirestoreRelay() {
+    if (this.isFirestoreInitialized || this.isDestroyed) return;
+    if (typeof window === 'undefined') return;
+
+    const fs = await getFirestoreRelay();
+    if (!fs || !fs.db) return;
+    this.isFirestoreInitialized = true;
+
+    const sessionId = this.getSessionId();
+
+    try {
+      // 1. Announce this device presence in Firestore
+      const devDoc = fs.doc(fs.db, 'connect_sessions', sessionId, 'devices', this.localDevice.deviceId);
+      await fs.setDoc(devDoc, JSON.parse(JSON.stringify({
+        ...this.localDevice,
+        lastSeen: Date.now(),
+      })), { merge: true });
+
+      // 2. Listen to device presence changes
+      const devCol = fs.collection(fs.db, 'connect_sessions', sessionId, 'devices');
+      const unsubDevs = fs.onSnapshot(devCol, (snap: any) => {
+        const remoteDevs: ConnectedDevice[] = [];
+        const now = Date.now();
+        snap.forEach((docSnap: any) => {
+          const data = docSnap.data();
+          if (data && data.deviceId && data.deviceId !== this.localDevice.deviceId) {
+            if (now - (data.lastSeen || 0) < 180000) {
+              remoteDevs.push(data as ConnectedDevice);
+            }
+          }
+        });
+        if (remoteDevs.length > 0) {
+          this.registerExternalDevices(remoteDevs);
+        }
+      });
+      this.firestoreUnsubscribers.push(unsubDevs);
+
+      // 3. Listen to shared playback state
+      const stateDoc = fs.doc(fs.db, 'connect_sessions', sessionId, 'state', 'current');
+      const unsubState = fs.onSnapshot(stateDoc, (snap: any) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data && data.senderDeviceId !== this.localDevice.deviceId) {
+          if (data.state && Date.now() - (data.timestamp || 0) < 60000) {
+            this.handleIncomingMessage({
+              type: 'PLAYBACK_STATE',
+              state: data.state,
+              activeDeviceId: data.activeDeviceId,
+              senderDeviceId: data.senderDeviceId,
+              fromDeviceId: data.senderDeviceId,
+              timestamp: data.timestamp || Date.now(),
+            });
+          }
+        }
+      });
+      this.firestoreUnsubscribers.push(unsubState);
+
+      // 4. Listen to remote commands directed to this device or active host
+      const cmdCol = fs.collection(fs.db, 'connect_sessions', sessionId, 'commands');
+      const unsubCmds = fs.onSnapshot(cmdCol, (snap: any) => {
+        snap.docChanges().forEach(async (change: any) => {
+          if (change.type === 'added') {
+            const data = change.doc.data();
+            if (data && data.fromDeviceId !== this.localDevice.deviceId) {
+              const isTargeted =
+                !data.targetDeviceId ||
+                data.targetDeviceId === this.localDevice.deviceId ||
+                (this.localDevice.isActive && !data.targetDeviceId);
+
+              if (isTargeted && data.command && Date.now() - (data.timestamp || 0) < 15000) {
+                this.handleIncomingMessage({
+                  type: 'REMOTE_COMMAND',
+                  command: data.command,
+                  fromDeviceId: data.fromDeviceId,
+                  targetDeviceId: data.targetDeviceId,
+                  timestamp: data.timestamp,
+                });
+                try {
+                  await fs.deleteDoc(change.doc.ref);
+                } catch {}
+              }
+            }
+          }
+        });
+      });
+      this.firestoreUnsubscribers.push(unsubCmds);
+    } catch (err) {
+      console.debug('[ConnectClient] Firestore relay setup deferred:', err);
+    }
+  }
+
+  private async syncMessageToFirestore(msg: any) {
+    if (typeof window === 'undefined') return;
+    const fs = await getFirestoreRelay();
+    if (!fs || !fs.db) return;
+
+    const sessionId = this.getSessionId();
+
+    try {
+      if (msg.type === 'PLAYBACK_STATE') {
+        const stateDoc = fs.doc(fs.db, 'connect_sessions', sessionId, 'state', 'current');
+        await fs.setDoc(stateDoc, JSON.parse(JSON.stringify({
+          state: msg.state,
+          activeDeviceId: msg.activeDeviceId || this.activeDeviceId || this.localDevice.deviceId,
+          senderDeviceId: this.localDevice.deviceId,
+          timestamp: Date.now(),
+        })));
+      } else if (msg.type === 'REMOTE_COMMAND') {
+        const cmdDoc = fs.doc(fs.collection(fs.db, 'connect_sessions', sessionId, 'commands'));
+        await fs.setDoc(cmdDoc, JSON.parse(JSON.stringify({
+          command: msg.command,
+          targetDeviceId: msg.targetDeviceId || this.activeDeviceId || '',
+          fromDeviceId: this.localDevice.deviceId,
+          timestamp: Date.now(),
+        })));
+      } else if (msg.type === 'DEVICE_ANNOUNCE') {
+        const devDoc = fs.doc(fs.db, 'connect_sessions', sessionId, 'devices', this.localDevice.deviceId);
+        await fs.setDoc(devDoc, JSON.parse(JSON.stringify({
+          ...this.localDevice,
+          lastSeen: Date.now(),
+        })), { merge: true });
+      }
+    } catch (err) {
+      console.debug('[ConnectClient] Failed to push to Firestore relay:', err);
+    }
   }
 
   private initBroadcastChannel() {
@@ -320,10 +484,17 @@ export class ConnectClient {
       case 'STATE_SYNC': {
         const state: PlaybackStatePayload = msg.state || msg.payload;
         if (state) {
+          const prevActiveId = this.activeDeviceId;
           if (msg.activeDeviceId) {
             this.activeDeviceId = msg.activeDeviceId;
           } else if (msg.senderDeviceId) {
             this.activeDeviceId = msg.senderDeviceId;
+          } else if (msg.fromDeviceId) {
+            this.activeDeviceId = msg.fromDeviceId;
+          }
+
+          if (this.activeDeviceId && this.activeDeviceId !== prevActiveId) {
+            this.notifyDeviceList();
           }
 
           // Latency & clock drift compensation
@@ -342,8 +513,9 @@ export class ConnectClient {
             positionMs: compensatedPositionMs,
           };
 
+          const fromId = msg.senderDeviceId || msg.fromDeviceId || msg.activeDeviceId || this.activeDeviceId || '';
           for (const listener of this.playbackStateListeners) {
-            listener(compensatedState, msg.senderDeviceId || msg.fromDeviceId);
+            listener(compensatedState, fromId);
           }
         }
         break;
@@ -351,7 +523,7 @@ export class ConnectClient {
 
       case 'REMOTE_COMMAND': {
         const target = msg.targetDeviceId;
-        if (!target || target === this.localDevice.deviceId) {
+        if (!target || target === this.localDevice.deviceId || (this.localDevice.isActive && !target)) {
           const cmd: RemoteCommand = msg.command;
           if (cmd) {
             for (const listener of this.remoteCommandListeners) {
@@ -496,6 +668,9 @@ export class ConnectClient {
         console.warn('[ConnectClient] Failed to send over BroadcastChannel:', err);
       }
     }
+
+    // 3. Firestore Relay send (for serverless standalone sync)
+    this.syncMessageToFirestore(enriched).catch(() => {});
   }
 
   public announceDevice() {
@@ -670,6 +845,10 @@ export class ConnectClient {
       } catch {}
       this.broadcastChannel = null;
     }
+    for (const unsub of this.firestoreUnsubscribers) {
+      try { unsub(); } catch {}
+    }
+    this.firestoreUnsubscribers = [];
     this.deviceListListeners.clear();
     this.playbackStateListeners.clear();
     this.remoteCommandListeners.clear();

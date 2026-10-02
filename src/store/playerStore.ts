@@ -316,6 +316,8 @@ const STORAGE_FOLLOWED_ARTISTS = 'followed_artists';
 const STORAGE_VOLUME = 'audio_volume';
 const STORAGE_AUTOPLAY = 'autoplay_enabled';
 
+let lastUserVolumeInteraction = 0;
+
 const isCleanTrack = (t: Track | null | undefined): boolean => {
   if (!t || typeof t !== 'object') return false;
   const id = String(t.id || '');
@@ -795,6 +797,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     },
 
     setConnectMode: (mode: ConnectMode, activeDevice?: ConnectedDevice | null) => {
+      lastUserVolumeInteraction = 0;
       set({ connectMode: mode, activeDevice: activeDevice || null });
       if (mode === 'remote_controller') {
         audioEngine.setControllerMode(true, (action, data) => {
@@ -828,8 +831,17 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return;
       }
 
-      const activeDevId = connectClient.getActiveDeviceId() || fromId;
+      const activeDevId =
+        (fromId && fromId !== localDev.deviceId)
+          ? fromId
+          : ((state as any).activeDeviceId && (state as any).activeDeviceId !== localDev.deviceId)
+            ? (state as any).activeDeviceId
+            : (connectClient.getActiveDeviceId() !== localDev.deviceId ? connectClient.getActiveDeviceId() : (fromId || null));
       const isRemoteActive = Boolean(activeDevId && activeDevId !== localDev.deviceId);
+
+      if (activeDevId && activeDevId !== localDev.deviceId) {
+        connectClient.setActiveDeviceId(activeDevId);
+      }
 
       // If a remote device or speaker is active on the network and local device is idle, adopt remote_controller mode
       if (isRemoteActive && targetTrack && currentConnectMode !== 'remote_controller') {
@@ -861,7 +873,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         currentTrackIndex: state.currentTrackIndex ?? state.currentIndex ?? 0,
         queue: state.queue && state.queue.length > 0 ? state.queue : get().queue,
         isPlaying: state.isPlaying,
-        volume: state.volume ?? get().volume,
+        volume:
+          typeof state.volume === 'number' && Date.now() - lastUserVolumeInteraction > 1500
+            ? state.volume
+            : get().volume,
         repeatMode: state.repeatMode || get().repeatMode,
         shuffle: state.shuffle ?? get().shuffle,
       });
@@ -1025,8 +1040,6 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return false;
       }
 
-      set({ isTransferringPlayback: true, transferringToId: targetDeviceId });
-
       const currentPosSec =
         store.connectMode === 'remote_controller'
           ? remoteProgressInterpolator.getCurrentPosition()
@@ -1044,6 +1057,24 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         capturedAt: Date.now(),
       };
 
+      const targetDev = store.remoteDevices.find((d) => d.deviceId === targetDeviceId) || {
+        deviceId: targetDeviceId,
+        deviceName: targetDeviceId.startsWith('cast:') ? 'Google Cast Speaker' : 'Remote Device',
+        deviceType: targetDeviceId.startsWith('cast:') ? ('speaker' as const) : ('desktop' as const),
+        role: 'active_host' as const,
+        isCurrentDevice: false,
+        isActive: true,
+        volume: store.volume,
+        lastSeen: Date.now(),
+      };
+
+      set({
+        connectMode: 'remote_controller',
+        activeDevice: targetDev,
+        isTransferringPlayback: true,
+        transferringToId: targetDeviceId,
+      });
+
       audioEngine.setControllerMode(true, (action, data) => {
         connectClient.sendRemoteCommand(action as any, data);
       });
@@ -1055,23 +1086,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         remoteTimestamp: Date.now(),
       });
 
-      const targetDev = store.remoteDevices.find((d) => d.deviceId === targetDeviceId);
-
       try {
         const success = await connectClient.transferPlayback(targetDeviceId, snapshot);
         if (success) {
           set({
-            connectMode: 'remote_controller',
-            activeDevice: targetDev || {
-              deviceId: targetDeviceId,
-              deviceName: targetDeviceId.startsWith('cast:') ? 'Google Cast Speaker' : 'Remote Device',
-              deviceType: targetDeviceId.startsWith('cast:') ? 'speaker' : 'desktop',
-              role: 'active_host',
-              isCurrentDevice: false,
-              isActive: true,
-              volume: store.volume,
-              lastSeen: Date.now(),
-            },
             isTransferringPlayback: false,
             transferringToId: null,
           });
@@ -1400,6 +1418,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     },
 
     setVolume: (vol: number) => {
+      lastUserVolumeInteraction = Date.now();
       const clamped = Math.max(0, Math.min(1, vol));
       if (get().connectMode === 'remote_controller') {
         sendThrottledRemoteVolume(clamped);

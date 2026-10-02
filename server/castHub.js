@@ -316,7 +316,11 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
   const rawStreamUrl = track.streamUrl || '';
   let streamUrl = makeLanStreamUrl(rawStreamUrl);
   const lanIp = getLocalLanIp();
-  if (!streamUrl && track.title && track.artist) {
+
+  // If track has a direct public CDN stream (e.g. Deezer preview or online stream), prefer direct CDN stream
+  if (previewUrl && (previewUrl.startsWith('https://') || previewUrl.startsWith('http://')) && !previewUrl.includes('localhost') && !previewUrl.includes('127.0.0.1')) {
+    streamUrl = previewUrl;
+  } else if (!streamUrl && track.title && track.artist) {
     const previewParam = previewUrl ? `&preview=${encodeURIComponent(previewUrl)}` : '';
     streamUrl = `http://${lanIp}:3001/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(track.title)}${previewParam}`;
   } else if (streamUrl && streamUrl.includes('/api/stream/track') && previewUrl && !streamUrl.includes('preview=')) {
@@ -389,7 +393,12 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
           },
         };
 
-        player.load(media, { autoplay: true, currentTime: positionSeconds }, (loadErr, status) => {
+        const loadOptions = { autoplay: true };
+        if (positionSeconds > 1) {
+          loadOptions.currentTime = positionSeconds;
+        }
+
+        player.load(media, loadOptions, (loadErr, status) => {
           if (loadErr) {
             console.warn('[CastHub] Error loading media on speaker:', loadErr.message);
             return reject(loadErr);
@@ -420,14 +429,22 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
 
           const isPlaying = status.playerState === 'PLAYING';
           const isPaused = status.playerState === 'PAUSED';
+          const isBuffering = status.playerState === 'BUFFERING';
           const currentTime = status.currentTime || 0;
           const duration = status.media?.duration || track.duration || 0;
 
           if (activeCastPlaybackState) {
+            // Keep isPlaying true while buffering so remote controller seekbar doesn't stall
+            const effectivePlaying = isPlaying || (isBuffering && activeCastPlaybackState.isPlaying);
+            const reportedPositionMs =
+              currentTime === 0 && (isBuffering || isPaused) && activeCastPlaybackState.positionMs > 0
+                ? activeCastPlaybackState.positionMs
+                : Math.round(currentTime * 1000);
+
             activeCastPlaybackState = {
               ...activeCastPlaybackState,
-              isPlaying,
-              positionMs: Math.round(currentTime * 1000),
+              isPlaying: effectivePlaying,
+              positionMs: reportedPositionMs,
               durationMs: Math.round(duration * 1000),
               timestamp: Date.now(),
             };
@@ -613,9 +630,15 @@ export function closeActiveCastSession() {
     } catch {}
     activeCastClient = null;
   }
+
+  const prevDeviceId = activeCastDeviceId;
   activeCastDeviceId = null;
   activeCastSessionTrack = null;
   activeCastPlaybackState = null;
+
+  if (onPlaybackStateCallback && prevDeviceId) {
+    onPlaybackStateCallback({ isPlaying: false, positionMs: 0, currentTrack: null, timestamp: Date.now() }, prevDeviceId);
+  }
 }
 
 /**

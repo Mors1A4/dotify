@@ -1,7 +1,7 @@
 {
   "name": "notify",
   "private": true,
-  "version": "1.0.18",
+  "version": "1.0.20",
   "type": "module",
   "scripts": {
     "dev": "concurrently --restart-tries 3 --restart-after 1000 -n \"VITE,API\" -c \"cyan,magenta\" \"vite --host\" \"node server/index.js\"",
