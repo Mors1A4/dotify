@@ -407,11 +407,6 @@ export async function scanLanSubnetForPeers() {
   return Array.from(discoveredPeers.values());
 }
 
-async function resolveStreamUrlViaYtdlp() {
-  // yt-dlp binary extraction removed in favor of unified client-side YouTube streaming
-  return null;
-}
-
 const activeDownloads = new Map();
 
 async function saveTrackToDisk(track, options = {}) {
@@ -464,7 +459,7 @@ async function saveTrackToDisk(track, options = {}) {
         }
         fs.writeFileSync(tmpPath, buf);
       } else {
-        // Resolve full stream URL via yt-dlp or direct streamUrl
+        // Resolve full stream URL via direct streamUrl
         let targetUrl = null;
         const rawUrl = String(track.streamUrl || '');
         if (
@@ -473,8 +468,6 @@ async function saveTrackToDisk(track, options = {}) {
           !rawUrl.includes('/api/stream/track')
         ) {
           targetUrl = rawUrl;
-        } else {
-          targetUrl = await resolveStreamUrlViaYtdlp(track);
         }
 
         if (!targetUrl) {

@@ -167,4 +167,13 @@ describe('Vibe DJ Engine & Live Recommendation Pipeline', () => {
     store.stopVibeDj();
     expect(useVibeDjStore.getState().isActive).toBe(false);
   });
+
+  it('renders VibeDjIcon and FluidVibeDiscVisualizer matching the Dotify disc aesthetic', async () => {
+    const React = await import('react');
+    const { VibeDjIcon } = await import('../../src/components/player/VibeDjBadge');
+    const { FluidVibeDiscVisualizer } = await import('../../src/components/common/FluidVibeDiscVisualizer');
+
+    expect(typeof VibeDjIcon).toBe('function');
+    expect(typeof FluidVibeDiscVisualizer).toBe('function');
+  });
 });

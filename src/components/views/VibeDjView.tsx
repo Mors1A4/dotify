@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { getTrackArtwork, DEFAULT_MUSIC_ARTWORK } from '../../services/artworkService';
 import { VibeDjArtistRecommendation, VibeDjTrackRecommendation } from '../../types/vibeDj';
+import { FluidVibeDiscVisualizer } from '../common/FluidVibeDiscVisualizer';
 
 export const VibeDjView: React.FC = () => {
   const {
@@ -157,43 +158,26 @@ export const VibeDjView: React.FC = () => {
               </div>
             </div>
 
-            {/* Right: Spinning Vinyl Deck of Current Song */}
+            {/* Right: Fluid Audio-Reactive Disc Deck */}
             <div className="flex flex-col items-center">
-              <div className="relative group w-48 h-48 md:w-56 md:h-56">
-                {/* Vinyl record disc */}
-                <div
-                  className={`absolute inset-0 rounded-full bg-stone-950 border-4 border-stone-800 shadow-2xl flex items-center justify-center transition-all ${
-                    isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
-                  }`}
-                  style={{
-                    boxShadow: `0 0 35px ${accentColor}40`,
-                  }}
-                >
-                  {/* Concentric vinyl grooves */}
-                  <div className="absolute inset-4 rounded-full border border-stone-800/80 pointer-events-none" />
-                  <div className="absolute inset-8 rounded-full border border-stone-800/60 pointer-events-none" />
-                  <div className="absolute inset-12 rounded-full border border-stone-800/40 pointer-events-none" />
-
-                  {/* Album art center sticker */}
-                  <img
-                    src={currentArtwork}
-                    alt={displayTrack?.title || 'Current Vibe'}
-                    className="w-24 h-24 md:w-28 md:h-28 rounded-full object-cover shadow-inner border-2 border-stone-900 pointer-events-none"
-                  />
-                  {/* Center hole */}
-                  <div className="absolute w-5 h-5 rounded-full bg-stone-900 border border-stone-700 pointer-events-none" />
-                </div>
+              <div className="relative group flex items-center justify-center p-2">
+                <FluidVibeDiscVisualizer
+                  size={210}
+                  themeColor={accentColor}
+                  accentColor={accentColor}
+                  className="drop-shadow-[0_0_35px_rgba(0,0,0,0.85)]"
+                />
 
                 {/* Center play/pause overlay on hover */}
                 <button
                   onClick={togglePlay}
-                  className="absolute inset-0 rounded-full flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-xs text-white"
+                  className="absolute inset-0 m-auto w-16 h-16 rounded-full flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-all backdrop-blur-xs text-white shadow-xl hover:scale-110 active:scale-95 z-20 cursor-pointer"
                   title={isPlaying ? 'Pause' : 'Play'}
                 >
                   {isPlaying ? (
-                    <Pause size={36} fill="currentColor" />
+                    <Pause size={30} fill="currentColor" />
                   ) : (
-                    <Play size={36} fill="currentColor" className="ml-1" />
+                    <Play size={30} fill="currentColor" className="ml-1" />
                   )}
                 </button>
               </div>
