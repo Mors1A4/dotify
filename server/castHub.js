@@ -469,7 +469,12 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
           const isPaused = status.playerState === 'PAUSED';
           const isBuffering = status.playerState === 'BUFFERING';
           const currentTime = status.currentTime || 0;
-          const duration = status.media?.duration || track.duration || 0;
+
+          // Invariant: Guard against truncated ~29s/30s preview duration overriding true track duration (> 45s)
+          const reportedDuration = Number(status.media?.duration) || 0;
+          const knownTrackDuration = Number(track.duration) || 0;
+          const isTruncated = reportedDuration > 0 && reportedDuration <= 33 && knownTrackDuration > 45;
+          const effectiveDuration = isTruncated || !reportedDuration ? knownTrackDuration : reportedDuration;
 
           if (activeCastPlaybackState) {
             // Guard against stale currentTime during buffering right after seek
@@ -483,9 +488,9 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
 
             activeCastPlaybackState = {
               ...activeCastPlaybackState,
-              isPlaying: effectivePlaying,
+              isPlaying,
               positionMs: reportedPositionMs,
-              durationMs: Math.round(duration * 1000),
+              durationMs: Math.round(effectiveDuration * 1000),
               timestamp: Date.now(),
             };
 

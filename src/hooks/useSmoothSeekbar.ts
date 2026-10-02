@@ -22,13 +22,19 @@ function resolveEffectiveDuration(duration: number, track: Track | null | undefi
   if (isLiveStreamTrack(duration, track)) {
     return Infinity;
   }
+  const trackDur =
+    track && typeof track.duration === 'number' && isFinite(track.duration) && track.duration > 0
+      ? track.duration
+      : 0;
+
+  // Strict invariant: Guard against truncated ~29s/30s preview clip overriding true track duration
   if (typeof duration === 'number' && isFinite(duration) && duration > 0) {
+    if (duration <= 33 && trackDur > 45) {
+      return trackDur;
+    }
     return duration;
   }
-  if (track && typeof track.duration === 'number' && isFinite(track.duration) && track.duration > 0) {
-    return track.duration;
-  }
-  return 0;
+  return trackDur;
 }
 
 export interface SmoothSeekbarOptions {
