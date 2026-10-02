@@ -246,7 +246,7 @@ function verifyApkVersion(apkPath, expectedVersion) {
 function publishToGitHubReleases(version, notes, ghToken, opts = {}) {
   console.log(`\n[3/4] Publishing v${version} binaries to GitHub Releases (${GITHUB_REPO})...`);
 
-  const env = { ...process.env };
+  const env = { ...process.env, GODEBUG: 'http2client=0' };
   if (ghToken) {
     env.GH_TOKEN = ghToken;
   }
@@ -329,15 +329,7 @@ function publishToGitHubReleases(version, notes, ghToken, opts = {}) {
   });
 
   if (viewRelease.status === 0) {
-    console.log(`Release ${tag} already exists; uploading updated assets with --clobber...`);
-    const uploadRes = spawnSync(
-      'gh',
-      ['release', 'upload', tag, ...assets, '--clobber', '--repo', GITHUB_REPO],
-      { env, cwd: ROOT_DIR, stdio: 'inherit' }
-    );
-    if (uploadRes.status !== 0) {
-      throw new Error(`Failed to upload assets to GitHub release ${tag}`);
-    }
+    console.log(`Release ${tag} already exists; updating release metadata...`);
     spawnSync(
       'gh',
       ['release', 'edit', tag, '--title', `Dotify v${version}`, '--notes', notes, '--latest', '--repo', GITHUB_REPO],
@@ -350,7 +342,6 @@ function publishToGitHubReleases(version, notes, ghToken, opts = {}) {
         'release',
         'create',
         tag,
-        ...assets,
         '--title',
         `Dotify v${version}`,
         '--notes',
@@ -363,6 +354,19 @@ function publishToGitHubReleases(version, notes, ghToken, opts = {}) {
     );
     if (createRes.status !== 0) {
       throw new Error(`Failed to create GitHub release ${tag}`);
+    }
+  }
+
+  // Upload assets individually with --clobber
+  for (const asset of assets) {
+    console.log(`Uploading ${path.basename(asset)} to ${tag}...`);
+    const uploadRes = spawnSync(
+      'gh',
+      ['release', 'upload', tag, asset, '--clobber', '--repo', GITHUB_REPO],
+      { env, cwd: ROOT_DIR, stdio: 'inherit' }
+    );
+    if (uploadRes.status !== 0) {
+      throw new Error(`Failed to upload ${path.basename(asset)} to GitHub release ${tag}`);
     }
   }
 

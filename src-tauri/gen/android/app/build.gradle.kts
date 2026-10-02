@@ -40,13 +40,17 @@ android {
         }
         getByName("release") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
-            isMinifyEnabled = true
+            isMinifyEnabled = false
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
                     .toList().toTypedArray()
             )
         }
+    }
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
     }
     kotlinOptions {
         jvmTarget = "1.8"

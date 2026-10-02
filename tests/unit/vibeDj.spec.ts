@@ -168,6 +168,29 @@ describe('Vibe DJ Engine & Live Recommendation Pipeline', () => {
     expect(useVibeDjStore.getState().isActive).toBe(false);
   });
 
+  it('automatically deactivates Vibe DJ when playing any song not played by the DJ', async () => {
+    const { usePlayerStore } = await import('../../src/store/playerStore');
+    const djStore = useVibeDjStore.getState();
+
+    // Start Vibe DJ
+    await djStore.startVibeDj(synthwaveTrack);
+    expect(useVibeDjStore.getState().isActive).toBe(true);
+
+    // Playing a track from the DJ keeps DJ active
+    usePlayerStore.getState().playTrack(synthwaveTrack, undefined, undefined, {
+      origin: 'vibe_dj',
+      isDj: true,
+    });
+    expect(useVibeDjStore.getState().isActive).toBe(true);
+
+    // Clicking any non-DJ track (e.g. from search, library, playlist, album) immediately exits DJ mode
+    usePlayerStore.getState().playTrack(lofiTrack, [lofiTrack], 0, {
+      origin: 'search',
+      searchQuery: 'lofi study',
+    });
+    expect(useVibeDjStore.getState().isActive).toBe(false);
+  });
+
   it('renders VibeDjIcon and FluidVibeDiscVisualizer matching the Dotify disc aesthetic', async () => {
     const React = await import('react');
     const { VibeDjIcon } = await import('../../src/components/player/VibeDjBadge');

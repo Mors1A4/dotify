@@ -112,20 +112,19 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
         statusMessage: undefined,
       });
 
-      // 4. If nothing was playing or seedTrack is different, start playing the top match
+      // 4. Start playing the top match of the curated DJ stream
       if (queue.length > 0) {
         const firstRecommendation = queue[0];
         const queueTracks = queue.map((q) => q.track);
 
-        if (!playerStore.currentTrack || seedTrack) {
-          playerStore.playTrack(firstRecommendation.track, queueTracks, 0, {
-            origin: 'vibe_playlist',
-            intent: 'exploratory',
-            playlistName: theme.label,
-          });
-          // Pop the first one from DJ queue as it is now playing
-          set({ djQueue: queue.slice(1) });
-        }
+        playerStore.playTrack(firstRecommendation.track, queueTracks, 0, {
+          origin: 'vibe_dj',
+          intent: 'exploratory',
+          playlistName: theme.label,
+          isDj: true,
+        });
+        // Pop the first one from DJ queue as it is now playing
+        set({ djQueue: queue.slice(1) });
       }
     } catch (err) {
       console.warn('[VibeDjStore] Error generating initial queue:', err);
@@ -147,6 +146,7 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
     const { newVector, theme } = vibeDjEngine.shakeUpVibe(currentVector);
 
     set({
+      isActive: true,
       currentVector: newVector,
       vibeLabel: theme.label,
       vibeTagline: theme.tagline,
@@ -180,9 +180,10 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
         const newTracks = queue.map((q) => q.track);
 
         playerStore.playTrack(topTrack, newTracks, 0, {
-          origin: 'vibe_playlist',
+          origin: 'vibe_dj',
           intent: 'exploratory',
           playlistName: theme.label,
+          isDj: true,
         });
 
         // Pop the first one

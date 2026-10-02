@@ -40,7 +40,6 @@ export const VibeDjView: React.FC = () => {
     isGenerating,
     statusMessage,
     startVibeDj,
-    stopVibeDj,
     shakeUpVibe,
     playRecommendedArtist,
   } = useVibeDjStore();
@@ -53,16 +52,6 @@ export const VibeDjView: React.FC = () => {
     playTrack,
     navigateToArtist,
   } = usePlayerStore();
-
-  const [hasStartedInitial, setHasStartedInitial] = useState(false);
-
-  // If user opens Vibe DJ view and it's not active yet, offer 1-click launch or auto-start
-  useEffect(() => {
-    if (!isActive && !hasStartedInitial) {
-      setHasStartedInitial(true);
-      startVibeDj();
-    }
-  }, [isActive, hasStartedInitial, startVibeDj]);
 
   const displayTrack = currentTrack;
   const currentArtwork = displayTrack ? getTrackArtwork(displayTrack) : DEFAULT_MUSIC_ARTWORK;
@@ -140,15 +129,26 @@ export const VibeDjView: React.FC = () => {
 
                 {isActive ? (
                   <button
-                    onClick={stopVibeDj}
-                    className="px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20 text-white/90 text-xs font-semibold backdrop-blur-md border border-white/15 transition-colors"
+                    onClick={togglePlay}
+                    className="px-5 py-3.5 rounded-2xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold transition-all backdrop-blur-md border border-white/20 flex items-center gap-2 shadow-lg cursor-pointer"
+                    title={isPlaying ? 'Pause' : 'Play'}
                   >
-                    Pause DJ Session
+                    {isPlaying ? (
+                      <>
+                        <Pause size={14} fill="currentColor" />
+                        <span>Pause</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play size={14} fill="currentColor" />
+                        <span>Play</span>
+                      </>
+                    )}
                   </button>
                 ) : (
                   <button
                     onClick={() => startVibeDj()}
-                    className="px-5 py-3 rounded-2xl bg-accent text-white text-xs font-bold transition-all shadow-lg hover:opacity-90 flex items-center gap-2"
+                    className="px-5 py-3.5 rounded-2xl bg-accent text-white text-xs font-bold transition-all shadow-lg hover:opacity-90 flex items-center gap-2 cursor-pointer"
                   >
                     <Play size={14} fill="currentColor" />
                     <span>Drop In</span>
@@ -372,9 +372,10 @@ export const VibeDjView: React.FC = () => {
                       onClick={() => {
                         const queueTracks = djQueue.map((q) => q.track);
                         playTrack(item.track, queueTracks, index, {
-                          origin: 'vibe_playlist',
+                          origin: 'vibe_dj',
                           intent: 'exploratory',
                           playlistName: vibeLabel,
+                          isDj: true,
                         });
                       }}
                       className="group flex items-center justify-between p-3 rounded-xl bg-surface border border-customBorder/50 hover:bg-elevated hover:border-accent/40 transition-all cursor-pointer shadow-xs"

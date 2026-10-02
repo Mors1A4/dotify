@@ -74,6 +74,7 @@ export const DevicePickerModal: React.FC = () => {
       const targetDev = remoteDevices.find((d) => d.deviceId === targetDeviceId) || activeDevice;
       usePlayerStore.getState().setConnectMode('remote_controller', targetDev);
       connectClient.pairWith(targetDeviceId);
+      toggleDevicePicker(false);
       return;
     }
 
@@ -91,10 +92,12 @@ export const DevicePickerModal: React.FC = () => {
       usePlayerStore.getState().setConnectMode('remote_controller', targetDev);
       connectClient.setActiveDeviceId(targetDeviceId);
       connectClient.pairWith(targetDeviceId);
+      toggleDevicePicker(false);
       return;
     }
 
     await transferPlaybackTo(targetDeviceId);
+    toggleDevicePicker(false);
   };
 
   const modalContent = (
@@ -145,11 +148,28 @@ export const DevicePickerModal: React.FC = () => {
                 </div>
               </div>
 
-              {/* Equalizer animation badge */}
-              <div className="flex items-center gap-1 bg-accent/20 px-2 py-1 rounded-md">
-                <span className="w-1 h-3 bg-accent rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <span className="w-1 h-2 bg-accent rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <span className="w-1 h-4 bg-accent rounded-full animate-bounce" />
+              <div className="flex items-center gap-2">
+                {/* Equalizer animation badge */}
+                <div className="flex items-center gap-1 bg-accent/20 px-2 py-1 rounded-md">
+                  <span className="w-1 h-3 bg-accent rounded-full animate-bounce [animation-delay:-0.3s]" />
+                  <span className="w-1 h-2 bg-accent rounded-full animate-bounce [animation-delay:-0.15s]" />
+                  <span className="w-1 h-4 bg-accent rounded-full animate-bounce" />
+                </div>
+
+                {(!currentActiveDevice.isCurrentDevice || connectMode === 'remote_controller') && (
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await usePlayerStore.getState().disconnectRemoteDevice();
+                      toggleDevicePicker(false);
+                    }}
+                    data-testid="disconnect-active-device-btn"
+                    className="px-2.5 py-1 rounded-lg bg-surface hover:bg-highlight border border-customBorder text-xs font-semibold text-secondary hover:text-accent transition-all cursor-pointer"
+                    title="Disconnect from remote device and switch playback back to this device"
+                  >
+                    Disconnect
+                  </button>
+                )}
               </div>
             </div>
 

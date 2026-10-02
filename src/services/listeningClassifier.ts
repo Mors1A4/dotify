@@ -42,6 +42,7 @@ export class ListeningClassifier {
   public isExploratoryOrigin(origin?: PlayOrigin): boolean {
     if (!origin) return false;
     return (
+      origin === 'vibe_dj' ||
       origin === 'vibe_playlist' ||
       origin === 'discover_track' ||
       origin === 'discover_weekly' ||

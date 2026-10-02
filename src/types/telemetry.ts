@@ -9,6 +9,7 @@ export type PlayOrigin =
   | 'library'         // User played from library or Liked Songs
   | 'user_playlist'   // User played from a custom/saved playlist
   | 'vibe_playlist'   // User played from a daily/gemini/custom vibe playlist
+  | 'vibe_dj'         // Live Vibe DJ sequential stream
   | 'discover_track'  // User played a discovery track / break / echo
   | 'discover_weekly' // User played from Discover Weekly shelf
   | 'autoplay'        // Autoplay queue exhaustion continuation
@@ -37,6 +38,7 @@ export interface PlayContext {
   playlistId?: string;
   playlistName?: string;
   albumTitle?: string;
+  isDj?: boolean;
 }
 
 export interface ListeningSessionRecord {

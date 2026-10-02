@@ -15,7 +15,7 @@ export const ActiveDeviceBadge: React.FC<ActiveDeviceBadgeProps> = ({
 }) => {
   const { connectMode, activeDevice, toggleDevicePicker } = usePlayerStore();
 
-  const isRemote = connectMode === 'remote_controller' || (activeDevice && !activeDevice.isCurrentDevice);
+  const isRemote = connectMode === 'remote_controller' && Boolean(activeDevice && !activeDevice.isCurrentDevice);
   const deviceName = activeDevice?.deviceName || (isRemote ? 'Remote Device' : 'This Computer');
   const deviceType = activeDevice?.deviceType || 'desktop';
 

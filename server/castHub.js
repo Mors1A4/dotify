@@ -499,11 +499,16 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
             }
           }
 
-          // Automatic next track detection
-          if (status.playerState === 'IDLE' && status.idleReason === 'FINISHED') {
-            console.log('[CastHub] Track finished on Cast speaker, advancing queue.');
-            if (onTrackFinishedCallback) {
-              onTrackFinishedCallback(activeCastDeviceId);
+          // Automatic next track or session cancellation detection
+          if (status.playerState === 'IDLE') {
+            if (status.idleReason === 'FINISHED') {
+              console.log('[CastHub] Track finished on Cast speaker, advancing queue.');
+              if (onTrackFinishedCallback) {
+                onTrackFinishedCallback(activeCastDeviceId);
+              }
+            } else if (status.idleReason === 'CANCELLED' || status.idleReason === 'INTERRUPTED' || status.idleReason === 'ERROR') {
+              console.log(`[CastHub] Cast session idle due to ${status.idleReason}, closing active session.`);
+              closeActiveCastSession();
             }
           }
         });
@@ -705,6 +710,10 @@ export function closeActiveCastSession() {
   activeCastDeviceId = null;
   activeCastSessionTrack = null;
   activeCastPlaybackState = null;
+
+  if (onDevicesUpdatedCallback) {
+    onDevicesUpdatedCallback();
+  }
 
   if (onPlaybackStateCallback && prevDeviceId) {
     onPlaybackStateCallback({ isPlaying: false, positionMs: 0, currentTrack: null, timestamp: Date.now() }, prevDeviceId);

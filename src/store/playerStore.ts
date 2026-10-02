@@ -282,6 +282,7 @@ export interface PlayerStoreState {
   transferPlaybackTo: (targetDeviceId: string) => Promise<boolean>;
   initiateHandoff: (targetDeviceId: string) => Promise<boolean>;
   setRemoteVolume: (targetDeviceId: string, volume: number) => void;
+  disconnectRemoteDevice: () => Promise<void>;
 
   // Enhanced Queue Actions
   setQueue: (queue: Track[]) => void;
@@ -445,6 +446,11 @@ let isAutoplayFetching = false;
 let activeAutoplayPromise: Promise<void> | null = null;
 let lastAutoplaySeedTrackId: string | null = null;
 
+let cachedVibeDjStore: any = null;
+import('./vibeDjStore').then((m) => {
+  cachedVibeDjStore = m.useVibeDjStore;
+}).catch(() => {});
+
 let remoteVolumeTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingRemoteVolume: { targetDeviceId?: string; volume: number } | null = null;
 
@@ -544,11 +550,15 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
   // Wire connectClient listeners
   connectClient.onDeviceListUpdate((devices, activeId) => {
     const state = typeof get === 'function' ? get() : null;
+    const isStandalone = state?.connectMode === 'standalone';
+    const localDev = connectClient.getLocalDevice();
     const curActive = state?.activeDevice || null;
     const target = devices.find((d) => d.deviceId === activeId) || null;
-    const active = target && curActive && target.deviceId === curActive.deviceId
-      ? { ...target, volume: curActive.volume ?? target.volume }
-      : target;
+    const active = isStandalone
+      ? { ...localDev, isActive: true, isCurrentDevice: true }
+      : (target && curActive && target.deviceId === curActive.deviceId
+          ? { ...target, volume: curActive.volume ?? target.volume }
+          : (target || { ...localDev, isActive: true, isCurrentDevice: true }));
     set({
       remoteDevices: devices,
       activeDevice: active,
@@ -1070,31 +1080,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       if (isSwitchingToLocal) {
         set({ isTransferringPlayback: true, transferringToId: targetDeviceId });
 
-        // If previously controlling a remote device, stop remote playback
-        if (store.connectMode === 'remote_controller') {
-          if (store.activeDevice?.deviceId?.startsWith('cast:')) {
-            connectClient.sendRemoteCommand('stop', {}, store.activeDevice.deviceId);
-          } else {
-            connectClient.sendRemoteCommand('pause', {}, store.activeDevice?.deviceId);
-          }
-        }
-
-        // Return to local host mode
-        audioEngine.setControllerMode(false);
         const currentPosSec =
           store.connectMode === 'remote_controller'
             ? remoteProgressInterpolator.getCurrentPosition()
             : audioEngine.getCurrentTime();
-        remoteProgressInterpolator.stop();
-        connectClient.unpair();
+
+        await get().disconnectRemoteDevice();
 
         if (store.currentTrack && store.isPlaying) {
           audioEngine.playTrackAtPosition(store.currentTrack, Math.round(currentPosSec * 1000), true).catch(() => {});
         }
 
         set({
-          connectMode: 'standalone',
-          activeDevice: { ...localDevice, isActive: true },
           isTransferringPlayback: false,
           transferringToId: null,
         });
@@ -1213,6 +1210,33 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       sendThrottledRemoteVolume(clamped, targetDeviceId);
     },
 
+    disconnectRemoteDevice: async () => {
+      const store = get();
+      const localDevice = connectClient.getLocalDevice();
+      const currentActive = store.activeDevice;
+
+      if (currentActive?.deviceId?.startsWith('cast:')) {
+        connectClient.sendRemoteCommand('stop', {}, currentActive.deviceId);
+      } else if (currentActive && !currentActive.isCurrentDevice) {
+        connectClient.sendRemoteCommand('pause', {}, currentActive.deviceId);
+      }
+
+      audioEngine.setControllerMode(false);
+      remoteProgressInterpolator.stop();
+      connectClient.disconnectRemote();
+
+      set({
+        connectMode: 'standalone',
+        activeDevice: { ...localDevice, isActive: true, isCurrentDevice: true },
+        isTransferringPlayback: false,
+        transferringToId: null,
+      });
+
+      broadcastCurrentState();
+    },
+
+
+
     playTrack: (
       track: Track,
       newQueue?: Track[],
@@ -1231,6 +1255,24 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
       if (newQueue) {
         currentQueueContext = resolvedContext;
+      }
+
+      // If playback is not initiated by Vibe DJ, exit DJ mode immediately so badge disappears and queue returns to standard
+      const isDjPlay =
+        (typeof playContext === 'object' && (playContext?.origin === 'vibe_dj' || Boolean((playContext as any)?.isDj))) ||
+        (typeof playContext === 'string' && playContext === 'vibe_dj');
+
+      if (!isDjPlay) {
+        if (cachedVibeDjStore && cachedVibeDjStore.getState().isActive) {
+          cachedVibeDjStore.getState().stopVibeDj();
+        } else {
+          import('./vibeDjStore').then(({ useVibeDjStore }) => {
+            cachedVibeDjStore = useVibeDjStore;
+            if (useVibeDjStore.getState().isActive) {
+              useVibeDjStore.getState().stopVibeDj();
+            }
+          }).catch(() => {});
+        }
       }
 
       if (get().connectMode === 'remote_controller') {
@@ -1392,9 +1434,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
           const nextDjTrack = await djState.popNextDjTrack();
           if (nextDjTrack) {
             get().playTrack(nextDjTrack, undefined, undefined, {
-              origin: 'vibe_playlist',
+              origin: 'vibe_dj',
               intent: 'exploratory',
               playlistName: djState.vibeLabel,
+              isDj: true,
             });
             broadcastCurrentState();
             return;

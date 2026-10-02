@@ -846,6 +846,14 @@ export class ConnectClient {
       type: 'UNPAIR',
       fromDeviceId: this.localDevice.deviceId,
     });
+    this.sendMessage({
+      type: 'DISCONNECT_REMOTE',
+      fromDeviceId: this.localDevice.deviceId,
+    });
+  }
+
+  public disconnectRemote() {
+    this.unpair();
   }
 
   private notifyDeviceList() {

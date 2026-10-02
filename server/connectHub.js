@@ -181,12 +181,18 @@ export function setupConnectHub(server, options = {}) {
               }
 
               const senderClient = senderId ? clients.get(senderId) : null;
-              // If sender is marked as remote_controller, or if active host is a Cast speaker, do NOT usurp or pause
-              if (senderClient?.device?.role === 'remote_controller') {
+              // If sender is marked as remote_controller, ignore passive background updates unless actively playing
+              if (senderClient?.device?.role === 'remote_controller' && !state.isPlaying) {
                 break;
               }
+              // If active host is currently a Cast speaker, allow active playback from a client to preempt it
               if (activeDeviceId && isCastDeviceId(activeDeviceId) && senderId !== activeDeviceId) {
-                break;
+                if (state.isPlaying) {
+                  closeActiveCastSession();
+                  activeDeviceId = senderId;
+                } else {
+                  break;
+                }
               }
 
               activePlaybackState = state;
@@ -445,8 +451,28 @@ export function setupConnectHub(server, options = {}) {
             break;
           }
 
-          case 'UNPAIR': {
-            broadcastToOthers(clientDeviceId, JSON.stringify(msg));
+          case 'UNPAIR':
+          case 'DISCONNECT_REMOTE': {
+            const previousActiveId = activeDeviceId;
+            if (previousActiveId && isCastDeviceId(previousActiveId)) {
+              closeActiveCastSession();
+            }
+            if (clientDeviceId) {
+              activeDeviceId = clientDeviceId;
+              const client = clients.get(clientDeviceId);
+              if (client) {
+                client.device.isActive = true;
+                client.device.role = 'active_host';
+              }
+            } else {
+              activeDeviceId = null;
+            }
+            broadcastDeviceList();
+            broadcastToOthers(clientDeviceId, JSON.stringify({
+              type: 'DISCONNECT_REMOTE',
+              fromDeviceId: clientDeviceId,
+              timestamp: Date.now(),
+            }));
             break;
           }
 
@@ -540,6 +566,32 @@ export function setupConnectHub(server, options = {}) {
     setupCastHub({
       onDevicesUpdated: () => broadcastDeviceList(),
       onPlaybackState: (state, castId) => {
+        const isSessionEnding = !state.isPlaying && !state.currentTrack;
+        if (isSessionEnding) {
+          if (activeDeviceId === castId) {
+            activeDeviceId = null;
+          }
+          activePlaybackState = null;
+          broadcastDeviceList();
+          for (const client of clients.values()) {
+            if (client.ws.readyState === WebSocket.OPEN) {
+              try {
+                client.ws.send(
+                  JSON.stringify({
+                    type: 'PLAYBACK_STATE',
+                    state: { isPlaying: false, positionMs: 0, currentTrack: null, timestamp: Date.now() },
+                    activeDeviceId: null,
+                    senderDeviceId: castId,
+                    fromDeviceId: castId,
+                    timestamp: Date.now(),
+                  })
+                );
+              } catch {}
+            }
+          }
+          return;
+        }
+
         activePlaybackState = {
           ...(activePlaybackState || {}),
           ...state,
