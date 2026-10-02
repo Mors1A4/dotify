@@ -1123,6 +1123,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       });
 
       audioEngine.setControllerMode(true, (action, data) => {
+        if (action === 'seek') {
+          const sec = data?.seconds ?? (data?.positionMs ? data.positionMs / 1000 : 0);
+          remoteProgressInterpolator.seek(sec);
+        }
         connectClient.sendRemoteCommand(action as any, data);
       });
       audioEngine.setCurrentTrack(snapshot.track);
@@ -1177,10 +1181,15 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       const clamped = Math.max(0, Math.min(1, volume));
       const activeDev = get().activeDevice;
       const isTargetActive = Boolean(activeDev && activeDev.deviceId === targetDeviceId);
+      const updatedRemote = get().remoteDevices.map((d) =>
+        d.deviceId === targetDeviceId ? { ...d, volume: clamped } : d
+      );
       set({
         volume: isTargetActive ? clamped : get().volume,
         activeDevice: isTargetActive && activeDev ? { ...activeDev, volume: clamped } : activeDev,
+        remoteDevices: updatedRemote,
       });
+      connectClient.updateDeviceVolume(targetDeviceId, clamped);
       sendThrottledRemoteVolume(clamped, targetDeviceId);
     },
 

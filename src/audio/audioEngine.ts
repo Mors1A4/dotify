@@ -1010,6 +1010,8 @@ export class AudioEngine {
 
   public seekTo(seconds: number): void {
     if (this.isControllerMode) {
+      const dur = this.getDuration();
+      this.emitSyntheticTimeUpdate(seconds, dur);
       this.remoteCommandDelegate?.('seek', { seconds, positionMs: seconds * 1000 });
       return;
     }
