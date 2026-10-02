@@ -12,6 +12,7 @@ export const DevicePickerModal: React.FC = () => {
 
   const {
     isDevicePickerOpen,
+    currentTrack,
     toggleDevicePicker,
     remoteDevices,
     activeDevice,
@@ -57,7 +58,31 @@ export const DevicePickerModal: React.FC = () => {
 
   const handleDeviceClick = async (targetDeviceId: string) => {
     if (isTransferringPlayback) return;
-    if (activeDevice && activeDevice.deviceId === targetDeviceId) return;
+    if (activeDevice && activeDevice.deviceId === targetDeviceId) {
+      if (connectMode === 'remote_controller') return;
+      const targetDev = remoteDevices.find((d) => d.deviceId === targetDeviceId) || activeDevice;
+      usePlayerStore.getState().setConnectMode('remote_controller', targetDev);
+      connectClient.pairWith(targetDeviceId);
+      return;
+    }
+
+    if (!currentTrack) {
+      const targetDev = remoteDevices.find((d) => d.deviceId === targetDeviceId) || {
+        deviceId: targetDeviceId,
+        deviceName: targetDeviceId.startsWith('cast:') ? 'Google Cast Speaker' : 'Remote Device',
+        deviceType: targetDeviceId.startsWith('cast:') ? ('speaker' as const) : ('desktop' as const),
+        role: 'active_host' as const,
+        isCurrentDevice: false,
+        isActive: true,
+        volume: volume,
+        lastSeen: Date.now(),
+      };
+      usePlayerStore.getState().setConnectMode('remote_controller', targetDev);
+      connectClient.setActiveDeviceId(targetDeviceId);
+      connectClient.pairWith(targetDeviceId);
+      return;
+    }
+
     await transferPlaybackTo(targetDeviceId);
   };
 
@@ -159,16 +184,17 @@ export const DevicePickerModal: React.FC = () => {
               remoteDevices.map((dev) => {
                 const isActive = activeDevice?.deviceId === dev.deviceId || (dev.isCurrentDevice && localIsActive);
                 const isTargetOfTransfer = isTransferringPlayback && transferringToId === dev.deviceId;
+                const isAlreadyControlling = isActive && (dev.isCurrentDevice ? localIsActive : connectMode === 'remote_controller');
 
                 return (
                   <button
                     key={dev.deviceId}
                     data-testid={`device-item-${dev.deviceId}`}
                     onClick={() => handleDeviceClick(dev.deviceId)}
-                    disabled={isActive || isTransferringPlayback}
+                    disabled={isAlreadyControlling || isTransferringPlayback}
                     className={`flex items-center justify-between p-3 rounded-xl border transition-all text-left ${
                       isActive
-                        ? 'border-accent bg-accent/10 cursor-default'
+                        ? 'border-accent bg-accent/10'
                         : 'border-customBorder/50 bg-elevated/40 hover:bg-elevated hover:border-customBorder'
                     }`}
                   >
@@ -189,8 +215,10 @@ export const DevicePickerModal: React.FC = () => {
                           )}
                         </div>
                         <p className="text-xs text-muted truncate">
-                          {isActive
+                          {isAlreadyControlling
                             ? 'Listening on this device'
+                            : isActive
+                            ? 'Active playback • Tap to control'
                             : dev.isCurrentDevice
                             ? 'Switch playback back here'
                             : dev.deviceType === 'speaker' || dev.deviceId.startsWith('cast:')
@@ -207,8 +235,12 @@ export const DevicePickerModal: React.FC = () => {
                           <Loader2 size={14} className="animate-spin" />
                           <span>Transferring...</span>
                         </div>
-                      ) : isActive ? (
+                      ) : isAlreadyControlling ? (
                         <Check size={18} className="text-accent" />
+                      ) : isActive ? (
+                        <span className="text-xs text-accent font-medium px-2.5 py-1 rounded bg-accent/20 border border-accent/40">
+                          Control
+                        </span>
                       ) : (
                         <span className="text-xs text-secondary hover:text-accent font-medium px-2.5 py-1 rounded bg-surface border border-customBorder/60">
                           Transfer

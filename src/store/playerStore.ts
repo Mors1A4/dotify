@@ -69,6 +69,31 @@ export class RemoteProgressInterpolator {
     }
 
     this.tick();
+    if (!this.isPlaying) {
+      if (this.intervalId) {
+        clearInterval(this.intervalId);
+        this.intervalId = null;
+      }
+    } else {
+      this.ensureLoop();
+    }
+  }
+
+  public pause() {
+    this.anchorPositionSec = this.getCurrentPosition();
+    this.anchorLocalPerfTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.isPlaying = false;
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    this.tick();
+  }
+
+  public resume() {
+    this.anchorLocalPerfTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.isPlaying = true;
+    this.tick();
     this.ensureLoop();
   }
 
@@ -224,7 +249,7 @@ export interface PlayerStoreState {
   toggleDevicePicker: (open?: boolean) => void;
   setConnectMode: (mode: ConnectMode, activeDevice?: ConnectedDevice | null) => void;
   setRemoteDevices: (devices: ConnectedDevice[]) => void;
-  applyRemotePlaybackState: (state: PlaybackStatePayload) => void;
+  applyRemotePlaybackState: (state: PlaybackStatePayload, fromId?: string) => void;
   executeRemoteCommand: (action: string, data?: any) => void;
   transferPlaybackTo: (targetDeviceId: string) => Promise<boolean>;
   initiateHandoff: (targetDeviceId: string) => Promise<boolean>;
@@ -477,8 +502,8 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     });
   });
 
-  connectClient.onPlaybackState((state) => {
-    get().applyRemotePlaybackState(state);
+  connectClient.onPlaybackState((state, fromId) => {
+    get().applyRemotePlaybackState(state, fromId);
   });
 
   connectClient.onRemoteCommand((command) => {
@@ -782,18 +807,55 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       set({ remoteDevices: devices });
     },
 
-    applyRemotePlaybackState: (state: PlaybackStatePayload) => {
-      if (get().connectMode !== 'remote_controller') return;
+    applyRemotePlaybackState: (state: PlaybackStatePayload, fromId?: string) => {
+      const localDev = connectClient.getLocalDevice();
+      const currentConnectMode = get().connectMode;
+      const isLocalHost =
+        currentConnectMode === 'active_host' ||
+        (currentConnectMode === 'standalone' && (get().isPlaying || audioEngine.isPlaying()));
+
+      // If local device is actively playing audio as host, don't overwrite with remote state
+      if (isLocalHost && fromId && fromId !== localDev.deviceId) {
+        return;
+      }
 
       const targetTrack = state.currentTrack || state.activeTrack || null;
       if (!targetTrack && (get().isPlaying || audioEngine.isPlaying() || audioEngine.getCurrentTrack())) {
         return;
       }
 
+      const activeDevId = connectClient.getActiveDeviceId() || fromId;
+      const isRemoteActive = Boolean(activeDevId && activeDevId !== localDev.deviceId);
+
+      // If a remote device or speaker is active on the network and local device is idle, adopt remote_controller mode
+      if (isRemoteActive && targetTrack && currentConnectMode !== 'remote_controller') {
+        const foundDev = get().remoteDevices.find((d) => d.deviceId === activeDevId) || {
+          deviceId: activeDevId!,
+          deviceName: activeDevId!.startsWith('cast:') ? 'Google Cast Speaker' : 'Remote Device',
+          deviceType: activeDevId!.startsWith('cast:') ? ('speaker' as const) : ('desktop' as const),
+          role: 'active_host' as const,
+          isCurrentDevice: false,
+          isActive: true,
+          volume: state.volume ?? 0.8,
+          lastSeen: Date.now(),
+        };
+
+        set({
+          connectMode: 'remote_controller',
+          activeDevice: foundDev,
+        });
+        audioEngine.setControllerMode(true, (action, data) => {
+          connectClient.sendRemoteCommand(action as any, data);
+        });
+        remoteProgressInterpolator.start();
+      } else if (currentConnectMode !== 'remote_controller') {
+        return;
+      }
+
       set({
         currentTrack: targetTrack,
         currentTrackIndex: state.currentTrackIndex ?? state.currentIndex ?? 0,
-        queue: state.queue || get().queue,
+        queue: state.queue && state.queue.length > 0 ? state.queue : get().queue,
         isPlaying: state.isPlaying,
         volume: state.volume ?? get().volume,
         repeatMode: state.repeatMode || get().repeatMode,
@@ -931,10 +993,13 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
         // Return to local host mode
         audioEngine.setControllerMode(false);
+        const currentPosSec =
+          store.connectMode === 'remote_controller'
+            ? remoteProgressInterpolator.getCurrentPosition()
+            : audioEngine.getCurrentTime();
         remoteProgressInterpolator.stop();
         connectClient.unpair();
 
-        const currentPosSec = audioEngine.getCurrentTime();
         if (store.currentTrack && store.isPlaying) {
           audioEngine.playTrackAtPosition(store.currentTrack, Math.round(currentPosSec * 1000), true).catch(() => {});
         }
@@ -956,7 +1021,11 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
       set({ isTransferringPlayback: true, transferringToId: targetDeviceId });
 
-      const positionMs = Math.round(audioEngine.getCurrentTime() * 1000);
+      const currentPosSec =
+        store.connectMode === 'remote_controller'
+          ? remoteProgressInterpolator.getCurrentPosition()
+          : audioEngine.getCurrentTime();
+      const positionMs = Math.round(currentPosSec * 1000);
       const snapshot: PlaybackSnapshot = {
         track: store.currentTrack,
         queue: store.queue,
@@ -1152,6 +1221,11 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       if (get().connectMode === 'remote_controller') {
         const nextPlaying = !get().isPlaying;
         set({ isPlaying: nextPlaying });
+        if (nextPlaying) {
+          remoteProgressInterpolator.resume();
+        } else {
+          remoteProgressInterpolator.pause();
+        }
         connectClient.sendRemoteCommand('toggle_play');
         return;
       }
@@ -1162,6 +1236,41 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     nextTrack: async () => {
       await finalizeCurrentPlayRecord();
       if (get().connectMode === 'remote_controller') {
+        const isCast = Boolean(get().activeDevice?.deviceId?.startsWith('cast:'));
+        if (isCast) {
+          const { queue, currentTrack, currentTrackIndex, repeatMode, shuffle } = get();
+          if (queue.length > 0) {
+            let currentIndex = currentTrackIndex;
+            if (
+              typeof currentIndex !== 'number' ||
+              currentIndex < 0 ||
+              currentIndex >= queue.length ||
+              (currentTrack && queue[currentIndex]?.id !== currentTrack.id)
+            ) {
+              const refIdx = currentTrack ? queue.indexOf(currentTrack) : -1;
+              currentIndex = refIdx !== -1 ? refIdx : currentTrack ? queue.findIndex((t) => t.id === currentTrack.id) : 0;
+            }
+            let nextIndex = currentIndex + 1;
+            if (shuffle && queue.length > 1) {
+              do {
+                nextIndex = Math.floor(Math.random() * queue.length);
+              } while (nextIndex === currentIndex && queue.length > 1);
+            } else if (nextIndex >= queue.length) {
+              if (repeatMode === 'all') {
+                nextIndex = 0;
+              } else {
+                return;
+              }
+            }
+            const next = queue[nextIndex];
+            if (next) {
+              set({ currentTrack: next, currentTrackIndex: nextIndex, isPlaying: true });
+              remoteProgressInterpolator.resetForTrack(next.duration || 0);
+              connectClient.sendRemoteCommand('play_track', { track: next, queue, index: nextIndex });
+              return;
+            }
+          }
+        }
         connectClient.sendRemoteCommand('next');
         return;
       }
@@ -1210,6 +1319,30 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     previousTrack: async () => {
       await finalizeCurrentPlayRecord();
       if (get().connectMode === 'remote_controller') {
+        const isCast = Boolean(get().activeDevice?.deviceId?.startsWith('cast:'));
+        if (isCast) {
+          const { queue, currentTrack, currentTrackIndex } = get();
+          if (queue.length > 0) {
+            let currentIndex = currentTrackIndex;
+            if (
+              typeof currentIndex !== 'number' ||
+              currentIndex < 0 ||
+              currentIndex >= queue.length ||
+              (currentTrack && queue[currentIndex]?.id !== currentTrack.id)
+            ) {
+              const refIdx = currentTrack ? queue.indexOf(currentTrack) : -1;
+              currentIndex = refIdx !== -1 ? refIdx : currentTrack ? queue.findIndex((t) => t.id === currentTrack.id) : 0;
+            }
+            const prevIndex = Math.max(0, currentIndex - 1);
+            const prev = queue[prevIndex];
+            if (prev) {
+              set({ currentTrack: prev, currentTrackIndex: prevIndex, isPlaying: true });
+              remoteProgressInterpolator.resetForTrack(prev.duration || 0);
+              connectClient.sendRemoteCommand('play_track', { track: prev, queue, index: prevIndex });
+              return;
+            }
+          }
+        }
         connectClient.sendRemoteCommand('previous');
         return;
       }

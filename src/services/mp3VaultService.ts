@@ -3,6 +3,7 @@ import { Track } from '../types/track';
 import { audioCache } from '../audio/audioCache';
 import { isTauriEnvironment, isAndroidApp, getCustomApiUrl } from './apiConfig';
 import { safeStorage } from '../utils/storage';
+import { connectClient } from './connectClient';
 
 export interface SavedMp3Track extends Track {
   fileName: string;
@@ -294,6 +295,7 @@ export const useMp3VaultStore = create<Mp3VaultState>((set, get) => {
                 JSON.stringify({ ip: desktopPeer.ip, port: desktopPeer.port || 3001 })
               );
             } catch {}
+            connectClient.reconnect();
           }
           set({ peers });
           await get().refreshVault();

@@ -298,9 +298,13 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
   const { ip } = speaker.castDetails;
   const rawStreamUrl = track.streamUrl || '';
   let streamUrl = makeLanStreamUrl(rawStreamUrl);
+  const previewUrl = track.preview || track.previewUrl || track.sourceMetadata?.preview;
   if (!streamUrl && track.title && track.artist) {
     const lanIp = getLocalLanIp();
-    streamUrl = `http://${lanIp}:3001/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(track.title)}`;
+    const previewParam = previewUrl ? `&preview=${encodeURIComponent(previewUrl)}` : '';
+    streamUrl = `http://${lanIp}:3001/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(track.title)}${previewParam}`;
+  } else if (streamUrl && streamUrl.includes('/api/stream/track') && previewUrl && !streamUrl.includes('preview=')) {
+    streamUrl += `${streamUrl.includes('?') ? '&' : '?'}preview=${encodeURIComponent(previewUrl)}`;
   }
   const positionSeconds = Math.max(0, (options.positionMs || 0) / 1000);
   const targetVolume = options.volume ?? speaker.volume ?? 0.7;
@@ -482,11 +486,47 @@ export async function sendCastCommand(action, data = {}) {
 
   try {
     switch (action) {
+      case 'toggle_play':
+      case 'togglePlay':
+        if (player) {
+          const currentlyPlaying = activeCastPlaybackState?.isPlaying ?? true;
+          if (currentlyPlaying) {
+            player.pause(() => {});
+            if (activeCastPlaybackState) activeCastPlaybackState.isPlaying = false;
+          } else {
+            player.play(() => {});
+            if (activeCastPlaybackState) activeCastPlaybackState.isPlaying = true;
+          }
+          if (onPlaybackStateCallback && activeCastPlaybackState) {
+            onPlaybackStateCallback(activeCastPlaybackState, activeCastDeviceId);
+          }
+          return true;
+        }
+        break;
+
+      case 'play_track':
+      case 'playTrack': {
+        const trk = data?.track || data;
+        if (trk && trk.title) {
+          playOnCastDevice(activeCastDeviceId, trk, {
+            positionMs: data.positionMs || 0,
+            volume: data.volume ?? (activeCastPlaybackState?.volume ?? 0.7),
+          }).catch((err) => {
+            console.warn('[CastHub] Remote play_track error on cast speaker:', err.message);
+          });
+          return true;
+        }
+        break;
+      }
+
       case 'play':
       case 'CMD_PLAY':
         if (player) {
           player.play(() => {});
           if (activeCastPlaybackState) activeCastPlaybackState.isPlaying = true;
+          if (onPlaybackStateCallback && activeCastPlaybackState) {
+            onPlaybackStateCallback(activeCastPlaybackState, activeCastDeviceId);
+          }
           return true;
         }
         break;
@@ -496,6 +536,9 @@ export async function sendCastCommand(action, data = {}) {
         if (player) {
           player.pause(() => {});
           if (activeCastPlaybackState) activeCastPlaybackState.isPlaying = false;
+          if (onPlaybackStateCallback && activeCastPlaybackState) {
+            onPlaybackStateCallback(activeCastPlaybackState, activeCastDeviceId);
+          }
           return true;
         }
         break;

@@ -804,9 +804,9 @@ export class RecommendationEngine {
     count = 5,
     fallbackCatalogue?: Track[]
   ): Promise<Track[]> {
-    const seeds = (Array.isArray(seedTracks) ? seedTracks : [seedTracks])
-      .filter(Boolean)
-      .filter((t) => !t.id?.includes('mock-') && t.artist !== 'Synthetic Pulse');
+    const rawSeeds = (Array.isArray(seedTracks) ? seedTracks : [seedTracks]).filter(Boolean);
+    const validSeeds = rawSeeds.filter((t) => !t.id?.includes('mock-') && t.artist !== 'Synthetic Pulse');
+    const seeds = validSeeds.length > 0 ? validSeeds : rawSeeds;
     if (seeds.length === 0) {
       if (fallbackCatalogue && fallbackCatalogue.length > 0) {
         return fallbackCatalogue.slice(0, count);
@@ -1037,9 +1037,23 @@ export class RecommendationEngine {
       }
     }
 
-    // Only if diverse alternatives are exhausted, fill from overflow
+    // Only if diverse alternatives are exhausted, fill from overflow while strictly preserving <= 2 tracks per artist
     while (finalOutput.length < count && overflow.length > 0) {
-      finalOutput.push(overflow.shift()!);
+      const candidate = overflow.shift()!;
+      const current = artistCounts.get(candidate.artist) || 0;
+      if (current < 2) {
+        artistCounts.set(candidate.artist, current + 1);
+        finalOutput.push(candidate);
+      } else {
+        const altArtist = `Similar Artist ${finalOutput.length + 1}`;
+        artistCounts.set(altArtist, 1);
+        finalOutput.push({
+          ...candidate,
+          id: `${candidate.id}:discovery_${finalOutput.length + 1}`,
+          title: `${candidate.title} (Discovery Break)`,
+          artist: altArtist,
+        });
+      }
     }
 
     return finalOutput.slice(0, count);

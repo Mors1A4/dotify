@@ -9,6 +9,8 @@ export interface Track {
   duration: number; // In seconds. Live radio is Infinity or 0.
   streamUrl: string; // Direct audio URL or proxy URL
   artworkUrl?: string; // HTTPS image URL or SVG data-URI
+  preview?: string;
+  previewUrl?: string;
   sourceMetadata: {
     genre?: string;
     year?: string;

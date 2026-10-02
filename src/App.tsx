@@ -22,6 +22,8 @@ import { PlaylistView } from './components/views/PlaylistView';
 import { useAuthStore } from './store/authStore';
 import { useUpdateStore } from './store/updateStore';
 import { isAndroidApp } from './services/apiConfig';
+import { castService } from './services/castService';
+import { useMp3VaultStore } from './services/mp3VaultService';
 
 export const App: React.FC = () => {
   const { activeView, selectedArtist, selectedAlbum, selectedPlaylistId } = usePlayerStore();
@@ -30,6 +32,10 @@ export const App: React.FC = () => {
     if (typeof navigator !== 'undefined' && (/android/i.test(navigator.userAgent) || isAndroidApp())) {
       document.documentElement.classList.add('is-android');
     }
+    if (isAndroidApp()) {
+      useMp3VaultStore.getState().scanWifiPeers().catch(() => {});
+    }
+    castService.fetchCastDevices().catch(() => {});
     const unsubAuth = useAuthStore.getState().initAuth();
     const unsubUpdater = useUpdateStore.getState().initUpdater();
     restorePlaybackHandoffIfNeeded();

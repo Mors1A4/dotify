@@ -32,6 +32,18 @@ describe('artworkService', () => {
     expect(isUglyPlaceholder('https://e-cdns-images.dzcdn.net/images/cover//500x500.jpg')).toBe(true);
     expect(isUglyPlaceholder('https://placehold.co/300x300')).toBe(true);
 
+    // Deezer empty vinyl/disc placeholder hashes must be identified as ugly placeholders
+    expect(
+      isUglyPlaceholder(
+        'https://cdn-images.dzcdn.net/images/cover/84318c4e09cb463c552086e37ea35e5d/500x500-000000-80-0-0.jpg'
+      )
+    ).toBe(true);
+    expect(
+      isUglyPlaceholder(
+        'https://cdn-images.dzcdn.net/images/cover/a83e0705a61e271295cb17ec053fa2d7/500x500-000000-80-0-0.jpg'
+      )
+    ).toBe(true);
+
     // Valid real artwork should NOT be marked as placeholder
     expect(
       isUglyPlaceholder(
@@ -66,21 +78,26 @@ describe('artworkService', () => {
     const expectedCover600 =
       'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/6a/f5/6b/6af56b1d-1cc8-68e8-a428-5caccf20e69a/093624880639.jpg/600x600bb.jpg';
 
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        resultCount: 1,
-        results: [
-          {
-            artistName: 'Red Hot Chili Peppers',
-            trackName: 'Black Summer',
-            artworkUrl100: mockCover100,
-          },
-        ],
-      }),
-    } as any);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
+      if (String(url).includes('itunes.apple.com')) {
+        return {
+          ok: true,
+          json: async () => ({
+            resultCount: 1,
+            results: [
+              {
+                artistName: 'Red Hot Chili Peppers',
+                trackName: 'Black Summer',
+                artworkUrl100: mockCover100,
+              },
+            ],
+          }),
+        } as any;
+      }
+      return { ok: false, json: async () => ({ data: [] }) } as any;
+    });
 
-    const resolved = await resolveTrackArtwork('Red Hot Chili Peppers', 'Black Summer');
+    const resolved = await resolveTrackArtwork('Red Hot Chili Peppers', 'Black Summer', { forceFresh: true });
     expect(resolved).toBe(expectedCover600);
 
     // Subsequent synchronous getTrackArtwork call should return the resolved 600x600 cover even if track has DEFAULT_MUSIC_ARTWORK

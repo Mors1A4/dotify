@@ -140,6 +140,33 @@ export function isUglyPlaceholder(url?: string | null): boolean {
     return true;
   }
 
+  // Known Deezer empty vinyl/CD fallback placeholder hashes (all return identical 49f43c59b4b479c3a477dc7a1fec2bc9)
+  const DEEZER_EMPTY_DISC_HASHES = [
+    '84318c4e09cb463c552086e37ea35e5d',
+    'a83e0705a61e271295cb17ec053fa2d7',
+    'ed1568e64c2079361cc3645bcfd7d5d1',
+    '8ba668eef050dbd6e87f6ae154694462',
+    'f381f215d2f838db60a8ea74eb6a0a22',
+    '77b8f9e67ad5efb26639c0d7ff34ea86',
+    'e00f983637ae7f3b469733eead1c2a12',
+    'b4db2d1265851419747970d47d87f54c',
+    '4d0d3b6f2f9b883017a027cecfd7aa61',
+    '2569ba7e2b17f5ceec5817c767e7169d',
+    'e02c6113b2cbe675971a7eb3a8d1ce34',
+    '4e7e6005cbbba38aaecbe504cb418b76',
+    '421469e38ff86f874bc07452d5b61f89',
+    '6c653066d2cbb54d748f0e5272a2a4b8',
+    '6fbfda5eece914bc8b835e0c52bb8889',
+    '77727192f1b72e01df227282cb205886',
+    '6d5e1ff74805c873ad708c32ec88db3f',
+    'b315266858e778aee3ad58e0a2948eb7',
+    'bc768fa553aa3d81b37b6c7a72d3e098',
+    'ecff7a18bb72fa1b023f03b22cf53c23',
+  ];
+  if (DEEZER_EMPTY_DISC_HASHES.some((h) => lower.includes(h))) {
+    return true;
+  }
+
   // Treat any fallback SVG data URI as a placeholder (except intentional custom playlist studio presets)
   if (lower.startsWith('data:image/svg+xml')) {
     let decoded = lower;
@@ -211,9 +238,9 @@ function propagateResolvedArtwork(artist: string, title: string, key: string, co
     } catch {}
   }
 
-  // 2. Heal persisted localStorage lists (history, liked, queue) so future loads have the real URL
+  // 2. Heal persisted localStorage lists (history, liked, queue, community plays) so future loads have the real URL
   try {
-    for (const storageKey of ['history', 'liked', 'queue']) {
+    for (const storageKey of ['history', 'liked', 'queue', 'dotify_community_recent_plays']) {
       const list = safeStorage.getItem<Track[]>(storageKey, []);
       if (Array.isArray(list) && list.length > 0) {
         let changed = false;

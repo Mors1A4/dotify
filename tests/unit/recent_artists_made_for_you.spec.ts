@@ -128,7 +128,7 @@ describe('Made For You: Recent Artists Algorithm', () => {
       {
         id: 'f1',
         name: 'Followed Artist',
-        imageUrl: 'https://example.com/followed.jpg',
+        imageUrl: 'https://cdn-images.dzcdn.net/images/artist/followed.jpg',
         followedAt: now - 100000,
       },
     ];
@@ -136,7 +136,7 @@ describe('Made For You: Recent Artists Algorithm', () => {
     const result = engine.generateMadeForYouArtists(plays, [], followed, [], 10, now);
     expect(result[0].name).toBe('Followed Artist');
     expect(result[0].isFollowed).toBe(true);
-    expect(result[0].picture).toBe('https://example.com/followed.jpg');
+    expect(result[0].picture).toBe('https://cdn-images.dzcdn.net/images/artist/followed.jpg');
   });
 
   it('incorporates historical artist affinity score from telemetry database', () => {

@@ -182,11 +182,36 @@ export function setupConnectHub(server, options = {}) {
 
               activePlaybackState = state;
               if (senderId) {
+                const prevActiveId = activeDeviceId;
+                if (prevActiveId && prevActiveId !== senderId && state.isPlaying) {
+                  if (isCastDeviceId(prevActiveId)) {
+                    sendCastCommand('pause');
+                  } else {
+                    sendToDevice(
+                      prevActiveId,
+                      JSON.stringify({
+                        type: 'REMOTE_COMMAND',
+                        command: { action: 'pause' },
+                        fromDeviceId: senderId,
+                        targetDeviceId: prevActiveId,
+                        timestamp: Date.now(),
+                      })
+                    );
+                  }
+                }
+
                 activeDeviceId = senderId;
                 const client = clients.get(senderId);
                 if (client) {
                   client.device.isActive = true;
                   client.device.role = 'active_host';
+                }
+                if (prevActiveId && prevActiveId !== senderId) {
+                  const prevClient = clients.get(prevActiveId);
+                  if (prevClient) {
+                    prevClient.device.isActive = false;
+                    prevClient.device.role = 'remote_controller';
+                  }
                 }
               }
               // Broadcast state to all other connected devices
@@ -263,18 +288,28 @@ export function setupConnectHub(server, options = {}) {
 
             if (targetId) {
               const previousActiveId = activeDeviceId;
-              if (previousActiveId && isCastDeviceId(previousActiveId) && !isCastDeviceId(targetId)) {
+              if (previousActiveId && isCastDeviceId(previousActiveId) && previousActiveId !== targetId) {
                 closeActiveCastSession();
+              }
+              if (previousActiveId && !isCastDeviceId(previousActiveId) && previousActiveId !== targetId && previousActiveId !== fromId) {
+                sendToDevice(
+                  previousActiveId,
+                  JSON.stringify({
+                    type: 'REMOTE_COMMAND',
+                    command: { action: 'pause' },
+                    fromDeviceId: fromId,
+                    targetDeviceId: previousActiveId,
+                    timestamp: Date.now(),
+                  })
+                );
               }
 
               if (isCastDeviceId(targetId)) {
                 activeDeviceId = targetId;
                 const snapshot = msg.state || (msg.payload && msg.payload.state);
                 for (const [id, c] of clients.entries()) {
-                  if (id === fromId) {
-                    c.device.isActive = false;
-                    c.device.role = 'remote_controller';
-                  }
+                  c.device.isActive = false;
+                  c.device.role = 'remote_controller';
                 }
                 broadcastDeviceList();
 
@@ -330,7 +365,7 @@ export function setupConnectHub(server, options = {}) {
                 if (id === targetId) {
                   c.device.isActive = true;
                   c.device.role = 'active_host';
-                } else if (id === fromId) {
+                } else {
                   c.device.isActive = false;
                   c.device.role = 'remote_controller';
                 }

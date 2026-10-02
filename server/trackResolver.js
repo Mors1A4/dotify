@@ -109,11 +109,25 @@ export async function handleTrackStream(req, res) {
       return handleStreamProxy(req, res);
     }
 
+    if (preview) {
+      if (isPreload) return res.json({ cached: false, fallback: true });
+      res.setHeader('X-Dotify-Preview-Fallback', 'true');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      req.query.url = preview;
+      return handleStreamProxy(req, res);
+    }
+
     if (isPreload) return res.json({ cached: false });
     return res.status(404).json({ error: 'Track audio stream not found' });
   } catch (err) {
     console.warn(`[TrackResolver] Audio extraction failed for "${artist} - ${title}":`, err.message);
-    if (isPreload) return res.json({ cached: false });
+    if (preview) {
+      if (isPreload) return res.json({ cached: false, fallback: true });
+      res.setHeader('X-Dotify-Preview-Fallback', 'true');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      req.query.url = preview;
+      return handleStreamProxy(req, res);
+    }
     return res.status(502).json({ error: 'Audio resolution error', message: err.message });
   }
 }

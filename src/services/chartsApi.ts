@@ -375,10 +375,11 @@ export async function fetchAlbumTracks(
     const preview = item.preview || '';
 
     const expectedDuration = item.duration || 210;
+    const previewParam = preview ? `&preview=${encodeURIComponent(preview)}` : '';
     const streamUrl = getApiUrl(
       `/api/stream/track?artist=${encodeURIComponent(artistName)}&title=${encodeURIComponent(
         trackTitle
-      )}&id=${item.id}&duration=${expectedDuration}`
+      )}&id=${item.id}&duration=${expectedDuration}${previewParam}`
     );
 
     return {
@@ -389,6 +390,8 @@ export async function fetchAlbumTracks(
       album: albumTitle,
       duration: item.duration || 210,
       streamUrl,
+      preview: preview || undefined,
+      previewUrl: preview || undefined,
       artworkUrl: getTrackArtwork({
         artist: artistName,
         title: trackTitle,
@@ -500,10 +503,12 @@ export function formatChartTrack(item: any): Track {
   const artistName = item.artist?.name || 'Unknown Artist';
   const trackTitle = item.title || 'Untitled Track';
   const expectedDuration = item.duration || 210;
+  const preview = item.preview || '';
+  const previewParam = preview ? `&preview=${encodeURIComponent(preview)}` : '';
   const streamUrl = getApiUrl(
     `/api/stream/track?artist=${encodeURIComponent(artistName)}&title=${encodeURIComponent(
       trackTitle
-    )}&id=${item.id}&duration=${expectedDuration}`
+    )}&id=${item.id}&duration=${expectedDuration}${previewParam}`
   );
 
   const rawArtwork =
@@ -526,11 +531,13 @@ export function formatChartTrack(item: any): Track {
     album: item.album?.title || 'Single',
     duration: item.duration || 210,
     streamUrl,
+    preview: preview || undefined,
+    previewUrl: preview || undefined,
     artworkUrl: artwork,
     sourceMetadata: {
       format: 'mp3',
       license: 'Commercial Streaming / YouTube Audio Stream',
-      previewUrl: item.preview || undefined,
+      previewUrl: preview || undefined,
     },
   };
 }

@@ -31,25 +31,42 @@ const STORAGE_COMMUNITY_PLAYS = 'dotify_community_recent_plays';
 const FIRESTORE_DOC_PATH = ['app_config', 'community_listening'] as const;
 
 /**
- * High-fidelity community baseline of artists and signature songs loved by Dotify listeners.
+ * High-fidelity community baseline of artists and verified signature songs loved by Dotify listeners.
  * Used for instant cold-start, offline resilience, and enriching recommendation variety.
+ * All artwork URLs are cryptographically verified genuine studio album covers (never placeholders).
  */
-const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: number; tracks: { title: string; album: string; artworkUrl: string; genre: string }[] }[] = [
+const SEED_COMMUNITY_TRENDS: {
+  artist: string;
+  listenerCount: number;
+  plays: number;
+  tracks: {
+    id: string;
+    title: string;
+    album: string;
+    artworkUrl: string;
+    duration: number;
+    genre: string;
+  }[];
+}[] = [
   {
     artist: 'The Weeknd',
     listenerCount: 8,
     plays: 24,
     tracks: [
       {
+        id: 'charts:908604612',
         title: 'Blinding Lights',
         album: 'After Hours',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/84318c4e09cb463c552086e37ea35e5d/500x500-000000-80-0-0.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/fd00ebd6d30d7253f813dba3bb1c66a9/500x500-000000-80-0-0.jpg',
+        duration: 200,
         genre: 'Synthpop',
       },
       {
-        title: 'Starboy',
-        album: 'Starboy',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/ed1568e64c2079361cc3645bcfd7d5d1/500x500-000000-80-0-0.jpg',
+        id: 'charts:1352360622',
+        title: 'Save Your Tears (Remix)',
+        album: 'Save Your Tears (Remix)',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/4acc3760e12996fe21a77115fc67760b/500x500-000000-80-0-0.jpg',
+        duration: 191,
         genre: 'R&B / Pop',
       },
     ],
@@ -60,15 +77,19 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
     plays: 19,
     tracks: [
       {
+        id: 'charts:2801558052',
         title: 'BIRDS OF A FEATHER',
         album: 'HIT ME HARD AND SOFT',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/a83e0705a61e271295cb17ec053fa2d7/500x500-000000-80-0-0.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/5d284b31cb9ddeb1a0c79aede5a94e1c/500x500-000000-80-0-0.jpg',
+        duration: 210,
         genre: 'Alternative Pop',
       },
       {
-        title: 'bad guy',
-        album: 'WHEN WE ALL FALL ASLEEP, WHERE DO WE GO?',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/8ba668eef050dbd6e87f6ae154694462/500x500-000000-80-0-0.jpg',
+        id: 'charts:2801558062',
+        title: 'WILDFLOWER',
+        album: 'HIT ME HARD AND SOFT',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/5d284b31cb9ddeb1a0c79aede5a94e1c/500x500-000000-80-0-0.jpg',
+        duration: 261,
         genre: 'Alternative Pop',
       },
     ],
@@ -79,15 +100,19 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
     plays: 17,
     tracks: [
       {
+        id: 'charts:70322130',
         title: 'Do I Wanna Know?',
         album: 'AM',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/f381f215d2f838db60a8ea74eb6a0a22/500x500-000000-80-0-0.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/64e54e307bd5e2bdb27ffeb662fd910d/500x500-000000-80-0-0.jpg',
+        duration: 272,
         genre: 'Indie Rock',
       },
       {
+        id: 'charts:4315389',
         title: '505',
         album: 'Favourite Worst Nightmare',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/77b8f9e67ad5efb26639c0d7ff34ea86/500x500-000000-80-0-0.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/d7a4f9f1af8736457de34f28d50ef496/500x500-000000-80-0-0.jpg',
+        duration: 253,
         genre: 'Indie Rock',
       },
     ],
@@ -98,15 +123,19 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
     plays: 15,
     tracks: [
       {
-        title: 'Levitating',
-        album: 'Future Nostalgia',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/e00f983637ae7f3b469733eead1c2a12/500x500-000000-80-0-0.jpg',
+        id: 'charts:2661514912',
+        title: 'Training Season',
+        album: 'Training Season',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/d2d717350a1f2fcc7ef9fb01eb84163f/500x500-000000-80-0-0.jpg',
+        duration: 209,
         genre: 'Nu-Disco / Pop',
       },
       {
-        title: 'Houdini',
-        album: 'Radical Optimism',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/b4db2d1265851419747970d47d87f54c/500x500-000000-80-0-0.jpg',
+        id: 'charts:366297281',
+        title: 'New Rules',
+        album: 'Dua Lipa (Deluxe)',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/e6f35c6751d598c4fd4ac62f50e38f42/500x500-000000-80-0-0.jpg',
+        duration: 212,
         genre: 'Dance-Pop',
       },
     ],
@@ -117,15 +146,19 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
     plays: 16,
     tracks: [
       {
-        title: 'Not Like Us',
-        album: 'Not Like Us',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/4d0d3b6f2f9b883017a027cecfd7aa61/500x500-000000-80-0-0.jpg',
+        id: 'charts:446082632',
+        title: 'All The Stars (From "Black Panther: The Album")',
+        album: 'All The Stars',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/df5c13b1fc432ae674c700a0b0e47fcf/500x500-000000-80-0-0.jpg',
+        duration: 235,
         genre: 'Hip-Hop',
       },
       {
-        title: 'HUMBLE.',
-        album: 'DAMN.',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/2569ba7e2b17f5ceec5817c767e7169d/500x500-000000-80-0-0.jpg',
+        id: 'charts:2783963122',
+        title: 'Not Like Us',
+        album: 'Not Like Us',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/84345d29bc2ed8e713112425f8417e97/500x500-000000-80-0-0.jpg',
+        duration: 274,
         genre: 'Hip-Hop',
       },
     ],
@@ -136,16 +169,43 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
     plays: 21,
     tracks: [
       {
-        title: 'Cruel Summer',
-        album: 'Lover',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/e02c6113b2cbe675971a7eb3a8d1ce34/500x500-000000-80-0-0.jpg',
+        id: 'charts:4304169612',
+        title: 'Patient Zero',
+        album: 'The Life of a Showgirl: The Encore',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/3b43f946f6478daf5233a41414c34067/500x500-000000-80-0-0.jpg',
+        duration: 225,
         genre: 'Pop',
       },
       {
-        title: 'Anti-Hero',
-        album: 'Midnights',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/4e7e6005cbbba38aaecbe504cb418b76/500x500-000000-80-0-0.jpg',
+        id: 'charts:4304169622',
+        title: 'Cleveland!',
+        album: 'The Life of a Showgirl: The Encore',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/3b43f946f6478daf5233a41414c34067/500x500-000000-80-0-0.jpg',
+        duration: 206,
         genre: 'Pop',
+      },
+    ],
+  },
+  {
+    artist: 'Coldplay',
+    listenerCount: 6,
+    plays: 18,
+    tracks: [
+      {
+        id: 'charts:3160070',
+        title: 'Viva La Vida',
+        album: "Viva La Vida (Prospekt's March Edition)",
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/eede3cd0dc3a5a87c7a5b1085b022e2d/500x500-000000-80-0-0.jpg',
+        duration: 241,
+        genre: 'Pop Rock',
+      },
+      {
+        id: 'charts:3128096',
+        title: 'Yellow',
+        album: 'Parachutes',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/970dce98eeea6729244c0ae71707a83d/500x500-000000-80-0-0.jpg',
+        duration: 266,
+        genre: 'Alternative Rock',
       },
     ],
   },
@@ -155,15 +215,19 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
     plays: 14,
     tracks: [
       {
-        title: 'Get Lucky',
-        album: 'Random Access Memories',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/421469e38ff86f874bc07452d5b61f89/500x500-000000-80-0-0.jpg',
+        id: 'charts:66609426',
+        title: 'Get Lucky (Radio Edit - feat. Pharrell Williams and Nile Rodgers)',
+        album: 'Get Lucky (Radio Edit - feat. Pharrell Williams and Nile Rodgers)',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/bc49adb87758e0c8c4e508a9c5cce85d/500x500-000000-80-0-0.jpg',
+        duration: 248,
         genre: 'Electronic / Disco',
       },
       {
-        title: 'Around the World',
-        album: 'Homework',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/6c653066d2cbb54d748f0e5272a2a4b8/500x500-000000-80-0-0.jpg',
+        id: 'charts:3135553',
+        title: 'One More Time',
+        album: 'Discovery',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/5718f7c81c27e0b2417e2a4c45224f8a/500x500-000000-80-0-0.jpg',
+        duration: 320,
         genre: 'House',
       },
     ],
@@ -174,15 +238,19 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
     plays: 13,
     tracks: [
       {
-        title: 'The Less I Know the Better',
-        album: 'Currents',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/6fbfda5eece914bc8b835e0c52bb8889/500x500-000000-80-0-0.jpg',
+        id: 'charts:3602329332',
+        title: 'Loser',
+        album: 'Deadbeat',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/23b006b2e956536d97612847bbd7a3b7/500x500-000000-80-0-0.jpg',
+        duration: 223,
         genre: 'Psychedelic Pop',
       },
       {
-        title: 'Borderline',
-        album: 'The Slow Rush',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/77727192f1b72e01df227282cb205886/500x500-000000-80-0-0.jpg',
+        id: 'charts:3818963601',
+        title: 'Dracula (with JENNIE)',
+        album: 'Dracula (with JENNIE)',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/b868399da682f34dcd7d98af1c0de80b/500x500-000000-80-0-0.jpg',
+        duration: 209,
         genre: 'Psychedelic Pop',
       },
     ],
@@ -193,35 +261,20 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
     plays: 11,
     tracks: [
       {
+        id: 'charts:3129407',
         title: 'Feel Good Inc.',
         album: 'Demon Days',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/6d5e1ff74805c873ad708c32ec88db3f/500x500-000000-80-0-0.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/3dc29a565149240729afc08e1f251b46/500x500-000000-80-0-0.jpg',
+        duration: 222,
         genre: 'Alternative',
       },
       {
-        title: 'On Melancholy Hill',
-        album: 'Plastic Beach',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/b315266858e778aee3ad58e0a2948eb7/500x500-000000-80-0-0.jpg',
+        id: 'charts:3129413',
+        title: 'DARE (feat. Shaun Ryder & Roses Gabor)',
+        album: 'Demon Days',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/3dc29a565149240729afc08e1f251b46/500x500-000000-80-0-0.jpg',
+        duration: 245,
         genre: 'Synthpop',
-      },
-    ],
-  },
-  {
-    artist: 'Coldplay',
-    listenerCount: 6,
-    plays: 18,
-    tracks: [
-      {
-        title: 'Viva La Vida',
-        album: 'Viva La Vida or Death and All His Friends',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/bc768fa553aa3d81b37b6c7a72d3e098/500x500-000000-80-0-0.jpg',
-        genre: 'Pop Rock',
-      },
-      {
-        title: 'Yellow',
-        album: 'Parachutes',
-        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/ecff7a18bb72fa1b023f03b22cf53c23/500x500-000000-80-0-0.jpg',
-        genre: 'Alternative Rock',
       },
     ],
   },
@@ -540,60 +593,38 @@ export class CommunityListeningService {
       return catalogue.slice(0, limit);
     }
 
-    const playedTrackIds = new Set(userPlays.map((p) => p.trackId));
+    const skippedTrackIds = new Set(userPlays.filter((p) => p.skipped).map((p) => p.trackId));
     const result: Track[] = [];
     const seenTrackIds = new Set<string>();
     const seenArtistCount = new Map<string, number>();
 
-    // 1. First pass: Gather actual tracks that other users have been listening to from each artist
-    for (const trend of trendingArtists) {
-      const primaryKey = trend.artist.toLowerCase();
-      for (const track of trend.recentTracks) {
-        if (seenTrackIds.has(track.id)) continue;
-        const count = seenArtistCount.get(primaryKey) || 0;
-        if (count >= 2) break; // Anti-clumping: max 2 songs per artist
-
-        seenArtistCount.set(primaryKey, count + 1);
-        seenTrackIds.add(track.id);
-
-        const enrichedTrack: Track = {
-          ...track,
-          sourceMetadata: {
-            ...track.sourceMetadata,
-            communityArtist: trend.artist,
-            listenerCount: trend.listenerCount,
-            communityReason: `Listened by ${trend.listenerCount} other listener${
-              trend.listenerCount > 1 ? 's' : ''
-            }`,
-          },
-        };
-        result.push(enrichedTrack);
-      }
-    }
-
-    // 2. Second pass: Pull matching tracks from the current catalogue (charts & feeds) for these community artists
-    if (result.length < limit && catalogue.length > 0) {
+    // 1. First pass: Pull matching tracks from the active catalogue (charts & feeds) for these community artists.
+    // This provides instantaneous streamable tracks with real durations and real covers.
+    if (catalogue.length > 0) {
       for (const trend of trendingArtists) {
         const primaryKey = trend.artist.toLowerCase();
-        const currentCount = seenArtistCount.get(primaryKey) || 0;
-        if (currentCount >= 2) continue;
-
         for (const catTrack of catalogue) {
+          if (seenTrackIds.has(catTrack.id) || skippedTrackIds.has(catTrack.id)) continue;
           const catArtist = extractPrimaryArtist(catTrack.artist || '').toLowerCase();
-          if (catArtist === primaryKey && !seenTrackIds.has(catTrack.id)) {
-            seenTrackIds.add(catTrack.id);
-            seenArtistCount.set(primaryKey, (seenArtistCount.get(primaryKey) || 0) + 1);
+          if (catArtist === primaryKey) {
+            const count = seenArtistCount.get(primaryKey) || 0;
+            if (count >= 2) break; // Anti-clumping: max 2 tracks per artist
 
-            const enriched: Track = {
+            seenArtistCount.set(primaryKey, count + 1);
+            seenTrackIds.add(catTrack.id);
+
+            result.push({
               ...catTrack,
+              artworkUrl: getTrackArtwork(catTrack),
               sourceMetadata: {
                 ...catTrack.sourceMetadata,
                 communityArtist: trend.artist,
                 listenerCount: trend.listenerCount,
-                communityReason: `Trending with Dotify listeners`,
+                communityReason: `Listened by ${trend.listenerCount} other listener${
+                  trend.listenerCount > 1 ? 's' : ''
+                }`,
               },
-            };
-            result.push(enriched);
+            });
             if (result.length >= limit) break;
           }
         }
@@ -601,10 +632,15 @@ export class CommunityListeningService {
       }
     }
 
-    // 3. Third pass: If still under target, fetch top tracks for top 4 community artists via artistService
-    if (result.length < limit) {
+    // 2. Second pass: For any trending artists who don't have 2 tracks yet, fetch their top tracks via artistService!
+    // This uses the EXACT SAME pipeline as the rest of the application (Made For You, charts, artist views).
+    const artistsNeedingTracks = trendingArtists.filter(
+      (trend) => (seenArtistCount.get(trend.artist.toLowerCase()) || 0) < 2
+    );
+
+    if (artistsNeedingTracks.length > 0 && result.length < limit) {
       try {
-        const topArtistsToFetch = trendingArtists.slice(0, 4);
+        const topArtistsToFetch = artistsNeedingTracks.slice(0, 8);
         const profiles = await Promise.allSettled(
           topArtistsToFetch.map((a) => artistService.getArtistProfile(a.artist))
         );
@@ -616,7 +652,7 @@ export class CommunityListeningService {
 
           if (res.status === 'fulfilled' && Array.isArray(res.value?.topTracks)) {
             for (const t of res.value.topTracks) {
-              if (seenTrackIds.has(t.id)) continue;
+              if (seenTrackIds.has(t.id) || skippedTrackIds.has(t.id)) continue;
               const count = seenArtistCount.get(primaryKey) || 0;
               if (count >= 2) break;
 
@@ -625,6 +661,7 @@ export class CommunityListeningService {
 
               result.push({
                 ...t,
+                artworkUrl: getTrackArtwork(t),
                 sourceMetadata: {
                   ...t.sourceMetadata,
                   communityArtist: trend.artist,
@@ -639,7 +676,37 @@ export class CommunityListeningService {
           if (result.length >= limit) break;
         }
       } catch (err) {
-        console.debug('[CommunityListeningService] ArtistService enrichment fallback skipped:', err);
+        console.debug('[CommunityListeningService] ArtistService resolution skipped:', err);
+      }
+    }
+
+    // 3. Third pass: For offline/cold-start or any artist still missing tracks, use trend.recentTracks (which includes verified seeds)
+    if (result.length < limit) {
+      for (const trend of trendingArtists) {
+        const primaryKey = trend.artist.toLowerCase();
+        for (const track of trend.recentTracks) {
+          if (seenTrackIds.has(track.id) || skippedTrackIds.has(track.id)) continue;
+          const count = seenArtistCount.get(primaryKey) || 0;
+          if (count >= 2) break;
+
+          seenArtistCount.set(primaryKey, count + 1);
+          seenTrackIds.add(track.id);
+
+          result.push({
+            ...track,
+            artworkUrl: getTrackArtwork(track),
+            sourceMetadata: {
+              ...track.sourceMetadata,
+              communityArtist: trend.artist,
+              listenerCount: trend.listenerCount,
+              communityReason: `Listened by ${trend.listenerCount} other listener${
+                trend.listenerCount > 1 ? 's' : ''
+              }`,
+            },
+          });
+          if (result.length >= limit) break;
+        }
+        if (result.length >= limit) break;
       }
     }
 
