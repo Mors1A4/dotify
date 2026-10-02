@@ -524,7 +524,8 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
   // Wire connectClient listeners
   connectClient.onDeviceListUpdate((devices, activeId) => {
-    const curActive = get().activeDevice;
+    const state = typeof get === 'function' ? get() : null;
+    const curActive = state?.activeDevice || null;
     const target = devices.find((d) => d.deviceId === activeId) || null;
     const active = target && curActive && target.deviceId === curActive.deviceId
       ? { ...target, volume: curActive.volume ?? target.volume }

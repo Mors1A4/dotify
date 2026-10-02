@@ -79,7 +79,6 @@ export class ConnectClient {
 
   private discoveredDevices: Map<string, ConnectedDevice> = new Map();
   private rememberedVolumes: Map<string, number> = new Map();
-  private notifyDeviceListTimer: any = null;
   private activeDeviceId: string | null = null;
   private reconnectAttempt: number = 0;
   private reconnectTimeout: any = null;
@@ -850,14 +849,10 @@ export class ConnectClient {
   }
 
   private notifyDeviceList() {
-    if (this.notifyDeviceListTimer) return;
-    this.notifyDeviceListTimer = setTimeout(() => {
-      this.notifyDeviceListTimer = null;
-      const list = this.getDiscoveredDevices();
-      for (const listener of this.deviceListListeners) {
-        listener(list, this.activeDeviceId);
-      }
-    }, 20);
+    const list = this.getDiscoveredDevices();
+    for (const listener of this.deviceListListeners) {
+      listener(list, this.activeDeviceId);
+    }
   }
 
   // Subscription methods

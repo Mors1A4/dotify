@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { usePlayerStore } from '../../store/playerStore';
 import { DeviceIcon } from './DeviceIcon';
@@ -9,27 +9,26 @@ import { X, Volume2, Loader2, Wifi, Check, RefreshCw } from 'lucide-react';
 
 export const DevicePickerModal: React.FC = () => {
   const [isScanning, setIsScanning] = useState(false);
+  const [sliderVal, setSliderVal] = useState<number | null>(null);
+  const isDraggingVol = useRef<boolean>(false);
 
-  const {
-    isDevicePickerOpen,
-    currentTrack,
-    toggleDevicePicker,
-    remoteDevices,
-    activeDevice,
-    connectMode,
-    isTransferringPlayback,
-    transferringToId,
-    transferPlaybackTo,
-    setRemoteVolume,
-    volume,
-    setVolume,
-  } = usePlayerStore();
+  const isDevicePickerOpen = usePlayerStore((s) => s.isDevicePickerOpen);
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const toggleDevicePicker = usePlayerStore((s) => s.toggleDevicePicker);
+  const remoteDevices = usePlayerStore((s) => s.remoteDevices);
+  const activeDevice = usePlayerStore((s) => s.activeDevice);
+  const connectMode = usePlayerStore((s) => s.connectMode);
+  const isTransferringPlayback = usePlayerStore((s) => s.isTransferringPlayback);
+  const transferringToId = usePlayerStore((s) => s.transferringToId);
+  const transferPlaybackTo = usePlayerStore((s) => s.transferPlaybackTo);
+  const setRemoteVolume = usePlayerStore((s) => s.setRemoteVolume);
+  const volume = usePlayerStore((s) => s.volume);
+  const setVolume = usePlayerStore((s) => s.setVolume);
 
   useEffect(() => {
     if (isDevicePickerOpen) {
+      // Query already-discovered & cached smart speakers instantly via lightweight mDNS
       castService.fetchCastDevices();
-      castService.scanForDevices();
-      connectClient.reconnect();
     }
   }, [isDevicePickerOpen]);
 
@@ -39,8 +38,6 @@ export const DevicePickerModal: React.FC = () => {
     await castService.scanForDevices();
     setIsScanning(false);
   };
-
-  if (!isDevicePickerOpen) return null;
 
   // Determine local and active devices
   const localIsActive = connectMode !== 'remote_controller';
@@ -55,6 +52,20 @@ export const DevicePickerModal: React.FC = () => {
     volume: volume,
     lastSeen: Date.now(),
   } : null);
+
+  const targetDeviceVolume = currentActiveDevice
+    ? (currentActiveDevice.isCurrentDevice ? volume : (currentActiveDevice.volume ?? volume))
+    : volume;
+
+  useEffect(() => {
+    if (!isDraggingVol.current) {
+      setSliderVal(null);
+    }
+  }, [targetDeviceVolume]);
+
+  const displayVolume = sliderVal !== null ? sliderVal : targetDeviceVolume;
+
+  if (!isDevicePickerOpen) return null;
 
   const handleDeviceClick = async (targetDeviceId: string) => {
     if (isTransferringPlayback) return;
@@ -150,20 +161,31 @@ export const DevicePickerModal: React.FC = () => {
                 min="0"
                 max="1"
                 step="0.01"
-                value={currentActiveDevice.isCurrentDevice ? volume : currentActiveDevice.volume ?? volume}
+                value={displayVolume}
+                onMouseDown={() => { isDraggingVol.current = true; }}
+                onTouchStart={() => { isDraggingVol.current = true; }}
                 onChange={(e) => {
                   const val = parseFloat(e.target.value);
+                  setSliderVal(val);
                   if (currentActiveDevice.isCurrentDevice) {
                     setVolume(val);
                   } else {
                     setRemoteVolume(currentActiveDevice.deviceId, val);
                   }
                 }}
+                onMouseUp={() => {
+                  isDraggingVol.current = false;
+                  setSliderVal(null);
+                }}
+                onTouchEnd={() => {
+                  isDraggingVol.current = false;
+                  setSliderVal(null);
+                }}
                 data-testid="device-volume-slider"
                 className="w-full h-1 rounded-none appearance-none cursor-pointer"
               />
               <span className="text-xs font-mono text-muted w-8 text-right">
-                {Math.round((currentActiveDevice.isCurrentDevice ? volume : currentActiveDevice.volume ?? volume) * 100)}%
+                {Math.round(displayVolume * 100)}%
               </span>
             </div>
           </div>

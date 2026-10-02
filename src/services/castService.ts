@@ -14,6 +14,7 @@ class CastService {
   private isScanning: boolean = false;
   private scanTimer: any = null;
   private discoveredCastDevices: Map<string, ConnectedDevice> = new Map();
+  private lastScanTimestamp: number = 0;
 
   constructor() {
     // Initial fetch on app launch
@@ -151,9 +152,10 @@ class CastService {
    * Trigger an active network subnet & mDNS scan for Google Cast speakers
    */
   public async scanForDevices(): Promise<ConnectedDevice[]> {
-    if (this.isScanning) {
+    if (this.isScanning || Date.now() - this.lastScanTimestamp < 5000) {
       return Array.from(this.discoveredCastDevices.values());
     }
+    this.lastScanTimestamp = Date.now();
 
     // Immediately fetch known & cached devices first
     await this.fetchCastDevices();

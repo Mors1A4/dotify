@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { Track } from '../types/track';
 import { audioEngine } from '../audio/audioEngine';
+import { usePlayerStore } from '../store/playerStore';
 
 export function formatPlaybackTime(secs: number): string {
   if (!secs || isNaN(secs) || !isFinite(secs) || secs < 0) return '0:00';
@@ -299,7 +300,12 @@ export function useSmoothSeekbar({ track, isActive = true }: SmoothSeekbarOption
       const pctStr = percent.toFixed(3);
       e.target.style.background = `linear-gradient(to right, #ffffff 0%, #ffffff ${pctStr}%, rgba(255, 255, 255, 0.2) ${pctStr}%, rgba(255, 255, 255, 0.2) 100%)`;
       isDraggingRef.current = false;
-      audioEngine.seekTo(val);
+      const store = usePlayerStore.getState();
+      if (store.connectMode === 'remote_controller') {
+        store.seekTo(val);
+      } else {
+        audioEngine.seekTo(val);
+      }
     },
     [cancelGlide]
   );
