@@ -387,7 +387,7 @@ export const useMp3VaultStore = create<Mp3VaultState>((set, get) => {
           } catch {}
         }
 
-        // 3. On Android (where yt-dlp.exe is not local), check if a desktop PC peer is on WiFi to resolve full stream
+        // 3. On Android, check if a desktop PC peer is on WiFi to resolve full stream
         let effectiveSourceUrl = sourcePeerUrl;
         if (!fullBlob && !effectiveSourceUrl && isAndroidApp()) {
           const desktopPeer = get().peers.find((p) => p.deviceType === 'desktop');

@@ -212,6 +212,27 @@ let indexState = {
   deletedIds: {},
 };
 
+export function findLocalTrack(trackOrId) {
+  if (!trackOrId) return null;
+  reconcileDiskFiles();
+  const id = typeof trackOrId === 'string' ? trackOrId : trackOrId.id;
+  if (id) {
+    const exact = indexState.tracks.find((t) => t.id === id);
+    if (exact && fs.existsSync(path.join(mp3Dir, exact.fileName))) return exact;
+  }
+  if (typeof trackOrId === 'object' && trackOrId.title && trackOrId.artist) {
+    const normArtist = String(trackOrId.artist).toLowerCase().trim();
+    const normTitle = String(trackOrId.title).toLowerCase().trim();
+    const match = indexState.tracks.find(
+      (t) =>
+        String(t.artist).toLowerCase().trim() === normArtist &&
+        String(t.title).toLowerCase().trim() === normTitle
+    );
+    if (match && fs.existsSync(path.join(mp3Dir, match.fileName))) return match;
+  }
+  return null;
+}
+
 // Discovered WiFi peers: ip -> PeerInfo
 const discoveredPeers = new Map();
 
@@ -655,7 +676,7 @@ export function setupMp3SyncHub(app) {
     fs.createReadStream(fullPath).pipe(res);
   });
 
-  // 4. Save / Download a track as MP3 (accepts audioBase64, sourceUrl, or resolves via yt-dlp)
+  // 4. Save / Download a track as MP3 (accepts audioBase64, sourceUrl, or resolves via Audius / direct stream)
   app.post('/api/mp3s/save', expressJsonLarge(), async (req, res) => {
     try {
       const { track, reason = 'manual_download', audioBase64, sourceUrl, originDeviceName } = req.body || {};

@@ -1,7 +1,7 @@
 {
   "name": "notify",
   "private": true,
-  "version": "1.0.23",
+  "version": "1.0.25",
   "type": "module",
   "scripts": {
     "dev": "concurrently --restart-tries 3 --restart-after 1000 -n \"VITE,API\" -c \"cyan,magenta\" \"vite --host\" \"node server/index.js\"",
@@ -24,7 +24,6 @@
     "release:fast": "node scripts/release.mjs --skip-build"
   },
   "dependencies": {
-    "@distube/ytdl-core": "^4.15.9",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-http": "^2.6.1",
     "@tauri-apps/plugin-opener": "^2.5.5",
@@ -36,7 +35,6 @@
     "express": "^4.21.2",
     "firebase": "^12.19.0",
     "lucide-react": "^0.475.0",
-    "play-dl": "^1.9.7",
     "qrcode": "^1.5.4",
     "tailwind-merge": "^3.0.1",
     "webtorrent": "^3.0.21",
