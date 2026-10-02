@@ -13,9 +13,9 @@ export interface FluidVibeDiscVisualizerProps {
   title?: string;
 }
 
-const NUM_POINTS = 20; // 20 radial points for organic, fluid liquid perimeter
-const BASE_OUTER_RADIUS = 39; // Base radius for outer theme layer
-const MAX_FLUID_DISPLACEMENT = 9; // Max fluid expansion (outer perimeter reaches up to 48, safe inside 100x100)
+const NUM_POINTS = 24; // 24 radial points for organic, fluid liquid perimeter
+const BASE_OUTER_RADIUS = 37; // Base radius for outer theme layer
+const MAX_FLUID_DISPLACEMENT = 10.5; // Max fluid expansion (outer perimeter reaches up to 47.5, safe inside 100x100)
 
 /**
  * Three-Tone Fluid Disc Visualizer:
@@ -23,7 +23,8 @@ const MAX_FLUID_DISPLACEMENT = 9; // Max fluid expansion (outer perimeter reache
  * 2. Middle: Solid grey disc ring (completely static, centered at 50,50).
  * 3. Inner: Pitch black center dot (completely static, centered at 50,50).
  *
- * INVARIANT: Tone 2 and Tone 3 are 100% static at (50, 50). The center NEVER moves or rotates.
+ * INVARIANT: Tone 2 and Tone 3 are 100% static at (50, 50). The center NEVER moves.
+ * Tone 1 has radial points whose radii expand and undulate fluidly according to the music.
  */
 export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = ({
   size = 24,
@@ -77,22 +78,37 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
       const deltaMs = Math.min(40, now - lastTimeRef.current);
       lastTimeRef.current = now;
 
-      // Silence-aware audio detection
-      const isAudible =
-        isPlaying && !isBuffering && Boolean(currentTrack) && audioEngine.isAudioActive(3);
+      // Active music state: true if player is playing a track and not buffering
+      // Works across local playback, YouTube iframe bridge, and remote Google Cast / kitchen speakers!
+      const isMusicPlaying = isPlaying && !isBuffering && Boolean(currentTrack);
 
-      const raw = isAudible ? audioEngine.getAudioEnergy() : 0;
-      const normalizedEnergy = Math.min(1.0, raw / 200);
+      // Check for live Web Audio analyser energy
+      const rawAudioEnergy = audioEngine.getAudioEnergy();
+      const hasRealAudio = rawAudioEnergy > 0;
 
-      // Liquid smoothing momentum (exponential moving average)
+      // Normalize energy: if real audio is available, use it; otherwise synthesize tempo-synced dynamic energy
+      let normalizedEnergy = 0;
+      if (isMusicPlaying) {
+        if (hasRealAudio) {
+          normalizedEnergy = Math.min(1.0, rawAudioEnergy / 120);
+        } else {
+          // Synthetic music pulse for remote cast / kitchen speaker / bridge modes
+          const t = now * 0.001;
+          const beatPhase = (t % (60 / 124)) / (60 / 124);
+          const kickEnvelope = Math.exp(-beatPhase * 4.5);
+          normalizedEnergy = 0.45 + kickEnvelope * 0.55;
+        }
+      }
+
+      // Viscous liquid smoothing momentum
       smoothedEnergy.current = smoothedEnergy.current * 0.70 + normalizedEnergy * 0.30;
       const energy = smoothedEnergy.current;
 
-      // Sample real audio frequency spectrum
+      // Sample real audio frequency spectrum if available
       const analyser = audioEngine.getAnalyser();
       let hasFreqs = false;
 
-      if (isAudible) {
+      if (hasRealAudio) {
         if (audioEngine.isBridgePlayback()) {
           hasFreqs = audioEngine.fillBridgeVisualizerData(freqBuffer.current, waveBuffer.current);
         } else if (analyser) {
@@ -103,30 +119,36 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
         }
       }
 
-      // Compute fluid displacements for outer perimeter
+      // Compute fluid displacement for each of the 24 radial points
       for (let i = 0; i < NUM_POINTS; i++) {
         let displacement = 0;
 
-        if (isAudible) {
+        if (isMusicPlaying && energy > 0.01) {
+          const angle = (i / NUM_POINTS) * Math.PI * 2;
+
           if (hasFreqs) {
-            // Symmetrical frequency mapping across the circumference
+            // Real audio: Map frequency bins around the circle with harmonic blending
             const binIdx = Math.floor(
               Math.abs(Math.sin((i / NUM_POINTS) * Math.PI)) * 14 + (i % 2) * 2
             );
-            const freqValue = (freqBuffer.current[binIdx] || 0) / 255;
-            displacement = (freqValue * 0.75 + energy * 0.25) * MAX_FLUID_DISPLACEMENT;
+            const freqVal = (freqBuffer.current[binIdx] || 0) / 255;
+            const wave = Math.sin(now * 0.005 + angle * 2) * 0.3 + Math.cos(now * 0.003 - angle * 3) * 0.2;
+            displacement = (freqVal * 0.65 + energy * 0.35 + wave * 0.15) * MAX_FLUID_DISPLACEMENT;
           } else {
-            // Organic harmonic wave formula
-            const angle = (i / NUM_POINTS) * Math.PI * 2;
-            const wave = Math.sin(now * 0.007 + angle * 2) * 0.5 + Math.cos(now * 0.004 - angle) * 0.5;
-            displacement = energy * MAX_FLUID_DISPLACEMENT * (0.65 + 0.35 * wave);
+            // Fluid wave dynamics: 3 traveling harmonic frequencies with bass pulse
+            const w1 = Math.sin(now * 0.0045 + angle * 2);
+            const w2 = Math.cos(now * 0.0032 - angle * 3);
+            const w3 = Math.sin(now * 0.0068 + angle * 5) * 0.6;
+            const combinedHarmonic = (w1 + w2 + w3) / 2.6; // -1 to 1
+            const normalizedHarmonic = (combinedHarmonic + 1) * 0.5; // 0 to 1
+            displacement = energy * MAX_FLUID_DISPLACEMENT * (0.30 + 0.70 * normalizedHarmonic);
           }
         }
 
-        targetRadii.current[i] = BASE_OUTER_RADIUS + displacement;
-        // Spring physics interpolation for liquid behavior
+        targetRadii.current[i] = BASE_OUTER_RADIUS + Math.max(0, Math.min(MAX_FLUID_DISPLACEMENT, displacement));
+        // Viscous spring physics interpolation for liquid behavior
         currentRadii.current[i] =
-          currentRadii.current[i] * 0.65 + targetRadii.current[i] * 0.35;
+          currentRadii.current[i] * 0.68 + targetRadii.current[i] * 0.32;
       }
 
       // Build smooth closed Bezier loop for the fluid outer perimeter
@@ -228,7 +250,7 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
       <circle
         cx="50"
         cy="50"
-        r="26.5"
+        r="25"
         fill="#2c2d36"
         stroke="#1c1d24"
         strokeWidth="1.2"
@@ -240,7 +262,7 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
       <circle
         cx="50"
         cy="50"
-        r="11"
+        r="10"
         fill="#000000"
         stroke="#121318"
         strokeWidth="0.8"
