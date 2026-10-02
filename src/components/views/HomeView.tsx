@@ -15,7 +15,9 @@ import {
   Headphones,
   SlidersHorizontal,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
+import { useVibeDjStore } from '../../store/vibeDjStore';
 import { recommendationEngine, DailyMix } from '../../services/recommendationEngine';
 import { telemetryDb } from '../../services/telemetryDb';
 import { dailyVibeManager } from '../../services/dailyVibeManager';
@@ -152,8 +154,11 @@ export const HomeView: React.FC = () => {
     playlists,
     navigateToArtist,
     navigateToPlaylist,
+    navigateToVibeDj,
     deletePlaylist,
   } = usePlayerStore();
+
+  const { isActive: isVibeDjActive, vibeLabel, startVibeDj } = useVibeDjStore();
 
   const { user } = useAuthStore();
 
@@ -418,7 +423,50 @@ export const HomeView: React.FC = () => {
 
       {/* Personalized Recommendations Section */}
       <div className="flex flex-col gap-8">
-          {/* Shelf 1: Made For You */}
+        {/* Vibe DJ Live Feature Banner */}
+        <div className="relative rounded-2xl p-5 md:p-6 bg-gradient-to-r from-purple-950/80 via-slate-900 to-indigo-950 border border-purple-500/30 shadow-xl overflow-hidden flex flex-col md:flex-row items-center justify-between gap-5">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center flex-shrink-0 text-purple-400 shadow-inner">
+              <Sparkles size={24} className={isVibeDjActive ? 'animate-spin' : ''} />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                  Live AI DJ
+                </span>
+                {isVibeDjActive && (
+                  <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    Live Now • {vibeLabel}
+                  </span>
+                )}
+              </div>
+              <h2 className="text-lg md:text-xl font-bold text-white tracking-tight">
+                Endless Live Flow with Vibe DJ
+              </h2>
+              <p className="text-xs text-white/70 max-w-xl line-clamp-2">
+                Sequentially streams tracks and artists tailored to what you love right now. Learns from every play, skip, and replay with a 1-click Shake Up button.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 flex-shrink-0 w-full md:w-auto justify-end">
+            <button
+              onClick={() => {
+                if (!isVibeDjActive) {
+                  startVibeDj();
+                }
+                navigateToVibeDj();
+              }}
+              className="flex-1 md:flex-initial px-5 py-2.5 rounded-xl bg-accent text-accent-content font-bold text-xs hover:scale-105 active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Play size={14} fill="currentColor" />
+              <span>{isVibeDjActive ? 'Open DJ Console' : 'Start Vibe DJ'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Shelf 1: Made For You */}
           {/* Shelf 1: Made For You */}
           {madeForYou.length > 0 && (
             <section data-testid="made-for-you-shelf" className="flex flex-col gap-4">

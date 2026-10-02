@@ -27,6 +27,7 @@ import {
   isUglyPlaceholder,
 } from '../../services/artworkService';
 import { SaveMp3Button } from '../common/SaveMp3Button';
+import { VibeDjBadge } from '../player/VibeDjBadge';
 
 export const PlayerBar: React.FC = () => {
   const {
@@ -141,6 +142,7 @@ export const PlayerBar: React.FC = () => {
             </button>
 
             <SaveMp3Button track={displayTrack} size={17} />
+            <VibeDjBadge compact={false} />
           </>
         ) : (
           <div className="flex items-center gap-3 text-muted text-xs">

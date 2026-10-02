@@ -150,7 +150,7 @@ export class RemoteProgressInterpolator {
 
 export const remoteProgressInterpolator = new RemoteProgressInterpolator();
 
-export type AppView = 'home' | 'search' | 'radio' | 'archive' | 'torrents' | 'library' | 'artist' | 'album' | 'playlist';
+export type AppView = 'home' | 'search' | 'radio' | 'archive' | 'torrents' | 'library' | 'artist' | 'album' | 'playlist' | 'vibe-dj';
 
 // Backward compatibility alias for Playlist
 export type Playlist = CustomPlaylist;
@@ -269,6 +269,7 @@ export interface PlayerStoreState {
   navigateToArtist: (artistName: string, artistId?: string) => void;
   navigateToAlbum: (album: SelectedAlbumState) => void;
   navigateToPlaylist: (playlistId: string) => void;
+  navigateToVibeDj: () => void;
   addAlbumToLibrary: (album: SelectedAlbumState, tracks: Track[]) => void;
   removeAlbumFromLibrary: (albumTitle: string) => void;
   isAlbumInLibrary: (albumTitle: string) => boolean;
@@ -471,6 +472,23 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         const u = authService.getCurrentUser();
         communityListeningService.recordPlay(rec.track, u?.uid || 'guest');
       }
+
+      // Real-time sequential feedback to Vibe DJ
+      try {
+        const { useVibeDjStore } = await import('./vibeDjStore');
+        const djState = useVibeDjStore.getState();
+        if (djState.isActive) {
+          const compRate = totalMs > 0 ? Math.min(1.0, rec.durationPlayedMs / totalMs) : 0.5;
+          const isSkipped = compRate < 0.35 && rec.durationPlayedMs < 35000;
+          if (rec.replayed) {
+            djState.recordTrackEvent(rec.track, 'replayed', compRate, rec.durationPlayedMs);
+          } else if (isSkipped) {
+            djState.recordTrackEvent(rec.track, 'skipped', compRate, rec.durationPlayedMs);
+          } else if (compRate >= 0.70) {
+            djState.recordTrackEvent(rec.track, 'completed', compRate, rec.durationPlayedMs);
+          }
+        }
+      } catch {}
     } catch (err) {
       console.warn('[PlayerStore] Failed to record play telemetry:', err);
     }
@@ -1316,6 +1334,26 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         connectClient.sendRemoteCommand('next');
         return;
       }
+      // If Vibe DJ is active, let Vibe DJ select the next track sequentially
+      try {
+        const { useVibeDjStore } = await import('./vibeDjStore');
+        const djState = useVibeDjStore.getState();
+        if (djState.isActive) {
+          const nextDjTrack = await djState.popNextDjTrack();
+          if (nextDjTrack) {
+            get().playTrack(nextDjTrack, undefined, undefined, {
+              origin: 'vibe_playlist',
+              intent: 'exploratory',
+              playlistName: djState.vibeLabel,
+            });
+            broadcastCurrentState();
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[PlayerStore] Error pulling next Vibe DJ track:', err);
+      }
+
       const { queue, currentTrack, currentTrackIndex, repeatMode, shuffle, autoplayEnabled } = get();
       if (queue.length === 0) {
         if (autoplayEnabled && repeatMode === 'off') {
@@ -1738,6 +1776,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       });
     },
 
+    navigateToVibeDj: () => {
+      set((state) => {
+        const res = pushNavEntry(state, {
+          view: 'vibe-dj',
+        });
+        return {
+          ...res,
+          isMobileSheetOpen: false,
+        };
+      });
+    },
+
     addAlbumToLibrary: (album: SelectedAlbumState, tracks: Track[]) => {
       const { playlists, importCustomPlaylist } = get();
       const existing = playlists.find(
@@ -1871,6 +1921,15 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         // Cache full track for offline listening
         try {
           audioCache.cacheFullTrack(track);
+        } catch {}
+
+        // Notify Vibe DJ of positive like signal
+        try {
+          import('./vibeDjStore').then(({ useVibeDjStore }) => {
+            if (useVibeDjStore.getState().isActive) {
+              useVibeDjStore.getState().recordTrackEvent(track, 'liked', 1.0);
+            }
+          });
         } catch {}
       }
       safeStorage.setItem(STORAGE_LIKED, updated);

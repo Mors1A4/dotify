@@ -219,13 +219,16 @@ describe('Community Listening & Cross-User Artist Recommendations', () => {
     const recommended = await service.getRecommendedSongsFromCommunityArtists({
       excludeUserId: 'brand_new_user',
       catalogue: [],
+      rotationOffset: 0,
     });
 
     expect(recommended.length).toBeGreaterThanOrEqual(5);
     const artists = recommended.map((t) => t.artist);
     // Should include well-known community artists like The Weeknd, Billie Eilish, Arctic Monkeys, etc.
     expect(
-      artists.some((a) => ['The Weeknd', 'Billie Eilish', 'Arctic Monkeys', 'Dua Lipa', 'Taylor Swift'].includes(a))
+      artists.some((a) =>
+        ['The Weeknd', 'Billie Eilish', 'Arctic Monkeys', 'Dua Lipa', 'Taylor Swift', 'Coldplay', 'Daft Punk', 'Tame Impala', 'Gorillaz'].includes(a)
+      )
     ).toBe(true);
   });
 

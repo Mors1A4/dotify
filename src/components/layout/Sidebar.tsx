@@ -22,6 +22,7 @@ import {
   RefreshCw,
   FolderDown,
   Trash2,
+  Sparkles,
 } from 'lucide-react';
 import { useUpdateStore } from '../../store/updateStore';
 
@@ -77,6 +78,7 @@ export const Sidebar: React.FC = () => {
   const navItems: { id: AppView; label: string; icon: React.ReactNode }[] = [
     { id: 'home', label: 'Home', icon: <Home size={20} /> },
     { id: 'search', label: 'Search', icon: <Search size={20} /> },
+    { id: 'vibe-dj', label: 'Vibe DJ', icon: <Sparkles size={20} className="text-amber-400 group-hover:rotate-12 transition-transform" /> },
   ];
 
   const handleCreatePlaylistSubmit = (e?: React.FormEvent) => {
