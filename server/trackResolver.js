@@ -1,5 +1,6 @@
 import ytSearch from 'yt-search';
 import { handleStreamProxy } from './streamProxy.js';
+import { findLocalTrack } from './mp3SyncHub.js';
 
 // In-memory cache for resolved stream URLs (4-hour TTL)
 const streamCache = new Map();
@@ -20,28 +21,33 @@ export async function searchYouTubeVideos(query) {
 
 export async function resolveAudiusStream(artist, title, expectedDurationSec = 0) {
   try {
-    const qStr = `${artist || ''} ${title || ''}`.trim();
-    if (!qStr) return null;
-    const res = await fetch(
-      `https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(qStr)}&app_name=dotify`,
-      {
-        headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 dotify/1.0.0' },
-        signal: AbortSignal.timeout(3500),
+    const queries = [];
+    const full = `${artist || ''} ${title || ''}`.trim();
+    if (full) queries.push(full);
+    if (title && title.trim() && title.trim() !== full) queries.push(title.trim());
+
+    for (const qStr of queries) {
+      const res = await fetch(
+        `https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(qStr)}&app_name=dotify`,
+        {
+          headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 dotify/1.0.0' },
+          signal: AbortSignal.timeout(3500),
+        }
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const tracks = data.data || [];
+      if (tracks.length === 0) continue;
+
+      let bestTrack = tracks[0];
+      if (expectedDurationSec > 0) {
+        const match = tracks.find((t) => t.duration && Math.abs(t.duration - expectedDurationSec) < 35);
+        if (match) bestTrack = match;
       }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const tracks = data.data || [];
-    if (tracks.length === 0) return null;
 
-    let bestTrack = tracks[0];
-    if (expectedDurationSec > 0) {
-      const match = tracks.find((t) => t.duration && Math.abs(t.duration - expectedDurationSec) < 35);
-      if (match) bestTrack = match;
-    }
-
-    if (bestTrack && bestTrack.id) {
-      return `https://discoveryprovider.audius.co/v1/tracks/${bestTrack.id}/stream?app_name=dotify`;
+      if (bestTrack && bestTrack.id) {
+        return `https://discoveryprovider.audius.co/v1/tracks/${bestTrack.id}/stream?app_name=dotify`;
+      }
     }
   } catch (err) {
     console.debug('[TrackResolver] Audius stream lookup deferred:', err.message);
@@ -49,7 +55,7 @@ export async function resolveAudiusStream(artist, title, expectedDurationSec = 0
   return null;
 }
 
-async function resolveAudioStreamUrl(cacheKey, searchWords, expectedDurationSec, forceRefresh = false) {
+async function resolveAudioStreamUrl(cacheKey, artist, title, id, expectedDurationSec, forceRefresh = false) {
   if (forceRefresh) {
     streamCache.delete(cacheKey);
   } else {
@@ -59,9 +65,16 @@ async function resolveAudioStreamUrl(cacheKey, searchWords, expectedDurationSec,
     }
   }
 
-  // Attempt resolution from Audius full-length stream catalogue
-  const words = searchWords || '';
-  const audiusUrl = await resolveAudiusStream(words, '', expectedDurationSec);
+  // 1. Check local MP3 Vault for full verified file
+  const localMatch = findLocalTrack({ artist, title, id });
+  if (localMatch) {
+    const localUrl = `/api/mp3s/file/${encodeURIComponent(localMatch.id)}`;
+    streamCache.set(cacheKey, { url: localUrl, timestamp: Date.now() });
+    return localUrl;
+  }
+
+  // 2. Attempt resolution from Audius full-length stream catalogue
+  const audiusUrl = await resolveAudiusStream(artist, title, expectedDurationSec);
   if (audiusUrl) {
     streamCache.set(cacheKey, { url: audiusUrl, timestamp: Date.now() });
     return audiusUrl;
@@ -72,8 +85,8 @@ async function resolveAudioStreamUrl(cacheKey, searchWords, expectedDurationSec,
 
 /**
  * Handle audio resolution and streaming for any artist or track.
- * Supports on-demand YouTube audio stream extraction with range request streaming
- * and automatic re-resolution if a cached upstream URL expires.
+ * Supports MP3 vault retrieval and full-length Audius stream proxying.
+ * Never silently truncates playback to 29-second preview clips.
  */
 export async function handleTrackStream(req, res) {
   let {
@@ -85,6 +98,7 @@ export async function handleTrackStream(req, res) {
     query: rawQuery = '',
     duration = '',
     _retry = '',
+    allowPreview = 'false',
   } = req.query;
 
   if (!artist && !title && !preview && !q && !rawQuery) {
@@ -101,22 +115,6 @@ export async function handleTrackStream(req, res) {
     streamCache.delete(cacheKey);
   }
 
-  if (!preview && (artist || title || rawQuery || q)) {
-    try {
-      const qStr = (searchWords || `${artist} ${title}`).trim();
-      const dRes = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(qStr)}&limit=1`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 dotify/1.0.0' },
-        signal: AbortSignal.timeout(2500),
-      });
-      if (dRes.ok) {
-        const dData = await dRes.json();
-        if (dData?.data?.[0]?.preview) {
-          preview = dData.data[0].preview;
-        }
-      }
-    } catch {}
-  }
-
   const attachUpstreamRecovery = () => {
     req.onUpstreamError = async (statusCode) => {
       console.warn(
@@ -126,10 +124,11 @@ export async function handleTrackStream(req, res) {
       try {
         const freshUrl = await resolveAudioStreamUrl(
           cacheKey,
-          searchWords,
+          artist,
+          title,
+          id,
           expectedDurationSec,
-          true,
-          false
+          true
         );
         if (freshUrl) {
           req.query.url = freshUrl;
@@ -157,10 +156,11 @@ export async function handleTrackStream(req, res) {
   try {
     const cleanUrl = await resolveAudioStreamUrl(
       cacheKey,
-      searchWords,
+      artist,
+      title,
+      id,
       expectedDurationSec,
-      _retry === '1',
-      isPreload
+      _retry === '1'
     );
 
     if (cleanUrl) {
@@ -172,7 +172,8 @@ export async function handleTrackStream(req, res) {
       return handleStreamProxy(req, res);
     }
 
-    if (preview) {
+    // Only stream preview if explicitly requested via allowPreview=true
+    if (preview && allowPreview === 'true') {
       if (isPreload) return res.json({ cached: false, fallback: true });
       res.setHeader('X-Dotify-Preview-Fallback', 'true');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -181,10 +182,10 @@ export async function handleTrackStream(req, res) {
     }
 
     if (isPreload) return res.json({ cached: false });
-    return res.status(404).json({ error: 'Track audio stream not found' });
+    return res.status(404).json({ error: 'Full-length track audio stream not found' });
   } catch (err) {
-    console.warn(`[TrackResolver] Audio extraction failed for "${artist} - ${title}":`, err.message);
-    if (preview) {
+    console.warn(`[TrackResolver] Audio resolution failed for "${artist} - ${title}":`, err.message);
+    if (preview && allowPreview === 'true') {
       if (isPreload) return res.json({ cached: false, fallback: true });
       res.setHeader('X-Dotify-Preview-Fallback', 'true');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
