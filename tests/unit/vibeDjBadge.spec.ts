@@ -31,8 +31,8 @@ describe('VibeDjBadge & VibeDjIcon (Text-free Single SVG Animation)', () => {
     expect(html).not.toContain('Vibe DJ');
     expect(html).not.toContain('Prismatic');
 
-    // Must contain SVG defs
-    expect(html).toContain('<defs>');
+    // Invariant: MUST NOT contain blurry glow filters
+    expect(html).not.toContain('<filter');
   });
 
   it('returns null when Vibe DJ is inactive', () => {
@@ -95,9 +95,9 @@ describe('VibeDjBadge & VibeDjIcon (Text-free Single SVG Animation)', () => {
     );
 
     // Tone 2 (Grey ring) must be concentric at (50, 50) with no transform
-    expect(html).toContain('cx="50" cy="50" r="24.5" fill="#2c2d36"');
+    expect(html).toContain('cx="50" cy="50" r="25.5" fill="#2c2d36"');
     // Tone 3 (Black dot) must be concentric at (50, 50) with no transform
-    expect(html).toContain('cx="50" cy="50" r="9.5" fill="#000000"');
+    expect(html).toContain('cx="50" cy="50" r="10.5" fill="#000000"');
 
     // Must NOT contain any rotating group, translation, or transform-origin
     expect(html).not.toContain('transform="rotate');

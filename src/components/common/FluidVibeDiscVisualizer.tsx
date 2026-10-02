@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useId } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { audioEngine } from '../../audio/audioEngine';
 import { usePlayerStore } from '../../store/playerStore';
 import { useThemeStore } from '../../store/themeStore';
@@ -13,30 +13,26 @@ export interface FluidVibeDiscVisualizerProps {
   title?: string;
 }
 
-const NUM_POINTS = 32; // 32 radial points for ultra-smooth organic liquid perimeter
-const BASE_OUTER_RADIUS = 36.5; // Base radius for outer theme layer
-const MAX_FLUID_DISPLACEMENT = 11.0; // Max fluid expansion (outer perimeter reaches up to 47.5, safe inside 100x100)
+const NUM_POINTS = 32; // 32 radial points for complex, high-fidelity liquid perimeter
+const BASE_OUTER_RADIUS = 36.0; // Base radius for outer theme layer
+const MAX_FLUID_DISPLACEMENT = 12.5; // Max fluid expansion (outer perimeter reaches up to 48.5, safe inside 100x100)
 
 /**
  * Three-Tone Fluid Disc Visualizer:
- * 1. Outer: User's app theme colour (e.g. blue), whose 32 radial points fluidly expand with the music as a mini visualizer.
- * 2. Middle: Solid grey disc ring (completely static, centered at 50,50).
- * 3. Inner: Pitch black center dot (completely static, centered at 50,50).
+ * 1. Outer: User's app theme colour (e.g. blue), whose 32 radial points fluidly surge with frequency-reactive waves (NO GLOW, crisp solid vector edge).
+ * 2. Middle: Solid grey disc ring (100% static, centered at 50,50).
+ * 3. Inner: Pitch black center dot (100% static, centered at 50,50).
  *
  * INVARIANT: Tone 2 and Tone 3 are 100% static at (50, 50). The center NEVER moves or rotates.
  */
 export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = ({
-  size = 24,
+  size = 28,
   className = '',
   themeColor,
   accentColor,
   interactive = false,
   onClick,
-  title,
 }) => {
-  const rawId = useId();
-  const cleanId = rawId.replace(/[^a-zA-Z0-9]/g, '');
-
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isBuffering = usePlayerStore((s) => s.isBuffering);
@@ -118,29 +114,36 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
         }
       }
 
-      // Compute fluid displacement for each of the 32 radial points
+      // Compute multi-layer fluid displacement for each of the 32 radial points
       for (let i = 0; i < NUM_POINTS; i++) {
         let displacement = 0;
 
         if (isMusicPlaying && energy > 0.01) {
           const angle = (i / NUM_POINTS) * Math.PI * 2;
 
-          // Multi-layer wave harmonic synthesis
-          const bass = Math.sin(now * 0.004 + angle * 2) * 0.38;
-          const mid = Math.cos(now * 0.0055 - angle * 4) * 0.28 + Math.sin(now * 0.007 + angle * 5) * 0.20;
-          const high = Math.cos(now * 0.011 + angle * 7) * 0.14;
-          const harmonicFactor = Math.max(0, Math.min(1.0, (bass + mid + high + 1.0) * 0.5));
+          // Frequency-specific wave layers:
+          // 1. Bass surge: 3 powerful dynamic crests with exponential impulse
+          const bassSurge = Math.pow(Math.max(0, Math.sin(now * 0.0045 + angle * 3)), 2.2) * 0.65;
+          // 2. Mid-frequency traveling ripples: 5 rolling waves
+          const midRipples = Math.sin(now * 0.0075 - angle * 5) * 0.28;
+          // 3. High-frequency surface tension flutter: 9 micro ripples
+          const highFlutter = Math.sin(now * 0.013 + angle * 9) * 0.15;
+
+          const harmonicCombined = bassSurge + (midRipples + 0.3) * 0.5 + (highFlutter + 0.2) * 0.3;
+          const harmonicFactor = Math.max(0.08, Math.min(1.0, harmonicCombined));
 
           if (hasFreqs) {
-            // Real audio: Map frequency bins around the circle with harmonic blending
-            const binIdx = Math.floor(
-              Math.abs(Math.sin((i / NUM_POINTS) * Math.PI)) * 24 + (i % 4) * 2
-            );
-            const freqVal = (freqBuffer.current[binIdx] || 0) / 255;
-            displacement = (freqVal * 0.60 + energy * 0.25 + harmonicFactor * 0.25) * MAX_FLUID_DISPLACEMENT;
+            // Real audio: Map frequency bins (bass, mids, highs) with dynamic surge
+            const bassBin = Math.floor(Math.abs(Math.sin(angle * 1.5)) * 4 + 1);
+            const midBin = Math.floor(Math.abs(Math.cos(angle * 2.5)) * 10 + 6);
+            const bassVal = (freqBuffer.current[bassBin] || 0) / 255;
+            const midVal = (freqBuffer.current[midBin] || 0) / 255;
+
+            // Big waves surge out with bass and mid frequency spikes
+            displacement = (bassVal * 0.55 + midVal * 0.25 + energy * 0.20 + harmonicFactor * 0.25) * MAX_FLUID_DISPLACEMENT;
           } else {
-            // Fluid wave dynamics: layered organic liquid surface tension
-            displacement = energy * MAX_FLUID_DISPLACEMENT * (0.20 + 0.80 * harmonicFactor);
+            // Fluid wave dynamics: prominent cresting waves with frequency harmonics
+            displacement = energy * MAX_FLUID_DISPLACEMENT * harmonicFactor;
           }
         }
 
@@ -197,8 +200,6 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
     };
   }, [isPlaying, isBuffering, currentTrack]);
 
-  const glowFilterId = `fluid-disc-glow-${cleanId}`;
-
   return (
     <svg
       viewBox="0 0 100 100"
@@ -214,22 +215,13 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true"
     >
-      <defs>
-        {/* Subtle glow filter for the morphing outer theme layer */}
-        <filter id={glowFilterId} x="-20%" y="-20%" width="140%" height="140%">
-          <feGaussianBlur stdDeviation="2.0" result="blur" />
-          <feComposite in="SourceGraphic" in2="blur" operator="over" />
-        </filter>
-      </defs>
-
       {/* ============================================================== */}
-      {/* TONE 1 (OUTER): Fluid Theme Color Layer (Mini Visualizer)     */}
+      {/* TONE 1 (OUTER): Fluid Theme Color Layer (NO GLOW, Crisp Edge)  */}
       {/* ============================================================== */}
       {outerPath ? (
         <path
           d={outerPath}
           fill={effectiveThemeColor}
-          filter={`url(#${glowFilterId})`}
           className="transition-colors duration-300"
         />
       ) : (
@@ -238,7 +230,6 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
           cy="50"
           r={BASE_OUTER_RADIUS}
           fill={effectiveThemeColor}
-          filter={`url(#${glowFilterId})`}
           className="transition-colors duration-300"
         />
       )}
@@ -249,7 +240,7 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
       <circle
         cx="50"
         cy="50"
-        r="24.5"
+        r="25.5"
         fill="#2c2d36"
         stroke="#1c1d24"
         strokeWidth="1.2"
@@ -261,7 +252,7 @@ export const FluidVibeDiscVisualizer: React.FC<FluidVibeDiscVisualizerProps> = (
       <circle
         cx="50"
         cy="50"
-        r="9.5"
+        r="10.5"
         fill="#000000"
         stroke="#121318"
         strokeWidth="0.8"

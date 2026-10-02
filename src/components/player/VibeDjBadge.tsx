@@ -15,12 +15,12 @@ export interface VibeDjIconProps {
 
 /**
  * Three-Tone Fluid Disc Icon:
- * - Outer: User's app theme colour (e.g. blue), fluidly morphing with the music as a mini visualizer
+ * - Outer: User's app theme colour (e.g. blue), fluidly morphing with the music as a mini visualizer (NO GLOW, crisp solid edge)
  * - Middle: Solid grey disc ring (completely static)
  * - Inner: Pitch black center dot (completely static)
  */
 export const VibeDjIcon: React.FC<VibeDjIconProps> = ({
-  size = 22,
+  size = 28,
   className = '',
   themeColor,
   accentColor,
@@ -50,10 +50,10 @@ export interface VibeDjBadgeProps {
 /**
  * Modern Vibe DJ control button for PlayerBar.
  * Features the three-tone fluid disc visualizer (theme outer, grey, black inner)
- * that morphs in real-time with the music. Center is 100% static.
+ * that surges and undulates with frequency-specific waves in real-time.
  */
 export const VibeDjBadge: React.FC<VibeDjBadgeProps> = ({
-  size = 22,
+  size = 28,
   className = '',
   isActive: propIsActive,
   vibeLabel: propVibeLabel,
@@ -83,7 +83,7 @@ export const VibeDjBadge: React.FC<VibeDjBadgeProps> = ({
       data-testid="vibe-dj-badge"
       aria-label={`Vibe DJ: ${vibeLabel}`}
       title={`Vibe DJ: ${vibeLabel} • Click to open console, right-click to shake`}
-      className={`group relative p-1.5 rounded-full text-secondary hover:text-white transition-all duration-200 hover:scale-110 active:scale-95 cursor-pointer flex items-center justify-center shrink-0 ${
+      className={`group relative p-1 rounded-full text-secondary hover:text-white transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer flex items-center justify-center shrink-0 ${
         activeView === 'vibe-dj'
           ? 'text-white bg-white/10 ring-1 ring-white/20'
           : 'hover:bg-white/5'
