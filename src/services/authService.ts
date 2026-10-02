@@ -520,10 +520,18 @@ export class AuthService {
         if (data.ok && data.library) {
           const remote = data.library as UserLibraryData;
           if ((remote.lastUpdated || 0) >= latestTime) {
-            localLiked = remote.likedTracks || localLiked;
-            localPlaylists = remote.playlists || localPlaylists;
-            localHistory = remote.history || localHistory;
-            localFollowedArtists = remote.followedArtists || localFollowedArtists;
+            if (Array.isArray(remote.likedTracks) && remote.likedTracks.length > 0) {
+              localLiked = remote.likedTracks;
+            }
+            if (Array.isArray(remote.playlists) && remote.playlists.length > 0) {
+              localPlaylists = remote.playlists;
+            }
+            if (Array.isArray(remote.history) && remote.history.length > 0) {
+              localHistory = remote.history;
+            }
+            if (Array.isArray(remote.followedArtists) && remote.followedArtists.length > 0) {
+              localFollowedArtists = remote.followedArtists;
+            }
             latestTime = remote.lastUpdated || Date.now();
           }
         }
@@ -541,10 +549,18 @@ export class AuthService {
       if (snapshot && snapshot.exists && snapshot.exists()) {
         const cloudData = snapshot.data() as UserLibraryData;
         if ((cloudData.lastUpdated || 0) >= latestTime) {
-          localLiked = cloudData.likedTracks || localLiked;
-          localPlaylists = cloudData.playlists || localPlaylists;
-          localHistory = cloudData.history || localHistory;
-          localFollowedArtists = cloudData.followedArtists || localFollowedArtists;
+          if (Array.isArray(cloudData.likedTracks) && cloudData.likedTracks.length > 0) {
+            localLiked = cloudData.likedTracks;
+          }
+          if (Array.isArray(cloudData.playlists) && cloudData.playlists.length > 0) {
+            localPlaylists = cloudData.playlists;
+          }
+          if (Array.isArray(cloudData.history) && cloudData.history.length > 0) {
+            localHistory = cloudData.history;
+          }
+          if (Array.isArray(cloudData.followedArtists) && cloudData.followedArtists.length > 0) {
+            localFollowedArtists = cloudData.followedArtists;
+          }
           latestTime = cloudData.lastUpdated || Date.now();
         }
       }
@@ -557,6 +573,12 @@ export class AuthService {
     safeStorage.setItem(`dotify_${userId}_history`, localHistory);
     safeStorage.setItem(`dotify_${userId}_followed_artists`, localFollowedArtists);
     safeStorage.setItem(`dotify_${userId}_updated`, latestTime);
+
+    // Keep active default keys synced so on cold boot before auth, library is immediately visible!
+    safeStorage.setItem('likedTracks', localLiked);
+    safeStorage.setItem('playlists', localPlaylists);
+    safeStorage.setItem('history', localHistory);
+    safeStorage.setItem('followed_artists', localFollowedArtists);
 
     return {
       likedTracks: localLiked,

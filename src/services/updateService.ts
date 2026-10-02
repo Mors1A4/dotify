@@ -38,47 +38,21 @@ export function compareSemver(vA: string, vB: string): number {
 }
 
 export async function getCurrentAppVersion(): Promise<string> {
-  const candidates: string[] = [];
-
-  // 1. Static bundle version
-  if (APP_VERSION) {
-    const cleaned = cleanVersion(APP_VERSION);
-    if (cleaned && cleaned !== '0.0.0') {
-      candidates.push(cleaned);
-    }
-  }
-
-  // 2. Installed or recent update attempts recorded in localStorage
-  if (typeof window !== 'undefined') {
+  // Purge any stale/legacy installed version marker from localStorage so it never fakes the version
+  if (typeof localStorage !== 'undefined') {
     try {
-      const installedVer = localStorage.getItem('dotify_update_installed_version');
-      if (installedVer) {
-        const cleaned = cleanVersion(installedVer);
-        if (cleaned && cleaned !== '0.0.0') {
-          candidates.push(cleaned);
-        }
-      }
-
-      const attemptVer = localStorage.getItem('dotify_update_attempt_version');
-      const attemptTime = Number(localStorage.getItem('dotify_update_attempt_time')) || 0;
-      // Candidate if attempted within last 2 hours
-      if (attemptVer && Date.now() - attemptTime < 2 * 60 * 60 * 1000) {
-        const cleaned = cleanVersion(attemptVer);
-        if (cleaned && cleaned !== '0.0.0') {
-          candidates.push(cleaned);
-        }
-      }
+      localStorage.removeItem('dotify_update_installed_version');
     } catch {}
   }
 
-  // 3. Android Native Bridge
+  // 1. Android Native Bridge (Source of truth on Android)
   if (typeof window !== 'undefined' && (window as any).AndroidNativeUpdater?.getVersionName) {
     try {
       const androidVer = (window as any).AndroidNativeUpdater.getVersionName();
       if (androidVer && typeof androidVer === 'string') {
         const cleaned = cleanVersion(androidVer);
         if (cleaned && cleaned !== '0.0.0') {
-          candidates.push(cleaned);
+          return cleaned;
         }
       }
     } catch {
@@ -86,7 +60,7 @@ export async function getCurrentAppVersion(): Promise<string> {
     }
   }
 
-  // 4. Tauri Native Executable Metadata
+  // 2. Tauri Native Executable Metadata (Source of truth on Desktop)
   if (isTauriEnvironment()) {
     try {
       const { getVersion } = await import('@tauri-apps/api/app');
@@ -94,7 +68,7 @@ export async function getCurrentAppVersion(): Promise<string> {
       if (tauriVer && typeof tauriVer === 'string') {
         const cleaned = cleanVersion(tauriVer);
         if (cleaned && cleaned !== '0.0.0') {
-          candidates.push(cleaned);
+          return cleaned;
         }
       }
     } catch {
@@ -102,12 +76,15 @@ export async function getCurrentAppVersion(): Promise<string> {
     }
   }
 
-  if (candidates.length === 0) {
-    return cleanVersion(APP_VERSION) || '1.0.0';
+  // 3. Static bundle version (Source of truth for Web / fallback)
+  if (APP_VERSION) {
+    const cleaned = cleanVersion(APP_VERSION);
+    if (cleaned && cleaned !== '0.0.0') {
+      return cleaned;
+    }
   }
 
-  // Always return the highest resolved semver across all sources
-  return candidates.reduce((max, cur) => (compareSemver(cur, max) > 0 ? cur : max), candidates[0]);
+  return '1.0.0';
 }
 
 function buildDefaultReleaseUrls(version: string): {
@@ -337,19 +314,30 @@ export async function performSelfUpdate(
       unlisten = await listen<UpdateProgressPayload>('update-download-progress', (event) => {
         if (event.payload) {
           onProgress(event.payload);
-          if (event.payload.percent >= 90 && typeof window !== 'undefined') {
-            try {
-              localStorage.setItem('dotify_update_installed_version', release.version);
-            } catch {}
-          }
         }
       });
 
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem('dotify_update_installed_version', release.version);
+          localStorage.removeItem('dotify_update_installed_version');
           localStorage.setItem('dotify_update_attempt_version', release.version);
           localStorage.setItem('dotify_update_attempt_time', String(Date.now()));
+
+          // Snapshot active playback for seamless handover to the updated binary
+          const { usePlayerStore } = await import('../store/playerStore');
+          const { audioEngine } = await import('../audio/audioEngine');
+          const pState = usePlayerStore.getState();
+          if (pState.currentTrack) {
+            const handoff = {
+              track: pState.currentTrack,
+              queue: pState.queue,
+              currentTrackIndex: pState.currentTrackIndex,
+              isPlaying: pState.isPlaying,
+              positionMs: Math.round(audioEngine.getCurrentTime() * 1000),
+              timestamp: Date.now(),
+            };
+            localStorage.setItem('dotify_playback_handoff', JSON.stringify(handoff));
+          }
         } catch {}
       }
 
@@ -359,12 +347,6 @@ export async function performSelfUpdate(
         setupUrl: release.windowsSetupUrl,
       });
     } catch (err) {
-      // If the update installation failed, roll back the installed marker so user can retry
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.removeItem('dotify_update_installed_version');
-        } catch {}
-      }
       throw err;
     } finally {
       if (unlisten) {

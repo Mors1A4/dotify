@@ -1136,12 +1136,19 @@ fn install_windows_update(
         let _ = std::fs::remove_file(&old_exe);
 
         let mut replaced_in_place = false;
-        if std::fs::rename(&current_exe, &old_exe).is_ok() {
-            if std::fs::copy(&tmp_path, &current_exe).is_ok() {
-                replaced_in_place = true;
-            } else {
-                // Rollback if copy failed
-                let _ = std::fs::rename(&old_exe, &current_exe);
+        // Retry loop in case Windows or antivirus briefly holds the file lock
+        for attempt in 0..5 {
+            if std::fs::rename(&current_exe, &old_exe).is_ok() {
+                if std::fs::copy(&tmp_path, &current_exe).is_ok() {
+                    replaced_in_place = true;
+                    break;
+                } else {
+                    // Rollback if copy failed
+                    let _ = std::fs::rename(&old_exe, &current_exe);
+                }
+            }
+            if attempt < 4 {
+                thread::sleep(Duration::from_millis(150));
             }
         }
 
@@ -1174,7 +1181,7 @@ fn install_windows_update(
             return Ok(());
         }
 
-        // Fallback: if in-place replacement wasn't permitted, download and launch NSIS installer
+        // Fallback: if in-place replacement wasn't permitted, download and launch NSIS installer in SILENT mode (/S)
         if let Some(installer_url) = setup_url {
             emit_progress(95, "Downloading Windows setup installer...", None);
             let setup_path = dotify_dir.join("dotify-setup-update.exe");
@@ -1192,10 +1199,13 @@ fn install_windows_update(
                 .status();
             if let Ok(s) = status {
                 if s.success() && setup_path.exists() {
-                    emit_progress(100, "Launching installer...", None);
+                    emit_progress(100, "Applying silent update...", None);
                     thread::spawn(move || {
                         thread::sleep(Duration::from_millis(350));
-                        let _ = std::process::Command::new(&setup_path).spawn();
+                        // Launch NSIS installer with /S for a 100% silent, wizard-free background install
+                        let _ = std::process::Command::new(&setup_path)
+                            .args(["/S"])
+                            .spawn();
                         std::process::exit(0);
                     });
                     return Ok(());

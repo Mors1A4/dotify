@@ -865,7 +865,28 @@ export const PlaylistView: React.FC = () => {
       )}
 
       {/* Track List */}
-      {playlist.tracks.length > 0 ? (
+      {isRefreshingVibe && isVibe ? (
+        <div className="flex flex-col items-center justify-center gap-5 py-16 px-6 rounded-2xl bg-elevated/30 border border-accent/20">
+          <div className="w-12 h-12 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center text-accent">
+            <RefreshCw size={22} className="animate-spin" />
+          </div>
+          <div className="flex flex-col items-center gap-1.5 text-center">
+            <p className="text-sm font-bold text-primary">Selecting new playlists…</p>
+            <p className="text-xs text-secondary max-w-xs">
+              Gemini is curating a fresh set of tracks for this vibe. This usually takes a few seconds.
+            </p>
+          </div>
+          <div className="flex gap-2 pt-1">
+            {[...Array(5)].map((_, i) => (
+              <div
+                key={i}
+                className="w-2 h-2 rounded-full bg-accent/40 animate-pulse"
+                style={{ animationDelay: `${i * 150}ms` }}
+              />
+            ))}
+          </div>
+        </div>
+      ) : playlist.tracks.length > 0 ? (
         <div className="flex flex-col gap-2">
           {/* Filter Bar */}
           {playlist.tracks.length > 3 && (

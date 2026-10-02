@@ -1,5 +1,5 @@
 import React from 'react';
-import { usePlayerStore } from './store/playerStore';
+import { usePlayerStore, restorePlaybackHandoffIfNeeded } from './store/playerStore';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { PlayerBar } from './components/layout/PlayerBar';
@@ -32,6 +32,7 @@ export const App: React.FC = () => {
     }
     const unsubAuth = useAuthStore.getState().initAuth();
     const unsubUpdater = useUpdateStore.getState().initUpdater();
+    restorePlaybackHandoffIfNeeded();
     return () => {
       unsubAuth();
       unsubUpdater();

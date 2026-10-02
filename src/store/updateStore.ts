@@ -12,7 +12,6 @@ import { APP_VERSION } from '../version';
 const STORAGE_KEY_DISMISSED = 'dotify_update_dismissed_version';
 const STORAGE_KEY_ATTEMPT_VER = 'dotify_update_attempt_version';
 const STORAGE_KEY_ATTEMPT_TIME = 'dotify_update_attempt_time';
-const STORAGE_KEY_INSTALLED_VER = 'dotify_update_installed_version';
 
 interface UpdateState {
   currentVersion: string;
@@ -60,6 +59,13 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   initUpdater: () => {
     let active = true;
 
+    // Purge legacy installed version key
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('dotify_update_installed_version');
+      } catch {}
+    }
+
     // 1. Check in background on startup (never forcibly open modal on boot unless mandatory)
     get().checkForUpdates(false);
 
@@ -72,27 +78,21 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
 
       let recentlyAttempted = false;
       let isDismissed = false;
-      let isAlreadyInstalled = false;
       try {
         const attemptVer = localStorage.getItem(STORAGE_KEY_ATTEMPT_VER);
         const attemptTime = Number(localStorage.getItem(STORAGE_KEY_ATTEMPT_TIME)) || 0;
-        recentlyAttempted = attemptVer === release.version && Date.now() - attemptTime < 2 * 60 * 60 * 1000;
+        recentlyAttempted = attemptVer === release.version && Date.now() - attemptTime < 30 * 60 * 1000;
         const dismissedVer = localStorage.getItem(STORAGE_KEY_DISMISSED);
         isDismissed = dismissedVer === release.version;
-        const installedVer = localStorage.getItem(STORAGE_KEY_INSTALLED_VER);
-        isAlreadyInstalled = Boolean(installedVer && compareSemver(installedVer, release.version) >= 0);
       } catch {}
 
-      // Zero-Loop Invariant:
-      // If version is already installed, or running version >= release, or recently attempted:
-      // updateAvailable MUST be false
-      const updateAvailable = Boolean(hasSemverDiff && !isAlreadyInstalled && !recentlyAttempted);
+      const updateAvailable = Boolean(hasSemverDiff);
 
       // Never auto-trap user in a loop if recently attempted or dismissed
       const shouldAutoOpen = Boolean(
         updateAvailable &&
           (release.mandatory ||
-            (prevVersion && prevVersion !== release.version && !isDismissed))
+            (prevVersion && prevVersion !== release.version && !isDismissed && !recentlyAttempted))
       );
 
       set({
@@ -122,22 +122,19 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
 
       let recentlyAttempted = false;
       let isDismissed = false;
-      let isAlreadyInstalled = false;
 
       if (remote) {
         try {
           const attemptVer = localStorage.getItem(STORAGE_KEY_ATTEMPT_VER);
           const attemptTime = Number(localStorage.getItem(STORAGE_KEY_ATTEMPT_TIME)) || 0;
-          recentlyAttempted = attemptVer === remote.version && Date.now() - attemptTime < 2 * 60 * 60 * 1000;
+          recentlyAttempted = attemptVer === remote.version && Date.now() - attemptTime < 30 * 60 * 1000;
           const dismissedVer = localStorage.getItem(STORAGE_KEY_DISMISSED);
           isDismissed = dismissedVer === remote.version;
-          const installedVer = localStorage.getItem(STORAGE_KEY_INSTALLED_VER);
-          isAlreadyInstalled = Boolean(installedVer && compareSemver(installedVer, remote.version) >= 0);
         } catch {}
       }
 
-      if (remote && (!hasSemverDiff || isAlreadyInstalled)) {
-        // App is on or ahead of latest release: clear attempt & dismissal history
+      if (remote && !hasSemverDiff) {
+        // App is genuinely on or ahead of latest release: clear attempt & dismissal history
         try {
           localStorage.removeItem(STORAGE_KEY_ATTEMPT_VER);
           localStorage.removeItem(STORAGE_KEY_ATTEMPT_TIME);
@@ -145,13 +142,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         } catch {}
       }
 
-      // If user initiated the check manually from sidebar, let them see update if hasSemverDiff and not installed.
-      // In background checks, suppress updateAvailable if recently attempted.
-      const updateAvailable = Boolean(
-        hasSemverDiff &&
-        !isAlreadyInstalled &&
-        (userInitiated || !recentlyAttempted)
-      );
+      const updateAvailable = hasSemverDiff;
 
       const shouldOpenModal = Boolean(
         userInitiated ||
@@ -184,7 +175,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     try {
       localStorage.setItem(STORAGE_KEY_ATTEMPT_VER, latestRelease.version);
       localStorage.setItem(STORAGE_KEY_ATTEMPT_TIME, String(Date.now()));
-      localStorage.setItem(STORAGE_KEY_INSTALLED_VER, latestRelease.version);
     } catch {}
 
     set({
@@ -205,7 +195,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       set({
         isUpdating: false,
         updateAvailable: false,
-        currentVersion: latestRelease.version,
       });
     } catch (err: any) {
       set({

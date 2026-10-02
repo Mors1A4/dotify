@@ -175,6 +175,7 @@ export const HomeView: React.FC = () => {
       return;
     }
 
+    setVibePlaylists([]);
     setIsVibesLoading(true);
     try {
       const fresh = await dailyVibeManager.getDailyVibes(accountId, true);

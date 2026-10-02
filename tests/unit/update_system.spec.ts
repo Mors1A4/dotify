@@ -43,25 +43,17 @@ describe('Update System & Anti-Loop Invariants', () => {
   });
 
   describe('getCurrentAppVersion Multi-Source Resolution', () => {
-    it('resolves the maximum semver when an older binary stamp is present', async () => {
-      localStorage.setItem('dotify_update_installed_version', '1.0.10');
+    it('purges stale dotify_update_installed_version from localStorage', async () => {
+      localStorage.setItem('dotify_update_installed_version', '99.9.9');
       const resolved = await updateService.getCurrentAppVersion();
-      expect(updateService.compareSemver(resolved, '1.0.10')).toBeGreaterThanOrEqual(0);
+      expect(localStorage.getItem('dotify_update_installed_version')).toBeNull();
+      expect(resolved).not.toBe('99.9.9');
     });
 
-    it('incorporates recently attempted version into resolution candidates', async () => {
-      localStorage.setItem('dotify_update_attempt_version', '1.0.10');
-      localStorage.setItem('dotify_update_attempt_time', String(Date.now()));
+    it('returns native app version truthfully', async () => {
       const resolved = await updateService.getCurrentAppVersion();
-      expect(updateService.compareSemver(resolved, '1.0.10')).toBeGreaterThanOrEqual(0);
-    });
-
-    it('ignores stale update attempts older than 2 hours', async () => {
-      localStorage.setItem('dotify_update_attempt_version', '9.9.9');
-      localStorage.setItem('dotify_update_attempt_time', String(Date.now() - 3 * 60 * 60 * 1000)); // 3 hours ago
-      const resolved = await updateService.getCurrentAppVersion();
-      // Should not be 9.9.9 because the attempt is stale
-      expect(resolved).not.toBe('9.9.9');
+      expect(typeof resolved).toBe('string');
+      expect(resolved.split('.').length).toBeGreaterThanOrEqual(3);
     });
   });
 
@@ -84,7 +76,7 @@ describe('Update System & Anti-Loop Invariants', () => {
       expect(useUpdateStore.getState().isModalOpen).toBe(false);
     });
 
-    it('suppresses updateAvailable in background check if recently attempted', async () => {
+    it('suppresses auto-opening modal in background check if recently attempted', async () => {
       localStorage.setItem('dotify_update_attempt_version', '1.0.11');
       localStorage.setItem('dotify_update_attempt_time', String(Date.now() - 5 * 60 * 1000)); // 5 mins ago
 
@@ -99,10 +91,10 @@ describe('Update System & Anti-Loop Invariants', () => {
       });
 
       const store = useUpdateStore.getState();
-      // Background check
+      // Background check detects update available, but suppresses modal to prevent loop
       const bgResult = await store.checkForUpdates(false);
-      expect(bgResult).toBe(false);
-      expect(useUpdateStore.getState().updateAvailable).toBe(false);
+      expect(bgResult).toBe(true);
+      expect(useUpdateStore.getState().updateAvailable).toBe(true);
       expect(useUpdateStore.getState().recentlyAttempted).toBe(true);
       expect(useUpdateStore.getState().isModalOpen).toBe(false);
 
@@ -110,25 +102,6 @@ describe('Update System & Anti-Loop Invariants', () => {
       const manualResult = await store.checkForUpdates(true);
       expect(manualResult).toBe(true);
       expect(useUpdateStore.getState().isModalOpen).toBe(true);
-    });
-
-    it('marks updateAvailable false if dotify_update_installed_version matches remote', async () => {
-      localStorage.setItem('dotify_update_installed_version', '1.0.10');
-
-      vi.spyOn(updateService, 'getCurrentAppVersion').mockResolvedValue('1.0.9');
-      vi.spyOn(updateService, 'fetchLatestReleaseInfo').mockResolvedValue({
-        version: '1.0.10',
-        notes: 'Test release',
-        publishedAt: Date.now(),
-        windowsExeUrl: 'http://example.com/dotify.exe',
-        windowsSetupUrl: 'http://example.com/dotify-setup.exe',
-        androidApkUrl: 'http://example.com/dotify.apk',
-      });
-
-      const store = useUpdateStore.getState();
-      const hasUpdate = await store.checkForUpdates(false);
-      expect(hasUpdate).toBe(false);
-      expect(useUpdateStore.getState().updateAvailable).toBe(false);
     });
   });
 });

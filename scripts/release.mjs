@@ -218,7 +218,32 @@ function buildTargets(newVersion, opts) {
   }
 }
 
-function publishToGitHubReleases(version, notes, ghToken) {
+function verifyApkVersion(apkPath, expectedVersion) {
+  try {
+    const aaptCandidates = [
+      'C:\\Users\\monty\\AppData\\Local\\Android\\Sdk\\build-tools\\34.0.0\\aapt.exe',
+      'aapt.exe',
+      'aapt',
+    ];
+    let aaptBin = aaptCandidates.find((b) => fs.existsSync(b)) || 'aapt';
+    const out = execSync(`"${aaptBin}" dump badging "${apkPath}"`, { encoding: 'utf8' });
+    const match = out.match(/versionName='([^']+)'/);
+    if (match && match[1]) {
+      const apkVer = match[1].trim();
+      if (apkVer !== expectedVersion) {
+        throw new Error(
+          `CRITICAL: APK version mismatch! Expected v${expectedVersion}, but ${apkPath} contains versionName='${apkVer}'. Refusing to publish stale APK!`
+        );
+      }
+      console.log(`[VERIFIED] dotify.apk versionName='${apkVer}' matches release v${expectedVersion}`);
+    }
+  } catch (err) {
+    if (err.message && err.message.includes('CRITICAL')) throw err;
+    console.warn('[WARN] Could not run aapt verification:', err.message);
+  }
+}
+
+function publishToGitHubReleases(version, notes, ghToken, opts = {}) {
   console.log(`\n[3/4] Publishing v${version} binaries to GitHub Releases (${GITHUB_REPO})...`);
 
   const env = { ...process.env };
@@ -242,15 +267,25 @@ function publishToGitHubReleases(version, notes, ghToken) {
   const latestJsonPath = path.join(ROOT_DIR, 'latest.json');
   fs.writeFileSync(latestJsonPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 
-  const assets = [
-    path.join(ROOT_DIR, 'dotify.exe'),
-    path.join(ROOT_DIR, 'dotify-setup.exe'),
-    path.join(ROOT_DIR, 'dotify.apk'),
-    latestJsonPath,
-  ].filter((p) => fs.existsSync(p));
+  const assets = [latestJsonPath];
 
-  if (assets.length === 0) {
-    throw new Error('No release assets (dotify.exe, dotify-setup.exe, dotify.apk) found in project root.');
+  if (!opts.androidOnly) {
+    const exePath = path.join(ROOT_DIR, 'dotify.exe');
+    const setupPath = path.join(ROOT_DIR, 'dotify-setup.exe');
+    if (fs.existsSync(exePath)) assets.push(exePath);
+    if (fs.existsSync(setupPath)) assets.push(setupPath);
+  }
+
+  if (!opts.desktopOnly) {
+    const apkPath = path.join(ROOT_DIR, 'dotify.apk');
+    if (fs.existsSync(apkPath)) {
+      verifyApkVersion(apkPath, version);
+      assets.push(apkPath);
+    }
+  }
+
+  if (assets.length <= 1) {
+    throw new Error('No release assets (dotify.exe, dotify-setup.exe, dotify.apk) found to publish.');
   }
 
   // Ensure repo exists
@@ -370,7 +405,7 @@ async function main() {
   buildTargets(nextVersion, opts);
 
   const ghToken = getGitHubToken();
-  const manifest = publishToGitHubReleases(nextVersion, notes, ghToken);
+  const manifest = publishToGitHubReleases(nextVersion, notes, ghToken, opts);
   await publishToFirestore(manifest, opts.mandatory);
 
   console.log('\n========================================================');

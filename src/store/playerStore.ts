@@ -1965,3 +1965,37 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
 export const useConnectStore = usePlayerStore;
 
+export function restorePlaybackHandoffIfNeeded(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem('dotify_playback_handoff');
+    if (!raw) return false;
+    localStorage.removeItem('dotify_playback_handoff');
+    const handoff = JSON.parse(raw);
+    if (!handoff || !handoff.track || !handoff.timestamp) return false;
+    const elapsedMs = Date.now() - handoff.timestamp;
+    // Only restore if recent (within 30 seconds of restart)
+    if (elapsedMs > 30000 || elapsedMs < 0) return false;
+
+    const { track, queue, currentTrackIndex, isPlaying, positionMs } = handoff;
+    const store = usePlayerStore.getState();
+    const updatedQueue = Array.isArray(queue) && queue.length > 0 ? queue : [track];
+    const resolvedIdx =
+      typeof currentTrackIndex === 'number' && currentTrackIndex >= 0 ? currentTrackIndex : 0;
+
+    store.setQueue(updatedQueue);
+    usePlayerStore.setState({
+      currentTrack: track,
+      currentTrackIndex: resolvedIdx,
+      isPlaying: Boolean(isPlaying),
+    });
+
+    const targetPos = Math.max(0, (positionMs || 0) + (isPlaying ? elapsedMs : 0));
+    audioEngine.playTrackAtPosition(track, targetPos, Boolean(isPlaying)).catch(() => {});
+    return true;
+  } catch (err) {
+    console.debug('[PlayerStore] Playback handoff restore skipped:', err);
+    return false;
+  }
+}
+
