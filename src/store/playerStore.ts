@@ -868,15 +868,23 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return;
       }
 
+      const activeDev = get().activeDevice;
+      const incomingVol = typeof state.volume === 'number' ? state.volume : get().volume;
+      const isUserAdjusting = Date.now() - lastUserVolumeInteraction < 600;
+      const effectiveVol = typeof state.volume === 'number' && !isUserAdjusting ? incomingVol : get().volume;
+
       set({
         currentTrack: targetTrack,
         currentTrackIndex: state.currentTrackIndex ?? state.currentIndex ?? 0,
         queue: state.queue && state.queue.length > 0 ? state.queue : get().queue,
         isPlaying: state.isPlaying,
-        volume:
-          typeof state.volume === 'number' && Date.now() - lastUserVolumeInteraction > 1500
-            ? state.volume
-            : get().volume,
+        volume: effectiveVol,
+        activeDevice: activeDev
+          ? {
+              ...activeDev,
+              volume: effectiveVol,
+            }
+          : null,
         repeatMode: state.repeatMode || get().repeatMode,
         shuffle: state.shuffle ?? get().shuffle,
       });
@@ -1126,11 +1134,14 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     },
 
     setRemoteVolume: (targetDeviceId: string, volume: number) => {
+      lastUserVolumeInteraction = Date.now();
       const clamped = Math.max(0, Math.min(1, volume));
       const activeDev = get().activeDevice;
-      if (activeDev && activeDev.deviceId === targetDeviceId) {
-        set({ activeDevice: { ...activeDev, volume: clamped } });
-      }
+      const isTargetActive = Boolean(activeDev && activeDev.deviceId === targetDeviceId);
+      set({
+        volume: isTargetActive ? clamped : get().volume,
+        activeDevice: isTargetActive && activeDev ? { ...activeDev, volume: clamped } : activeDev,
+      });
       sendThrottledRemoteVolume(clamped, targetDeviceId);
     },
 
@@ -1420,14 +1431,21 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     setVolume: (vol: number) => {
       lastUserVolumeInteraction = Date.now();
       const clamped = Math.max(0, Math.min(1, vol));
+      const activeDev = get().activeDevice;
       if (get().connectMode === 'remote_controller') {
-        sendThrottledRemoteVolume(clamped);
-        set({ volume: clamped });
+        set({
+          volume: clamped,
+          activeDevice: activeDev ? { ...activeDev, volume: clamped } : null,
+        });
+        sendThrottledRemoteVolume(clamped, activeDev?.deviceId);
         return;
       }
       audioEngine.setVolume(clamped);
       safeStorage.setItem(STORAGE_VOLUME, clamped);
-      set({ volume: clamped });
+      set({
+        volume: clamped,
+        activeDevice: activeDev && activeDev.isCurrentDevice ? { ...activeDev, volume: clamped } : activeDev,
+      });
       broadcastCurrentState();
     },
 

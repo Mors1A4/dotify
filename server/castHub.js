@@ -317,15 +317,25 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
   let streamUrl = makeLanStreamUrl(rawStreamUrl);
   const lanIp = getLocalLanIp();
 
-  // If track has a direct public CDN stream (e.g. Deezer preview or online stream), prefer direct CDN stream
-  if (previewUrl && (previewUrl.startsWith('https://') || previewUrl.startsWith('http://')) && !previewUrl.includes('localhost') && !previewUrl.includes('127.0.0.1')) {
-    streamUrl = previewUrl;
-  } else if (!streamUrl && track.title && track.artist) {
-    const previewParam = previewUrl ? `&preview=${encodeURIComponent(previewUrl)}` : '';
-    streamUrl = `http://${lanIp}:3001/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(track.title)}${previewParam}`;
-  } else if (streamUrl && streamUrl.includes('/api/stream/track') && previewUrl && !streamUrl.includes('preview=')) {
-    streamUrl += `${streamUrl.includes('?') ? '&' : '?'}preview=${encodeURIComponent(previewUrl)}`;
-  } else if (!streamUrl && previewUrl) {
+  const durationParam = track.duration ? `&duration=${Math.round(track.duration)}` : '';
+  const previewParam = previewUrl ? `&preview=${encodeURIComponent(previewUrl)}` : '';
+
+  // 1. If streamUrl is already a full stream (Audius, Archive, Radio, MP3 Vault):
+  // Keep it as long as it's not a truncated 30s Deezer preview CDN
+  if (streamUrl && !streamUrl.includes('dzcdn.net')) {
+    if (streamUrl.includes('/api/stream/track')) {
+      if (previewUrl && !streamUrl.includes('preview=')) {
+        streamUrl += `${streamUrl.includes('?') ? '&' : '?'}${previewParam.slice(1)}`;
+      }
+      if (durationParam && !streamUrl.includes('duration=')) {
+        streamUrl += `${streamUrl.includes('?') ? '&' : '?'}${durationParam.slice(1)}`;
+      }
+    }
+  } else if (track.title && track.artist) {
+    // 2. Build local stream proxy URL for full-length resolution
+    streamUrl = `http://${lanIp}:3001/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(track.title)}${previewParam}${durationParam}`;
+  } else if (previewUrl) {
+    // 3. Fallback only if no track title/artist available
     streamUrl = previewUrl;
   }
   const positionSeconds = Math.max(0, (options.positionMs || 0) / 1000);
@@ -365,6 +375,27 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
 
       // Update speaker volume safely
       setCastVolumeThrottled(targetVolume);
+
+      // Listen to hardware volume button changes on the physical speaker
+      try {
+        if (client.receiver) {
+          client.receiver.on('status', (status) => {
+            if (status && status.volume && typeof status.volume.level === 'number') {
+              const speakerVol = Math.round(status.volume.level * 100) / 100;
+              if (activeCastPlaybackState) {
+                activeCastPlaybackState.volume = speakerVol;
+              }
+              const spk = discoveredSpeakers.get(activeCastDeviceId);
+              if (spk) spk.volume = speakerVol;
+              if (onPlaybackStateCallback && activeCastPlaybackState && activeCastDeviceId) {
+                onPlaybackStateCallback(activeCastPlaybackState, activeCastDeviceId);
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.debug('[CastHub] Receiver status listener error:', err.message);
+      }
 
       client.launch(DefaultMediaReceiver, (err, player) => {
         if (err) {
@@ -473,7 +504,12 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
 export function setCastVolumeThrottled(level) {
   const clamped = Math.max(0, Math.min(1, level));
   pendingCastVolume = clamped;
-  if (activeCastPlaybackState) activeCastPlaybackState.volume = clamped;
+  if (activeCastPlaybackState) {
+    activeCastPlaybackState.volume = clamped;
+    if (onPlaybackStateCallback && activeCastDeviceId) {
+      onPlaybackStateCallback(activeCastPlaybackState, activeCastDeviceId);
+    }
+  }
   const speaker = discoveredSpeakers.get(activeCastDeviceId);
   if (speaker) speaker.volume = clamped;
 
@@ -589,12 +625,14 @@ export async function sendCastCommand(action, data = {}, targetDeviceId = null) 
         break;
 
       case 'set_volume':
-      case 'CMD_SET_VOLUME':
-        if (client && typeof data.volume === 'number') {
-          setCastVolumeThrottled(data.volume);
+      case 'CMD_SET_VOLUME': {
+        const vol = typeof data?.volume === 'number' ? data.volume : (typeof data === 'number' ? data : null);
+        if (vol !== null) {
+          setCastVolumeThrottled(vol);
           return true;
         }
         break;
+      }
 
       case 'stop':
         closeActiveCastSession();

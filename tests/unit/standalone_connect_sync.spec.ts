@@ -124,4 +124,27 @@ describe('Standalone Cross-Device Connect Sync Invariants', () => {
     // Volume should remain protected at user-selected 0.45
     expect(usePlayerStore.getState().volume).toBe(0.45);
   });
+
+  it('keeps volume and activeDevice.volume in sync when setRemoteVolume is called', () => {
+    usePlayerStore.setState({
+      connectMode: 'remote_controller',
+      activeDevice: {
+        deviceId: 'cast:192.168.0.48:8009',
+        deviceName: 'Living Room Speaker',
+        deviceType: 'speaker',
+        role: 'active_host',
+        isCurrentDevice: false,
+        isActive: true,
+        volume: 0.5,
+        lastSeen: Date.now(),
+      },
+      volume: 0.5,
+    });
+
+    usePlayerStore.getState().setRemoteVolume('cast:192.168.0.48:8009', 0.65);
+
+    const s = usePlayerStore.getState();
+    expect(s.volume).toBe(0.65);
+    expect(s.activeDevice?.volume).toBe(0.65);
+  });
 });

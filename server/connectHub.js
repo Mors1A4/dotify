@@ -543,6 +543,9 @@ export function setupConnectHub(server, options = {}) {
         activePlaybackState = {
           ...(activePlaybackState || {}),
           ...state,
+          queue: state.queue && state.queue.length > 0 ? state.queue : activePlaybackState?.queue || [],
+          currentTrackIndex: state.currentTrackIndex ?? activePlaybackState?.currentTrackIndex ?? 0,
+          currentTrack: state.currentTrack || activePlaybackState?.currentTrack || null,
         };
         activeDeviceId = castId;
         for (const client of clients.values()) {

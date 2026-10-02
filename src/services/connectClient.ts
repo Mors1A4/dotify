@@ -271,11 +271,14 @@ export class ConnectClient {
             const data = change.doc.data();
             if (data && data.fromDeviceId !== this.localDevice.deviceId) {
               const isTargeted =
-                !data.targetDeviceId ||
                 data.targetDeviceId === this.localDevice.deviceId ||
-                (this.localDevice.isActive && !data.targetDeviceId);
+                (!data.targetDeviceId && this.localDevice.isActive);
 
-              if (isTargeted && data.command && Date.now() - (data.timestamp || 0) < 15000) {
+              if (Date.now() - (data.timestamp || 0) >= 15000) {
+                try {
+                  await fs.deleteDoc(change.doc.ref);
+                } catch {}
+              } else if (isTargeted && data.command) {
                 this.handleIncomingMessage({
                   type: 'REMOTE_COMMAND',
                   command: data.command,

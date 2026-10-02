@@ -1,2 +1,2 @@
-export const APP_VERSION = '1.0.20';
+export const APP_VERSION = '1.0.21';
 export const RELEASE_GITHUB_REPO = 'Mors1A4/dotify-releases';

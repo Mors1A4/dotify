@@ -18,8 +18,55 @@ export async function searchYouTubeVideos(query) {
   }
 }
 
-async function resolveAudioStreamUrl() {
-  // Direct extraction deprecated in favor of client-side hidden YouTube iframe bridge
+export async function resolveAudiusStream(artist, title, expectedDurationSec = 0) {
+  try {
+    const qStr = `${artist || ''} ${title || ''}`.trim();
+    if (!qStr) return null;
+    const res = await fetch(
+      `https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(qStr)}&app_name=dotify`,
+      {
+        headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 dotify/1.0.0' },
+        signal: AbortSignal.timeout(3500),
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const tracks = data.data || [];
+    if (tracks.length === 0) return null;
+
+    let bestTrack = tracks[0];
+    if (expectedDurationSec > 0) {
+      const match = tracks.find((t) => t.duration && Math.abs(t.duration - expectedDurationSec) < 35);
+      if (match) bestTrack = match;
+    }
+
+    if (bestTrack && bestTrack.id) {
+      return `https://discoveryprovider.audius.co/v1/tracks/${bestTrack.id}/stream?app_name=dotify`;
+    }
+  } catch (err) {
+    console.debug('[TrackResolver] Audius stream lookup deferred:', err.message);
+  }
+  return null;
+}
+
+async function resolveAudioStreamUrl(cacheKey, searchWords, expectedDurationSec, forceRefresh = false) {
+  if (forceRefresh) {
+    streamCache.delete(cacheKey);
+  } else {
+    const cached = streamCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return cached.url;
+    }
+  }
+
+  // Attempt resolution from Audius full-length stream catalogue
+  const words = searchWords || '';
+  const audiusUrl = await resolveAudiusStream(words, '', expectedDurationSec);
+  if (audiusUrl) {
+    streamCache.set(cacheKey, { url: audiusUrl, timestamp: Date.now() });
+    return audiusUrl;
+  }
+
   return null;
 }
 
