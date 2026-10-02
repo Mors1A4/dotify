@@ -85,4 +85,25 @@ describe('VibeDjBadge & VibeDjIcon (Text-free Single SVG Animation)', () => {
     expect(html).toContain('Velvet Midnight Reverie');
     expect(html).toContain('#38bdf8');
   });
+
+  it('guarantees center disc and center dot are 100% static with no rotation transforms', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(VibeDjIcon, {
+        size: 22,
+        accentColor: '#38bdf8',
+      })
+    );
+
+    // Tone 2 (Grey ring) must be concentric at (50, 50) with no transform
+    expect(html).toContain('cx="50" cy="50" r="26.5" fill="#2c2d36"');
+    // Tone 3 (Black dot) must be concentric at (50, 50) with no transform
+    expect(html).toContain('cx="50" cy="50" r="11" fill="#000000"');
+
+    // Must NOT contain any rotating group, translation, or transform-origin
+    expect(html).not.toContain('transform="rotate');
+    expect(html).not.toContain('transformOrigin');
+    expect(html).not.toContain('transform-origin');
+    expect(html).not.toContain('will-change-transform');
+  });
 });
+

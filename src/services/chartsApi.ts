@@ -375,11 +375,10 @@ export async function fetchAlbumTracks(
     const preview = item.preview || '';
 
     const expectedDuration = item.duration || 210;
-    const previewParam = preview ? `&preview=${encodeURIComponent(preview)}` : '';
     const streamUrl = getApiUrl(
       `/api/stream/track?artist=${encodeURIComponent(artistName)}&title=${encodeURIComponent(
         trackTitle
-      )}&id=${item.id}&duration=${expectedDuration}${previewParam}`
+      )}&id=${item.id}&duration=${expectedDuration}`
     );
 
     return {
@@ -504,11 +503,10 @@ export function formatChartTrack(item: any): Track {
   const trackTitle = item.title || 'Untitled Track';
   const expectedDuration = item.duration || 210;
   const preview = item.preview || '';
-  const previewParam = preview ? `&preview=${encodeURIComponent(preview)}` : '';
   const streamUrl = getApiUrl(
     `/api/stream/track?artist=${encodeURIComponent(artistName)}&title=${encodeURIComponent(
       trackTitle
-    )}&id=${item.id}&duration=${expectedDuration}${previewParam}`
+    )}&id=${item.id}&duration=${expectedDuration}`
   );
 
   const rawArtwork =

@@ -52,7 +52,16 @@ export class RemoteProgressInterpolator {
       : params.positionMs;
 
     const newPositionSec = adjustedPositionMs / 1000;
-    const newDurationSec = params.durationMs > 0 ? params.durationMs / 1000 : 0;
+    const incomingDurationSec = params.durationMs > 0 ? params.durationMs / 1000 : 0;
+    const currentTrack = usePlayerStore.getState().currentTrack;
+    const knownTrackDur =
+      currentTrack && typeof currentTrack.duration === 'number' && isFinite(currentTrack.duration)
+        ? currentTrack.duration
+        : 0;
+    const isTruncated = incomingDurationSec > 0 && incomingDurationSec <= 33 && knownTrackDur > 45;
+    const newDurationSec = isTruncated
+      ? knownTrackDur
+      : (incomingDurationSec || knownTrackDur || this.durationSec);
 
     const currentEst = this.getCurrentPosition();
     const diff = Math.abs(newPositionSec - currentEst);
@@ -135,6 +144,16 @@ export class RemoteProgressInterpolator {
   private tick() {
     const cur = this.getCurrentPosition();
     audioEngine.emitSyntheticTimeUpdate(cur, this.durationSec);
+    if (this.durationSec > 0 && cur >= this.durationSec) {
+      this.anchorPositionSec = this.durationSec;
+      if (this.isPlaying) {
+        this.isPlaying = false;
+        if (this.intervalId) {
+          clearInterval(this.intervalId);
+          this.intervalId = null;
+        }
+      }
+    }
   }
 
   public start() {

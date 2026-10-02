@@ -1,6 +1,7 @@
 import React from 'react';
 import { useVibeDjStore } from '../../store/vibeDjStore';
 import { usePlayerStore } from '../../store/playerStore';
+import { useThemeStore } from '../../store/themeStore';
 import { FluidVibeDiscVisualizer } from '../common/FluidVibeDiscVisualizer';
 
 export interface VibeDjIconProps {
@@ -14,9 +15,9 @@ export interface VibeDjIconProps {
 
 /**
  * Three-Tone Fluid Disc Icon:
- * - Outer: Theme colour, fluidly morphing with the music as a mini visualizer
- * - Middle: Grey disc ring
- * - Inner: Pitch black center dot (Dotify icon design)
+ * - Outer: User's app theme colour (e.g. blue), fluidly morphing with the music as a mini visualizer
+ * - Middle: Solid grey disc ring (completely static)
+ * - Inner: Pitch black center dot (completely static)
  */
 export const VibeDjIcon: React.FC<VibeDjIconProps> = ({
   size = 22,
@@ -24,12 +25,14 @@ export const VibeDjIcon: React.FC<VibeDjIconProps> = ({
   themeColor,
   accentColor,
 }) => {
+  const { colors } = useThemeStore();
+  const effectiveAccent = accentColor || themeColor || colors.accent || '#38bdf8';
+
   return (
     <FluidVibeDiscVisualizer
       size={size}
       className={className}
-      themeColor={themeColor}
-      accentColor={accentColor}
+      accentColor={effectiveAccent}
     />
   );
 };
@@ -47,7 +50,7 @@ export interface VibeDjBadgeProps {
 /**
  * Modern Vibe DJ control button for PlayerBar.
  * Features the three-tone fluid disc visualizer (theme outer, grey, black inner)
- * that morphs in real-time with the music.
+ * that morphs in real-time with the music. Center is 100% static.
  */
 export const VibeDjBadge: React.FC<VibeDjBadgeProps> = ({
   size = 22,
@@ -58,13 +61,14 @@ export const VibeDjBadge: React.FC<VibeDjBadgeProps> = ({
   accentColor: propAccentColor,
 }) => {
   const store = useVibeDjStore();
+  const { colors } = useThemeStore();
   const { navigateToVibeDj, activeView } = usePlayerStore();
 
   const isActive = propIsActive ?? store.isActive;
   const vibeLabel = propVibeLabel ?? store.vibeLabel;
-  const themeColor = propThemeColor ?? store.themeColor;
-  const accentColor = propAccentColor ?? store.accentColor;
   const shakeUpVibe = store.shakeUpVibe;
+  // Always prioritize the user's active app theme (e.g. blue)
+  const effectiveAccent = propAccentColor || propThemeColor || colors.accent || '#38bdf8';
 
   if (!isActive) return null;
 
@@ -87,8 +91,7 @@ export const VibeDjBadge: React.FC<VibeDjBadgeProps> = ({
     >
       <VibeDjIcon
         size={size}
-        themeColor={themeColor}
-        accentColor={accentColor}
+        accentColor={effectiveAccent}
       />
     </button>
   );

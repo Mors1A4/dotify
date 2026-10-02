@@ -18,7 +18,7 @@ function isLiveStreamTrack(duration: number, track: Track | null | undefined): b
   return false;
 }
 
-function resolveEffectiveDuration(duration: number, track: Track | null | undefined): number {
+export function resolveEffectiveDuration(duration: number, track: Track | null | undefined): number {
   if (isLiveStreamTrack(duration, track)) {
     return Infinity;
   }

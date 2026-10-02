@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useVibeDjStore } from '../../store/vibeDjStore';
 import { usePlayerStore } from '../../store/playerStore';
+import { useThemeStore } from '../../store/themeStore';
 import {
   Sparkles,
   Disc3,
@@ -54,6 +55,8 @@ export const VibeDjView: React.FC = () => {
     playTrack,
     navigateToArtist,
   } = usePlayerStore();
+
+  const appAccent = useThemeStore((s) => s.colors.accent);
 
   const [hasStartedInitial, setHasStartedInitial] = useState(false);
 
@@ -163,8 +166,7 @@ export const VibeDjView: React.FC = () => {
               <div className="relative group flex items-center justify-center p-2">
                 <FluidVibeDiscVisualizer
                   size={210}
-                  themeColor={accentColor}
-                  accentColor={accentColor}
+                  accentColor={appAccent || '#38bdf8'}
                   className="drop-shadow-[0_0_35px_rgba(0,0,0,0.85)]"
                 />
 
