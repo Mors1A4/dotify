@@ -3,6 +3,7 @@ import http from 'http';
 import net from 'net';
 import os from 'os';
 import { Client, DefaultMediaReceiver } from 'castv2-client';
+import { findLocalTrack } from './mp3SyncHub.js';
 
 /**
  * Google Cast / Google Home / Nest Audio Discovery and Playback Controller.
