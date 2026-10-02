@@ -594,6 +594,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
   // Wire audioEngine listeners
   audioEngine.onStateChange((isPlaying, isBuffering) => {
+    // In remote controller mode, local audio engine events must never overwrite remote playback state!
+    if (get().connectMode === 'remote_controller') {
+      return;
+    }
     const prevPlaying = get().isPlaying;
     const engineTrack = audioEngine.getCurrentTrack();
     const currentTrack = get().currentTrack || engineTrack;
@@ -862,6 +866,8 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         shuffle: state.shuffle ?? get().shuffle,
       });
 
+      audioEngine.setCurrentTrack(targetTrack);
+
       remoteProgressInterpolator.sync({
         positionMs: state.positionMs,
         durationMs: state.durationMs,
@@ -1038,11 +1044,16 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         capturedAt: Date.now(),
       };
 
-      audioEngine.pause();
       audioEngine.setControllerMode(true, (action, data) => {
         connectClient.sendRemoteCommand(action as any, data);
       });
-      remoteProgressInterpolator.start();
+      audioEngine.setCurrentTrack(snapshot.track);
+      remoteProgressInterpolator.sync({
+        positionMs: snapshot.positionMs,
+        durationMs: (snapshot.track.duration || 0) * 1000,
+        isPlaying: snapshot.isPlaying,
+        remoteTimestamp: Date.now(),
+      });
 
       const targetDev = store.remoteDevices.find((d) => d.deviceId === targetDeviceId);
 
@@ -1130,6 +1141,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         const updatedQueue = newQueue ? [...newQueue] : queue.length > 0 ? queue : [track];
         const activeTrackIndex = typeof trackIndex === 'number' ? trackIndex : updatedQueue.findIndex((t) => t.id === track.id);
         set({ currentTrack: track, currentTrackIndex: activeTrackIndex >= 0 ? activeTrackIndex : 0, queue: updatedQueue, isPlaying: true });
+        audioEngine.setCurrentTrack(track);
         remoteProgressInterpolator.resetForTrack(track.duration && isFinite(track.duration) ? track.duration : 0);
         connectClient.sendRemoteCommand('play_track', { track, queue: updatedQueue, index: activeTrackIndex });
         return;
@@ -1265,6 +1277,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
             const next = queue[nextIndex];
             if (next) {
               set({ currentTrack: next, currentTrackIndex: nextIndex, isPlaying: true });
+              audioEngine.setCurrentTrack(next);
               remoteProgressInterpolator.resetForTrack(next.duration || 0);
               connectClient.sendRemoteCommand('play_track', { track: next, queue, index: nextIndex });
               return;
@@ -1337,6 +1350,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
             const prev = queue[prevIndex];
             if (prev) {
               set({ currentTrack: prev, currentTrackIndex: prevIndex, isPlaying: true });
+              audioEngine.setCurrentTrack(prev);
               remoteProgressInterpolator.resetForTrack(prev.duration || 0);
               connectClient.sendRemoteCommand('play_track', { track: prev, queue, index: prevIndex });
               return;

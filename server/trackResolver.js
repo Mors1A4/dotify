@@ -54,6 +54,22 @@ export async function handleTrackStream(req, res) {
     streamCache.delete(cacheKey);
   }
 
+  if (!preview && (artist || title || rawQuery || q)) {
+    try {
+      const qStr = (searchWords || `${artist} ${title}`).trim();
+      const dRes = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(qStr)}&limit=1`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 dotify/1.0.0' },
+        signal: AbortSignal.timeout(2500),
+      });
+      if (dRes.ok) {
+        const dData = await dRes.json();
+        if (dData?.data?.[0]?.preview) {
+          preview = dData.data[0].preview;
+        }
+      }
+    } catch {}
+  }
+
   const attachUpstreamRecovery = () => {
     req.onUpstreamError = async (statusCode) => {
       console.warn(

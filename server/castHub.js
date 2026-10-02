@@ -296,15 +296,33 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
   }
 
   const { ip } = speaker.castDetails;
+  let previewUrl = track.preview || track.previewUrl || track.sourceMetadata?.preview;
+  if (!previewUrl && (track.title || track.artist)) {
+    try {
+      const q = `${track.artist || ''} ${track.title || ''}`.trim();
+      const dRes = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=1`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 dotify/1.0.0' },
+        signal: AbortSignal.timeout(2500),
+      });
+      if (dRes.ok) {
+        const dData = await dRes.json();
+        if (dData?.data?.[0]?.preview) {
+          previewUrl = dData.data[0].preview;
+        }
+      }
+    } catch {}
+  }
+
   const rawStreamUrl = track.streamUrl || '';
   let streamUrl = makeLanStreamUrl(rawStreamUrl);
-  const previewUrl = track.preview || track.previewUrl || track.sourceMetadata?.preview;
+  const lanIp = getLocalLanIp();
   if (!streamUrl && track.title && track.artist) {
-    const lanIp = getLocalLanIp();
     const previewParam = previewUrl ? `&preview=${encodeURIComponent(previewUrl)}` : '';
     streamUrl = `http://${lanIp}:3001/api/stream/track?artist=${encodeURIComponent(track.artist)}&title=${encodeURIComponent(track.title)}${previewParam}`;
   } else if (streamUrl && streamUrl.includes('/api/stream/track') && previewUrl && !streamUrl.includes('preview=')) {
     streamUrl += `${streamUrl.includes('?') ? '&' : '?'}preview=${encodeURIComponent(previewUrl)}`;
+  } else if (!streamUrl && previewUrl) {
+    streamUrl = previewUrl;
   }
   const positionSeconds = Math.max(0, (options.positionMs || 0) / 1000);
   const targetVolume = options.volume ?? speaker.volume ?? 0.7;
@@ -367,7 +385,7 @@ export async function playOnCastDevice(deviceId, track, options = {}) {
             title: track.title || 'Unknown Track',
             artist: track.artist || 'Unknown Artist',
             albumName: track.album || 'Dotify Music',
-            images: track.coverUrl ? [{ url: makeLanStreamUrl(track.coverUrl) }] : [],
+            images: (track.artworkUrl || track.coverUrl) ? [{ url: makeLanStreamUrl(track.artworkUrl || track.coverUrl) }] : [],
           },
         };
 
@@ -476,7 +494,22 @@ function flushCastVolume() {
 /**
  * Send a remote command (play, pause, seek, set_volume) to active Cast speaker safely
  */
-export async function sendCastCommand(action, data = {}) {
+export async function sendCastCommand(action, data = {}, targetDeviceId = null) {
+  const targetId = targetDeviceId || activeCastDeviceId;
+
+  if (action === 'play_track' || action === 'playTrack') {
+    const trk = data?.track || data;
+    if (trk && trk.title && targetId) {
+      playOnCastDevice(targetId, trk, {
+        positionMs: data.positionMs || 0,
+        volume: data.volume ?? (activeCastPlaybackState?.volume ?? 0.7),
+      }).catch((err) => {
+        console.warn('[CastHub] Remote play_track error on cast speaker:', err.message);
+      });
+      return true;
+    }
+  }
+
   if (!activeCastClient || !activeCastDeviceId) {
     return false;
   }
@@ -503,21 +536,6 @@ export async function sendCastCommand(action, data = {}) {
           return true;
         }
         break;
-
-      case 'play_track':
-      case 'playTrack': {
-        const trk = data?.track || data;
-        if (trk && trk.title) {
-          playOnCastDevice(activeCastDeviceId, trk, {
-            positionMs: data.positionMs || 0,
-            volume: data.volume ?? (activeCastPlaybackState?.volume ?? 0.7),
-          }).catch((err) => {
-            console.warn('[CastHub] Remote play_track error on cast speaker:', err.message);
-          });
-          return true;
-        }
-        break;
-      }
 
       case 'play':
       case 'CMD_PLAY':

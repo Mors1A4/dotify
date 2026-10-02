@@ -71,6 +71,8 @@ export class AudioEngine {
   // Remote Controller mode delegation
   private isControllerMode: boolean = false;
   private remoteCommandDelegate: ((action: string, data?: any) => void) | null = null;
+  private controllerCurrentTime: number = 0;
+  private controllerDuration: number = 0;
 
   private constructor() {
     this.primaryAudio = createAudioElement();
@@ -880,20 +882,42 @@ export class AudioEngine {
     enabled: boolean,
     commandDelegate?: (action: string, data?: any) => void
   ): void {
-    this.isControllerMode = enabled;
-    this.remoteCommandDelegate = commandDelegate || null;
-
     if (enabled) {
-      this.pause();
+      // Clean direct local audio silencing without firing state changes or delegating pause to remote
+      this.isSwitchingTrack = false;
+      this.stopProgressLoop();
+      if (this.standbyFadeTimer) {
+        clearTimeout(this.standbyFadeTimer);
+        this.standbyFadeTimer = null;
+        this.standbyFadePromise = null;
+      }
+      if (this.isUsingYouTubeBridge) {
+        this.ytBridge.pause();
+      } else {
+        this.activeAudio.pause();
+        this.standbyAudio.pause();
+      }
       this.prebufferNextTrack(null);
     }
+    this.isControllerMode = enabled;
+    this.remoteCommandDelegate = commandDelegate || null;
   }
 
   public getIsControllerMode(): boolean {
     return this.isControllerMode;
   }
 
+  public setCurrentTrack(track: Track | null): void {
+    this.currentTrack = track;
+    if (track?.duration && isFinite(track.duration) && track.duration > 0) {
+      this.controllerDuration = track.duration;
+    }
+  }
+
   public getCurrentTime(): number {
+    if (this.isControllerMode) {
+      return this.controllerCurrentTime;
+    }
     if (this.isUsingYouTubeBridge) {
       return this.ytBridge.getCurrentTime();
     }
@@ -901,6 +925,13 @@ export class AudioEngine {
   }
 
   public getDuration(): number {
+    if (this.isControllerMode) {
+      if (this.controllerDuration > 0) return this.controllerDuration;
+      if (this.currentTrack?.duration && isFinite(this.currentTrack.duration) && this.currentTrack.duration > 0) {
+        return this.currentTrack.duration;
+      }
+      return 0;
+    }
     if (this.isUsingYouTubeBridge) {
       const bridgeDur = this.ytBridge.getDuration();
       if (bridgeDur > 0) return bridgeDur;
@@ -909,6 +940,10 @@ export class AudioEngine {
   }
 
   public emitSyntheticTimeUpdate(currentTime: number, duration: number): void {
+    this.controllerCurrentTime = isFinite(currentTime) && currentTime >= 0 ? currentTime : 0;
+    if (typeof duration === 'number' && isFinite(duration) && duration > 0) {
+      this.controllerDuration = duration;
+    }
     for (const cb of this.timeUpdateCallbacks) {
       cb(currentTime, duration);
     }

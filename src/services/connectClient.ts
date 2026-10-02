@@ -537,13 +537,16 @@ export class ConnectClient {
     return new Promise((resolve) => {
       let resolved = false;
 
+      const isCast = targetDeviceId.startsWith('cast:');
+      const timeoutMs = isCast ? 15000 : 6000;
+
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
           this.handoffAckListeners.delete(ackHandler);
           resolve(false);
         }
-      }, 4000);
+      }, timeoutMs);
 
       const ackHandler = (ack: { success: boolean; fromId: string; resumedPositionMs: number }) => {
         if (ack.fromId === targetDeviceId) {

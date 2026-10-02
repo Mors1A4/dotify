@@ -231,7 +231,7 @@ export function setupConnectHub(server, options = {}) {
             if (targetId && isCastDeviceId(targetId)) {
               const action = msg.command?.action || msg.action;
               const data = msg.command?.data || msg.command || msg;
-              sendCastCommand(action, data);
+              sendCastCommand(action, data, targetId);
               break;
             }
 
