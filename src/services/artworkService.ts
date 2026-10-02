@@ -63,26 +63,79 @@ export const DEFAULT_MUSIC_ARTWORK =
     </svg>`
   );
 
+const failedArtworkUrls = new Set<string>();
+
+/**
+ * Tracks an artwork URL that failed to load in the browser so it is never re-used,
+ * and clears any cached reference to it.
+ */
+export function markArtworkUrlFailed(url: string, artist?: string, title?: string): void {
+  if (!url || typeof url !== 'string') return;
+  const trimmed = url.trim();
+  if (trimmed) failedArtworkUrls.add(trimmed);
+  if (artist && title) {
+    const key = getCacheKey(artist, title);
+    if (memoryArtworkCache.get(key) === trimmed) {
+      memoryArtworkCache.delete(key);
+    }
+    pendingArtworkPromises.delete(key);
+    try {
+      safeStorage.removeItem(key);
+    } catch {}
+  }
+}
+
 /**
  * Checks whether an artwork URL is missing, invalid, pointing to a fallback SVG placeholder,
- * or pointing to a broken/empty upstream image hash.
+ * pointing to mock/test domains, or pointing to a broken/empty upstream image hash.
  */
 export function isUglyPlaceholder(url?: string | null): boolean {
   if (!url || typeof url !== 'string') return true;
   const trimmed = url.trim();
   if (!trimmed || trimmed.length < 12) return true;
   if (trimmed === DEFAULT_MUSIC_ARTWORK) return true;
+  if (failedArtworkUrls.has(trimmed)) return true;
 
   const lower = trimmed.toLowerCase();
+
+  // Must be valid HTTP(S) or data URI
+  if (!lower.startsWith('http://') && !lower.startsWith('https://') && !lower.startsWith('data:image/')) {
+    return true;
+  }
+
+  // Reject dummy/mock domains from tests or malformed metadata
+  if (
+    lower.includes('example.com') ||
+    lower.includes('example.org') ||
+    lower.includes('localhost') ||
+    lower.includes('127.0.0.1') ||
+    lower.includes('test.com') ||
+    lower.includes('foo.bar') ||
+    lower.includes('.invalid')
+  ) {
+    return true;
+  }
+
+  // Known broken placeholder keywords and empty Deezer/CDN image stems
   if (
     lower.includes('1511671782779-c97d3d27a1d4') ||
     lower.includes('placehold') ||
     lower.includes('images/cover//') ||
     lower.includes('images/artist//') ||
     lower.includes('default_cover') ||
-    lower.includes('default_artist') ||
-    // Deezer CDN images are cross-origin blocked in Tauri WebView2 (no Referer / session cookie)
-    lower.includes('cdn-images.dzcdn.net')
+    lower.includes('default_artist')
+  ) {
+    return true;
+  }
+
+  // Known 404 mzstatic hashes
+  if (
+    lower.includes('00602508818233') ||
+    lower.includes('00602547954312') ||
+    lower.includes('24um1im16988') ||
+    lower.includes('19umgim24705') ||
+    lower.includes('13umgim17645') ||
+    lower.includes('dj.bjflymf')
   ) {
     return true;
   }
@@ -114,6 +167,7 @@ function cleanSearchToken(s: string): string {
   return (s || '')
     .replace(/\(.*?\)/g, ' ')
     .replace(/\[.*?\]/g, ' ')
+    .replace(/["'?!,.:;~`@#$%^&*()_+={}[\]|\\/<>]/g, ' ')
     .replace(/\b(?:ft\.?|feat\.?|featuring|official\s+video|official\s+audio|remastered|live|explicit)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -256,28 +310,34 @@ export function getTrackArtwork(track?: Partial<Track> | null): string {
 
 /**
  * Dynamically resolves actual high-resolution album artwork for a song or album
- * by querying iTunes Search API and Deezer Charts proxy with smart artist/title matching.
+ * by querying Deezer Search proxy, iTunes Search API, and direct open-web fallbacks.
  */
-export async function resolveTrackArtwork(artist: string, title: string): Promise<string> {
+export async function resolveTrackArtwork(
+  artist: string,
+  title: string,
+  options?: { forceFresh?: boolean; ignoreUrl?: string }
+): Promise<string> {
   if (!artist?.trim() && !title?.trim()) {
     return DEFAULT_MUSIC_ARTWORK;
   }
 
   const key = getCacheKey(artist, title);
 
-  if (memoryArtworkCache.has(key)) {
-    const cached = memoryArtworkCache.get(key)!;
-    if (!isUglyPlaceholder(cached)) return cached;
+  if (!options?.forceFresh) {
+    if (memoryArtworkCache.has(key)) {
+      const cached = memoryArtworkCache.get(key)!;
+      if (!isUglyPlaceholder(cached) && cached !== options?.ignoreUrl) return cached;
+    }
+
+    const persisted = safeStorage.getItem<string>(key, '');
+    if (persisted && !isUglyPlaceholder(persisted) && persisted !== options?.ignoreUrl) {
+      const upgraded = upgradeArtworkUrl(persisted);
+      memoryArtworkCache.set(key, upgraded);
+      return upgraded;
+    }
   }
 
-  const persisted = safeStorage.getItem<string>(key, '');
-  if (persisted && !isUglyPlaceholder(persisted)) {
-    const upgraded = upgradeArtworkUrl(persisted);
-    memoryArtworkCache.set(key, upgraded);
-    return upgraded;
-  }
-
-  if (pendingArtworkPromises.has(key)) {
+  if (pendingArtworkPromises.has(key) && !options?.forceFresh) {
     return pendingArtworkPromises.get(key)!;
   }
 
@@ -297,33 +357,7 @@ export async function resolveTrackArtwork(artist: string, title: string): Promis
       return highRes;
     };
 
-    // 1. Try iTunes Search API (fast, CORS-enabled globally, 600x600 HD covers)
-    try {
-      const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(
-        query
-      )}&entity=song&limit=5`;
-      const res = await fetch(itunesUrl, { signal: AbortSignal.timeout(3500) });
-      if (res.ok) {
-        const json = await res.json();
-        const results: any[] = Array.isArray(json.results) ? json.results : [];
-        if (results.length > 0) {
-          const matched =
-            results.find((r) => {
-              const rArtist = (r.artistName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-              return normArtist && (rArtist.includes(normArtist) || normArtist.includes(rArtist));
-            }) || results[0];
-
-          const rawArt = matched?.artworkUrl100 || matched?.artworkUrl60;
-          if (rawArt && !isUglyPlaceholder(rawArt)) {
-            return saveAndReturn(rawArt.replace('100x100bb', '600x600bb'));
-          }
-        }
-      }
-    } catch {
-      // iTunes song search failed or timed out, proceed to Deezer
-    }
-
-    // 2. Try Deezer Search Proxy via backend
+    // 1. Try Deezer Search Proxy via backend (fastest, studio 500x500 covers, no CORS restrictions)
     try {
       const res = await fetch(
         getApiUrl(`/api/charts/search?q=${encodeURIComponent(query)}&limit=5`),
@@ -348,7 +382,7 @@ export async function resolveTrackArtwork(artist: string, title: string): Promis
             matched?.album?.cover_medium ||
             matched?.artist?.picture_big ||
             matched?.artist?.picture_medium;
-          if (cover && !isUglyPlaceholder(cover)) {
+          if (cover && !isUglyPlaceholder(cover) && cover !== options?.ignoreUrl) {
             return saveAndReturn(cover);
           }
         }
@@ -357,7 +391,61 @@ export async function resolveTrackArtwork(artist: string, title: string): Promis
       // Deezer proxy failed
     }
 
-    // 3. Fallback: Search iTunes by album or artist if song search returned nothing
+    // 2. Try iTunes Search API (600x600 HD covers)
+    try {
+      const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(
+        query
+      )}&entity=song&limit=5`;
+      const res = await fetch(itunesUrl, { signal: AbortSignal.timeout(3500) });
+      if (res.ok) {
+        const json = await res.json();
+        const results: any[] = Array.isArray(json.results) ? json.results : [];
+        if (results.length > 0) {
+          const matched =
+            results.find((r) => {
+              const rArtist = (r.artistName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              return normArtist && (rArtist.includes(normArtist) || normArtist.includes(rArtist));
+            }) || results[0];
+
+          const rawArt = matched?.artworkUrl100 || matched?.artworkUrl60;
+          if (rawArt && !isUglyPlaceholder(rawArt) && rawArt !== options?.ignoreUrl) {
+            return saveAndReturn(rawArt.replace('100x100bb', '600x600bb'));
+          }
+        }
+      }
+    } catch {
+      // iTunes search failed
+    }
+
+    // 3. Fallback: Direct Deezer API query (works in Node and CORS-open environments)
+    try {
+      const res = await fetch(
+        `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=5`,
+        { signal: AbortSignal.timeout(3000) }
+      );
+      if (res.ok) {
+        const json = await res.json();
+        const items: any[] = Array.isArray(json.data) ? json.data : [];
+        if (items.length > 0) {
+          const matched =
+            items.find((item) => {
+              const iArtist = (item.artist?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              const iTitle = (item.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              return (
+                (normArtist && (iArtist.includes(normArtist) || normArtist.includes(iArtist))) ||
+                (normTitle && iTitle.includes(normTitle))
+              );
+            }) || items[0];
+
+          const cover = matched?.album?.cover_big || matched?.album?.cover_medium;
+          if (cover && !isUglyPlaceholder(cover) && cover !== options?.ignoreUrl) {
+            return saveAndReturn(cover);
+          }
+        }
+      }
+    } catch {}
+
+    // 4. Fallback: Search iTunes by album or artist
     if (cleanArtist) {
       try {
         const albumUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(
@@ -367,7 +455,7 @@ export async function resolveTrackArtwork(artist: string, title: string): Promis
         if (res.ok) {
           const json = await res.json();
           const first = json.results?.[0];
-          if (first?.artworkUrl100 && !isUglyPlaceholder(first.artworkUrl100)) {
+          if (first?.artworkUrl100 && !isUglyPlaceholder(first.artworkUrl100) && first.artworkUrl100 !== options?.ignoreUrl) {
             return saveAndReturn(first.artworkUrl100.replace('100x100bb', '600x600bb'));
           }
         }
@@ -384,4 +472,5 @@ export async function resolveTrackArtwork(artist: string, title: string): Promis
     pendingArtworkPromises.delete(key);
   }
 }
+
 

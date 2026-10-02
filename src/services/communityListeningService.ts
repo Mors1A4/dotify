@@ -5,6 +5,7 @@ import { safeStorage } from '../utils/storage';
 import { db } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { TrackPlayRecord } from '../types/telemetry';
+import { isUglyPlaceholder, getTrackArtwork } from './artworkService';
 
 export interface CommunityPlayEvent {
   trackId: string;
@@ -42,13 +43,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'Blinding Lights',
         album: 'After Hours',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/37/f5/e0/37f5e07c-53c6-6a8e-6d49-d80fef6fb1e6/00602508818233.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/84318c4e09cb463c552086e37ea35e5d/500x500-000000-80-0-0.jpg',
         genre: 'Synthpop',
       },
       {
         title: 'Starboy',
         album: 'Starboy',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music71/v4/d3/03/6a/d3036a42-a937-18a6-f3a4-3154e9b2ab36/00602547954312.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/ed1568e64c2079361cc3645bcfd7d5d1/500x500-000000-80-0-0.jpg',
         genre: 'R&B / Pop',
       },
     ],
@@ -61,13 +62,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'BIRDS OF A FEATHER',
         album: 'HIT ME HARD AND SOFT',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/d5/38/1b/d5381be2-6e7d-7b93-4c5d-4aeb8ce33a4b/24UM1IM16988.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/a83e0705a61e271295cb17ec053fa2d7/500x500-000000-80-0-0.jpg',
         genre: 'Alternative Pop',
       },
       {
         title: 'bad guy',
         album: 'WHEN WE ALL FALL ASLEEP, WHERE DO WE GO?',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/00/58/40/005840c1-3032-b3e5-1e49-9d60d1028b15/19UMGIM24705.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/8ba668eef050dbd6e87f6ae154694462/500x500-000000-80-0-0.jpg',
         genre: 'Alternative Pop',
       },
     ],
@@ -80,13 +81,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'Do I Wanna Know?',
         album: 'AM',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music113/v4/f5/62/37/f562374a-b5f3-3e4c-eb9a-e5cb34a4a5b5/13UMGIM17645.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/f381f215d2f838db60a8ea74eb6a0a22/500x500-000000-80-0-0.jpg',
         genre: 'Indie Rock',
       },
       {
         title: '505',
         album: 'Favourite Worst Nightmare',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music/v4/4e/ce/18/4ece18ff-8dc6-f5a0-4e27-6898a50ed7e3/dj.bjflymf.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/77b8f9e67ad5efb26639c0d7ff34ea86/500x500-000000-80-0-0.jpg',
         genre: 'Indie Rock',
       },
     ],
@@ -99,13 +100,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'Levitating',
         album: 'Future Nostalgia',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/4c/b3/55/4cb35510-26c4-2b91-6c57-30da52a6ac74/20UM1IM01576.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/e00f983637ae7f3b469733eead1c2a12/500x500-000000-80-0-0.jpg',
         genre: 'Nu-Disco / Pop',
       },
       {
         title: 'Houdini',
         album: 'Radical Optimism',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/49/e7/c6/49e7c648-b62e-ce08-cbf0-01a03d6c6463/196589790643.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/b4db2d1265851419747970d47d87f54c/500x500-000000-80-0-0.jpg',
         genre: 'Dance-Pop',
       },
     ],
@@ -118,13 +119,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'Not Like Us',
         album: 'Not Like Us',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/e9/74/46/e974469a-4e56-54e0-c5cc-8dbf49c5b7b5/24PGEM09695.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/4d0d3b6f2f9b883017a027cecfd7aa61/500x500-000000-80-0-0.jpg',
         genre: 'Hip-Hop',
       },
       {
         title: 'HUMBLE.',
         album: 'DAMN.',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/c0/63/d5/c063d5f2-2b28-8c49-ddc2-47ec18f97a78/17UMGIM24760.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/2569ba7e2b17f5ceec5817c767e7169d/500x500-000000-80-0-0.jpg',
         genre: 'Hip-Hop',
       },
     ],
@@ -137,13 +138,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'Cruel Summer',
         album: 'Lover',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/b2/e3/28/b2e32809-9a2e-5e4d-7ff1-0f5c4bf76e1b/19UMGIM64263.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/e02c6113b2cbe675971a7eb3a8d1ce34/500x500-000000-80-0-0.jpg',
         genre: 'Pop',
       },
       {
         title: 'Anti-Hero',
         album: 'Midnights',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/b7/73/87/b77387af-5d5f-9f01-da98-13e5b4eb4b3d/22UMGIM83498.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/4e7e6005cbbba38aaecbe504cb418b76/500x500-000000-80-0-0.jpg',
         genre: 'Pop',
       },
     ],
@@ -156,13 +157,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'Get Lucky',
         album: 'Random Access Memories',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music113/v4/e5/c5/ef/e5c5ef1d-0748-7e6a-3d30-02a35028e61e/13UMGIM20395.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/421469e38ff86f874bc07452d5b61f89/500x500-000000-80-0-0.jpg',
         genre: 'Electronic / Disco',
       },
       {
         title: 'Around the World',
         album: 'Homework',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/c8/cd/1d/c8cd1df5-6e9e-f2ed-36fc-c7e6b2ba9a55/09UMGIM21023.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/6c653066d2cbb54d748f0e5272a2a4b8/500x500-000000-80-0-0.jpg',
         genre: 'House',
       },
     ],
@@ -175,13 +176,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'The Less I Know the Better',
         album: 'Currents',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/62/49/6e/62496ee8-2a35-bb04-a8d7-b77d85fef810/887828045976.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/6fbfda5eece914bc8b835e0c52bb8889/500x500-000000-80-0-0.jpg',
         genre: 'Psychedelic Pop',
       },
       {
         title: 'Borderline',
         album: 'The Slow Rush',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music113/v4/2f/07/e1/2f07e1ae-b20a-e4e1-0e76-01e6d2b8edce/00602507259518.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/77727192f1b72e01df227282cb205886/500x500-000000-80-0-0.jpg',
         genre: 'Psychedelic Pop',
       },
     ],
@@ -194,13 +195,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'Feel Good Inc.',
         album: 'Demon Days',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/c2/8e/2d/c28e2db8-4e3f-a5e1-f0d0-8a9b4e69f65f/00724386785050.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/6d5e1ff74805c873ad708c32ec88db3f/500x500-000000-80-0-0.jpg',
         genre: 'Alternative',
       },
       {
         title: 'On Melancholy Hill',
         album: 'Plastic Beach',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/f2/b9/70/f2b970e1-e413-c36c-6c42-8fcf4e0028b2/00602527340517.rgb.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/b315266858e778aee3ad58e0a2948eb7/500x500-000000-80-0-0.jpg',
         genre: 'Synthpop',
       },
     ],
@@ -213,13 +214,13 @@ const SEED_COMMUNITY_TRENDS: { artist: string; listenerCount: number; plays: num
       {
         title: 'Viva La Vida',
         album: 'Viva La Vida or Death and All His Friends',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music/v4/4f/73/3a/4f733aab-4b5b-d5d8-0399-16e89f0a2f7c/886973382226.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/bc768fa553aa3d81b37b6c7a72d3e098/500x500-000000-80-0-0.jpg',
         genre: 'Pop Rock',
       },
       {
         title: 'Yellow',
         album: 'Parachutes',
-        artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music/v4/62/d2/d1/62d2d1de-9b2e-ae9b-b4ad-a9e04bcea9a3/00724352474920.jpg/600x600bb.jpg',
+        artworkUrl: 'https://cdn-images.dzcdn.net/images/cover/ecff7a18bb72fa1b023f03b22cf53c23/500x500-000000-80-0-0.jpg',
         genre: 'Alternative Rock',
       },
     ],
@@ -259,12 +260,13 @@ export class CommunityListeningService {
     this.lastRecordedTrackId = track.id;
     this.lastRecordedTime = now;
 
+    const cleanArtwork = isUglyPlaceholder(track.artworkUrl) ? '' : (track.artworkUrl || '');
     const playEvent: CommunityPlayEvent = {
       trackId: track.id,
       title: track.title,
       artist: cleanArtist,
       album: track.album || '',
-      artworkUrl: track.artworkUrl || '',
+      artworkUrl: cleanArtwork,
       timestamp: now,
       genre: track.sourceMetadata?.genre || '',
       userId: userId || 'anonymous',
@@ -472,6 +474,8 @@ export class CommunityListeningService {
       }
 
       if (!record.tracks.has(p.trackId)) {
+        const cleanArtwork = isUglyPlaceholder(p.artworkUrl) ? '' : (p.artworkUrl || '');
+        const trackArtwork = cleanArtwork || getTrackArtwork({ artist: primary, title: p.title });
         record.tracks.set(p.trackId, {
           id: p.trackId,
           source: 'charts',
@@ -480,7 +484,7 @@ export class CommunityListeningService {
           album: p.album || '',
           duration: 180,
           streamUrl: '',
-          artworkUrl: p.artworkUrl || '',
+          artworkUrl: isUglyPlaceholder(trackArtwork) ? '' : trackArtwork,
           sourceMetadata: {
             genre: p.genre || 'Trending',
             communityArtist: primary,

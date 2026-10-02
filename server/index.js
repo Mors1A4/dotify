@@ -124,6 +124,23 @@ app.post('/api/user/:userId/library', (req, res) => {
 // Community Listening Aggregation across app users
 const communityListeningFile = path.join(userLibraryDir, 'community_listening.json');
 
+function sanitizeArtworkUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  const lower = url.toLowerCase().trim();
+  if (
+    lower.includes('example.com') ||
+    lower.includes('example.org') ||
+    lower.includes('localhost') ||
+    lower.includes('127.0.0.1') ||
+    lower.includes('test.com') ||
+    lower.includes('.invalid') ||
+    lower.includes('placehold')
+  ) {
+    return '';
+  }
+  return url.trim();
+}
+
 app.get('/api/community/listening', (req, res) => {
   const currentUserId = req.query.excludeUserId ? String(req.query.excludeUserId).trim() : null;
   let recentPlays = [];
@@ -152,7 +169,7 @@ app.get('/api/community/listening', (req, res) => {
                 title: item.title || '',
                 artist: String(item.artist).trim(),
                 album: item.album || '',
-                artworkUrl: item.artworkUrl || '',
+                artworkUrl: sanitizeArtworkUrl(item.artworkUrl),
                 timestamp: item.timestamp || Date.now(),
                 genre: item.sourceMetadata?.genre || '',
                 userId: fileUid,
@@ -189,7 +206,7 @@ app.post('/api/community/listening', (req, res) => {
       title: title || '',
       artist: String(artist).trim(),
       album: album || '',
-      artworkUrl: artworkUrl || '',
+      artworkUrl: sanitizeArtworkUrl(artworkUrl),
       timestamp: timestamp || Date.now(),
       genre: genre || '',
       userId: userId || 'anonymous',

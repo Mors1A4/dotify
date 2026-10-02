@@ -29,47 +29,64 @@ import {
   getTrackArtwork,
   resolveTrackArtwork,
   isUglyPlaceholder,
+  markArtworkUrlFailed,
+  getCacheKey,
 } from '../../services/artworkService';
 import { isUserFavouredPlay } from '../../services/listeningClassifier';
 
 const ShelfTrackImage: React.FC<{ track: Track }> = ({ track }) => {
-  const [imgSrc, setImgSrc] = useState(() => getTrackArtwork(track));
+  const initialArt = getTrackArtwork(track);
+  const [imgSrc, setImgSrc] = useState<string>(() =>
+    isUglyPlaceholder(initialArt) ? DEFAULT_MUSIC_ARTWORK : initialArt
+  );
+  const [hasResolved, setHasResolved] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     const current = getTrackArtwork(track);
-    setImgSrc(current);
     if (isUglyPlaceholder(current)) {
+      setImgSrc(DEFAULT_MUSIC_ARTWORK);
       resolveTrackArtwork(track.artist, track.title).then((resolved) => {
         if (mounted && resolved && !isUglyPlaceholder(resolved)) {
           track.artworkUrl = resolved;
           setImgSrc(resolved);
         }
       });
+    } else {
+      setImgSrc(current);
     }
     return () => {
       mounted = false;
     };
   }, [track.id, track.artworkUrl, track.artist, track.title]);
 
+  const handleError = () => {
+    if (imgSrc && imgSrc !== DEFAULT_MUSIC_ARTWORK) {
+      markArtworkUrlFailed(imgSrc, track.artist, track.title);
+    }
+    setImgSrc(DEFAULT_MUSIC_ARTWORK);
+    if (!hasResolved) {
+      setHasResolved(true);
+      resolveTrackArtwork(track.artist, track.title, { forceFresh: true, ignoreUrl: imgSrc }).then(
+        (resolved) => {
+          if (resolved && !isUglyPlaceholder(resolved) && resolved !== imgSrc) {
+            track.artworkUrl = resolved;
+            setImgSrc(resolved);
+          }
+        }
+      );
+    }
+  };
+
   return (
     <img
       data-testid="track-artwork"
+      data-artwork-key={getCacheKey(track.artist || '', track.title || '')}
       src={imgSrc}
       alt={track.title}
       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
       loading="lazy"
-      onError={() => {
-        if (imgSrc !== DEFAULT_MUSIC_ARTWORK) {
-          setImgSrc(DEFAULT_MUSIC_ARTWORK);
-          resolveTrackArtwork(track.artist, track.title).then((resolved) => {
-            if (resolved && !isUglyPlaceholder(resolved)) {
-              track.artworkUrl = resolved;
-              setImgSrc(resolved);
-            }
-          });
-        }
-      }}
+      onError={handleError}
     />
   );
 };
