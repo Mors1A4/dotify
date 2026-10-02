@@ -268,21 +268,36 @@ function publishToGitHubReleases(version, notes, ghToken, opts = {}) {
   fs.writeFileSync(latestJsonPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 
   const assets = [latestJsonPath];
+  let hasExe = false;
+  let hasApk = false;
 
   if (!opts.androidOnly) {
     const exePath = path.join(ROOT_DIR, 'dotify.exe');
     const setupPath = path.join(ROOT_DIR, 'dotify-setup.exe');
-    if (fs.existsSync(exePath)) assets.push(exePath);
-    if (fs.existsSync(setupPath)) assets.push(setupPath);
-  }
-
-  if (!opts.desktopOnly) {
-    const apkPath = path.join(ROOT_DIR, 'dotify.apk');
-    if (fs.existsSync(apkPath)) {
-      verifyApkVersion(apkPath, version);
-      assets.push(apkPath);
+    if (fs.existsSync(exePath) && fs.existsSync(setupPath)) {
+      assets.push(exePath, setupPath);
+      hasExe = true;
+    } else if (!opts.desktopOnly) {
+      throw new Error(`CRITICAL: Missing desktop binaries (${exePath} or ${setupPath}). Cannot publish full release.`);
     }
   }
+
+  const apkPath = path.join(ROOT_DIR, 'dotify.apk');
+  if (fs.existsSync(apkPath)) {
+    try {
+      verifyApkVersion(apkPath, version);
+      assets.push(apkPath);
+      hasApk = true;
+    } catch (err) {
+      if (!opts.desktopOnly) throw err;
+      console.warn(`[WARN] Skipping dotify.apk due to version check: ${err.message}`);
+    }
+  } else if (!opts.desktopOnly) {
+    throw new Error(`CRITICAL: dotify.apk not found at ${apkPath}. Cannot publish full release.`);
+  }
+
+  manifest.hasExe = hasExe;
+  manifest.hasApk = hasApk;
 
   if (assets.length <= 1) {
     throw new Error('No release assets (dotify.exe, dotify-setup.exe, dotify.apk) found to publish.');
@@ -358,18 +373,44 @@ function publishToGitHubReleases(version, notes, ghToken, opts = {}) {
   return manifest;
 }
 
-async function publishToFirestore(manifest, mandatory) {
+async function publishToFirestore(manifest, mandatory, opts = {}) {
   console.log(`\n[4/4] Syncing live release manifest to Firestore (${FIREBASE_PROJECT_ID})...`);
   const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/app_config/release`;
+
+  let androidApkUrl = manifest.androidApkUrl;
+  let windowsExeUrl = manifest.windowsExeUrl;
+  let windowsSetupUrl = manifest.windowsSetupUrl;
+
+  // If a single platform is published, preserve the active URL for the other platform from Firestore
+  if (opts.desktopOnly || opts.androidOnly) {
+    try {
+      const getRes = await fetch(url);
+      if (getRes.ok) {
+        const docJson = await getRes.json();
+        const f = docJson?.fields || {};
+        if (opts.desktopOnly && !manifest.hasApk && f.androidApkUrl?.stringValue) {
+          androidApkUrl = f.androidApkUrl.stringValue;
+          console.log(`[INFO] Preserving existing androidApkUrl from Firestore: ${androidApkUrl}`);
+        }
+        if (opts.androidOnly && !manifest.hasExe && f.windowsExeUrl?.stringValue) {
+          windowsExeUrl = f.windowsExeUrl.stringValue;
+          windowsSetupUrl = f.windowsSetupUrl?.stringValue || windowsSetupUrl;
+          console.log(`[INFO] Preserving existing windowsExeUrl from Firestore: ${windowsExeUrl}`);
+        }
+      }
+    } catch (err) {
+      console.warn('[WARN] Could not fetch existing Firestore manifest to merge URLs:', err.message);
+    }
+  }
 
   const body = {
     fields: {
       version: { stringValue: String(manifest.version) },
       notes: { stringValue: String(manifest.notes) },
       publishedAt: { integerValue: String(manifest.publishedAt) },
-      windowsExeUrl: { stringValue: String(manifest.windowsExeUrl) },
-      windowsSetupUrl: { stringValue: String(manifest.windowsSetupUrl) },
-      androidApkUrl: { stringValue: String(manifest.androidApkUrl) },
+      windowsExeUrl: { stringValue: String(windowsExeUrl) },
+      windowsSetupUrl: { stringValue: String(windowsSetupUrl) },
+      androidApkUrl: { stringValue: String(androidApkUrl) },
       releasePageUrl: { stringValue: String(manifest.releasePageUrl) },
       mandatory: { booleanValue: Boolean(mandatory) },
     },
@@ -406,7 +447,7 @@ async function main() {
 
   const ghToken = getGitHubToken();
   const manifest = publishToGitHubReleases(nextVersion, notes, ghToken, opts);
-  await publishToFirestore(manifest, opts.mandatory);
+  await publishToFirestore(manifest, opts.mandatory, opts);
 
   console.log('\n========================================================');
   console.log(`   SUCCESS! Dotify v${nextVersion} is now LIVE!`);
