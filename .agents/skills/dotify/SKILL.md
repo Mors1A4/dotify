@@ -1,11 +1,11 @@
 ---
 name: dotify
-description: Complete architecture, operational runbook, build commands, auto-updater release pipeline, audio engine, zero-node streaming, and debugging invariants for Dotify (notify) - the Spotify-inspired decentralized multi-source music streaming app built with Tauri v2, React 18, Windows WebView2, and Android NDK. Activate whenever working on Dotify, notify, app.exe, dotify.exe, dotify-setup.exe, dotify.apk, build-apk.bat, release.mjs, auto-updater, visualizer silence, audio engine, or Android builds.
+description: Complete architecture, operational runbook, build commands, auto-updater release pipeline, audio engine, zero-node streaming, Spotify Connect LAN sync, Google Cast streaming, and debugging invariants for Dotify (notify) - the Spotify-inspired decentralized multi-source music streaming app built with Tauri v2, React 18, Windows WebView2, and Android NDK. Activate whenever working on Dotify, notify, app.exe, dotify.exe, dotify-setup.exe, dotify.apk, build-apk.bat, release.mjs, auto-updater, publish updates, deploy update, visualizer silence, audio engine, Spotify Connect, Google Home, Google Cast, or Android builds.
 ---
 
 # Dotify (Notify) — Operations, Architecture & Development Guide
 
-Dotify (`notify`) is a full-stack, Spotify-inspired music streaming application supporting multi-source audio (YouTube full-track extraction via yt-dlp/curl, Deezer/Charts, Audius, Internet Archive, RadioBrowser, and WebTorrent P2P), real-time collaborative Jams, and cross-device cloud synchronization (Firestore + REST fallback) across Windows Desktop and Android.
+Dotify (`notify`) is a full-stack, Spotify-inspired music streaming application supporting multi-source audio (central YouTube streaming via hidden YouTube iframe bridge, Deezer/Charts, Audius, Internet Archive, RadioBrowser, and WebTorrent P2P), real-time collaborative Jams, and cross-device cloud synchronization (Firestore + REST fallback) across Windows Desktop and Android.
 
 ---
 
@@ -63,13 +63,13 @@ npx tauri build
 
 ### B. Zero-Node Standalone Portability Architecture (`127.0.0.1:3001`)
 So that `dotify.exe` and `dotify-setup.exe` work on **any friend's PC and any network** without Node.js installed:
-1. **Hybrid Backend Spawner (`spawn_backend_server()` in [`src-tauri/src/lib.rs`](file:///c:/Users/monty/Documents/AB/notify/src-tauri/src/lib.rs))**:
+1. **Hybrid Backend Spawner (`spawn_backend_server()` in `src-tauri/src/lib.rs`)**:
    - Checks if `127.0.0.1:3001` is open; if not, tries `node server/index.js` if present.
    - If `127.0.0.1:3001` is still unbound (on any machine without Node.js), Rust binds `127.0.0.1:3001` natively (`handle_embedded_backend_client()`) to host LAN sync and search.
 2. **Unified Central YouTube Streaming (`YouTubeIframeBridge`)**:
    - Both Windows Desktop and Android Mobile share the exact same central streaming mechanism: the hidden, zero-footprint `YouTubeIframeBridge`.
    - Eliminates embedded `yt-dlp.exe` binary and extraction, reducing executable size by ~15 MB and eliminating process spawning latency.
-   - Unified cross-platform candidate scoring in [`src/services/youtubeResolver.ts`](file:///c:/Users/monty/Documents/AB/notify/src/services/youtubeResolver.ts) scores official audio, artist topic uploads, and duration matches identically across platforms.
+   - Unified cross-platform candidate scoring in `src/services/youtubeResolver.ts` scores official audio, artist topic uploads, and duration matches identically across platforms.
    - Native candidate discovery uses the Tauri command `search_youtube_candidates` (direct `curl.exe` query on Windows), Android WebView bridge, and local `/api/search/youtube` fallback.
 3. **Local MP3 Vault & Direct Stream Invariant**:
    - Local saved MP3 files from the Vault (`useMp3VaultStore`) and live radio streams continue playing directly via HTML5 `<audio>` elements with 10-band Web Audio DSP and gapless dual-element prebuffering.
@@ -95,10 +95,23 @@ cmd.exe /c build-apk.bat
 
 ## 5. Universal Release Pipeline & Auto-Updater
 
+> [!CRITICAL]
+> **MANDATORY INVARIANT: ALWAYS PUBLISH UPDATES UPON COMPLETING FIXES/FEATURES**
+> The user explicitly requires all updates to be published immediately. Whenever you fix bugs, add features, or solve user requests in Dotify:
+> 1. Verify code and run unit tests (`npx vitest run --fileParallelism false`).
+> 2. Ensure running app instances are stopped: `Stop-Process -Name app -Force -ErrorAction SilentlyContinue`.
+> 3. **Publish the live update immediately**:
+>    ```bash
+>    npm run release -- --notes "<concise changelog of fixes/features>"
+>    ```
+>    *(Or if token needed: `$env:GH_TOKEN = (git credential fill | Select-String "password=").Line.Replace("password=",""); node scripts/release.mjs --notes "..."`)*
+> 4. Commit and push the version bump to `main`: `git commit -am "chore(release): bump version to vX.Y.Z" && git push origin main`.
+> A code change sitting only in git is **NOT deployed**. Completing the user's task always includes delivering live binaries to GitHub Releases and Firestore so the user's desktop and phone receive the update automatically.
+
 ### A. Publishing a Live Update (`scripts/release.mjs`)
 Publishing an update synchronizes `package.json`, `tauri.conf.json`, `Cargo.toml`, `version.ts`, and Android `tauri.properties`, compiles binaries, tags GitHub releases, and syncs Firestore:
 ```bash
-# Standard release: bumps patch version (e.g. 1.0.3 -> 1.0.4), builds Desktop + Android, and publishes live:
+# Standard release: bumps patch version (e.g. 1.0.15 -> 1.0.16), builds Desktop + Android, and publishes live:
 npm run release -- --notes "Release notes summary"
 
 # Specific targets:
@@ -119,20 +132,49 @@ node scripts/release.mjs 1.1.0 --notes "Major update"
 
 ### C. Anti-Loop Protection Invariants
 - **Never publish with stale binaries**: `release.mjs` automatically deletes root binaries (`dotify.exe`, `dotify-setup.exe`, `dotify.apk`) before compiling to guarantee only freshly built binaries are uploaded.
-- **30-Minute Attempt Guard**: [`src/store/updateStore.ts`](file:///c:/Users/monty/Documents/AB/notify/src/store/updateStore.ts) records `dotify_update_attempt_version` and timestamp. If the app restarts into the same version, background checks suppress auto-opening the update modal to prevent endless restart loops.
+- **30-Minute Attempt Guard**: `src/store/updateStore.ts` records `dotify_update_attempt_version` and timestamp. If the app restarts into the same version, background checks suppress auto-opening the update modal to prevent endless restart loops.
 - **Persistent "Later" Dismissal**: Clicking "Later" records `dotify_update_dismissed_version`, keeping the update badge in TopBar/Sidebar without blocking user navigation.
-- **Native Version Truth**: [`src/services/updateService.ts`](file:///c:/Users/monty/Documents/AB/notify/src/services/updateService.ts) queries `tauri.app.getVersion()` directly from the running binary rather than stale static constants.
+- **Native Version Truth**: `src/services/updateService.ts` queries `tauri.app.getVersion()` directly from the running binary rather than stale static constants.
 
 ---
 
-## 6. Audio Engine, Multi-Source Streaming & Silence Invariant
+## 6. Spotify Connect & Cross-Device LAN Sync (Phone, PC & Google Cast)
 
-- **Dual-Deck Audio Engine**: [`src/audio/audioEngine.ts`](file:///c:/Users/monty/Documents/AB/notify/src/audio/audioEngine.ts) combines HTML5 Audio, Web Audio API, a 10-band peaking equalizer, and real-time spectrum visualizer with a unified hidden `YouTubeIframeBridge`.
+Dotify implements a full Spotify Connect-style LAN synchronization protocol between desktop computers, phones, and headless Google Cast speakers (`cast:`).
+
+### A. Key Invariants & Rules:
+1. **Single Active Audio Host**:
+   - There is at most ONE active playback host on the local network.
+   - When any device starts playing (`isPlaying: true`), `server/connectHub.js` preempts previous hosts, dispatches a `pause` remote command to the former host, closes conflicting cast sessions, and updates all other connected devices to `remote_controller` role.
+2. **Auto-Adopt Controller Mode**:
+   - In `src/store/playerStore.ts` (`applyRemotePlaybackState`), if remote playback is detected on the network and the local audio engine is idle, the client automatically adopts `connectMode: 'remote_controller'`. This ensures that opening Dotify on a PC while music plays on a phone or Google Home speaker immediately displays the active track, animated badge, and control buttons in the player bar.
+3. **Headless Google Cast (Smart Speaker) Streaming**:
+   - Google Home, Nest Audio, and Chromecast speakers have no WebView and cannot scrape or run iframe audio.
+   - Tracks must retain high-fidelity `previewUrl` stream sources across `chartsApi.ts` and search APIs.
+   - `server/castHub.js` appends `&preview=` query parameters, and `server/trackResolver.js` proxies preview streams on `/api/stream/track` to prevent 404 Cast errors.
+   - Headless speakers have no internal queue. In `nextTrack()` and `previousTrack()`, the controlling client advances its local queue and dispatches `play_track` (with track and queue context) directly to the speaker instead of a blind unhandled `next` command.
+4. **Instant Seekbar & Play/Pause Feedback (`RemoteProgressInterpolator`)**:
+   - Remote controller mode relies on `RemoteProgressInterpolator` to emit synthetic 60fps seekbar updates to `audioEngine`.
+   - `remoteProgressInterpolator.pause()` and `resume()` provide immediate optimistic UI state updates on click without network round-trip jitter.
+   - The 16ms timer loop is completely shut down when paused to eliminate idle CPU drain.
+   - Returning to local playback uses `remoteProgressInterpolator.getCurrentPosition()` to avoid losing playback position.
+5. **Idle Target Pre-Selection**:
+   - In `src/components/connect/DevicePickerModal.tsx`, clicking a smart speaker or remote device while idle (`!currentTrack`) attaches the local client as controller and sets `activeDevice`. Subsequent track clicks immediately stream to that device.
+   - Active remote devices display a clickable **"Control"** badge in the picker rather than being disabled, allowing any device on the network to attach as controller.
+6. **Android Background Peer Discovery on Startup**:
+   - On Android app boot (`src/App.tsx`), `useMp3VaultStore.getState().scanWifiPeers()` and `castService.fetchCastDevices()` run in the background.
+   - Finding a desktop peer sets `localStorage['dotify_last_desktop_peer']` and immediately triggers `connectClient.reconnect()`, achieving instant out-of-the-box WebSocket synchronization without requiring the user to open MP3 Vault.
+
+---
+
+## 7. Audio Engine, Multi-Source Streaming & Silence Invariant
+
+- **Dual-Deck Audio Engine**: `src/audio/audioEngine.ts` combines HTML5 Audio, Web Audio API, a 10-band peaking equalizer, and real-time spectrum visualizer with a unified hidden `YouTubeIframeBridge`.
 - **Direct Audio vs. Central YouTube Bridge (`isDirectAudioTrack`)**:
   - `audioEngine.isDirectAudioTrack(track)` routes local saved MP3 files (`useMp3VaultStore`, synthetic `mp3:` / `vault:` IDs, `/api/mp3s/file`), and live radio (`source === 'radio'`) to HTML5 `<audio>` elements with gapless dual-element prebuffering and 10-band Web Audio DSP.
   - Standard tracks (charts, search, albums, user playlists) stream directly through the hidden `YouTubeIframeBridge` identically across Windows, Android, and Web.
 - **Silence-Aware Reactivity & Bridge Energy Pulse**:
-  - Soundwave icons and equalizer bars ([`src/components/common/VisualizerIcon.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/common/VisualizerIcon.tsx), [`src/components/player/QueueDrawer.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/player/QueueDrawer.tsx)) **MUST NEVER animate during audio silence** (track start, pre-roll, buffering, seeking, mute, or pause).
+  - Soundwave icons and equalizer bars (`src/components/common/VisualizerIcon.tsx`, `src/components/player/QueueDrawer.tsx`) **MUST NEVER animate during audio silence** (track start, pre-roll, buffering, seeking, mute, or pause).
   - During `YouTubeIframeBridge` playback, `audioEngine.getAudioEnergy()` synthesizes a rhythmic pulse (energy 12–45) based on playback timestamp to keep the equalizer bars gracefully animated while respecting `isPlaying()` states.
 - **Unified YouTube Candidate Scoring (`youtubeResolver.ts`)**:
   - Shared candidate scoring across Windows & Android:
@@ -147,20 +189,20 @@ node scripts/release.mjs 1.1.0 --notes "Major update"
     2. Android WebView bridge (`AndroidNativeYouTube.searchYouTubeCandidates`)
     3. Embedded local REST endpoint (`/api/search/youtube`)
     4. Public Invidious mirror fallback
-- **Audio Energy Sampling**: [`src/hooks/useAudioActive.ts`](file:///c:/Users/monty/Documents/AB/notify/src/hooks/useAudioActive.ts) queries `audioEngine.isAudioActive(5)`:
+- **Audio Energy Sampling**: `src/hooks/useAudioActive.ts` queries `audioEngine.isAudioActive(5)`:
   - Samples Web Audio `AnalyserNode.getByteFrequencyData()`.
   - Skips bin 0 (DC offset/electrical ground bias).
   - Returns 0 if paused, buffering, seeking, muted, volume <= 0.001, or audio context suspended.
 - **Albums & Playlists**:
-  - Albums function as playlists ([`AlbumView.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/views/AlbumView.tsx)). Tapping an album card browses its full tracklist, allowing users to Play, Shuffle, and tap **+ Add to Library** (saving the album as a synced custom playlist).
+  - Albums function as playlists (`AlbumView.tsx`). Tapping an album card browses its full tracklist, allowing users to Play, Shuffle, and tap **+ Add to Library** (saving the album as a synced custom playlist).
 - **Mobile Now-Playing**:
-  - [`MobileNowPlayingSheet.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/player/MobileNowPlayingSheet.tsx) provides a full-screen mobile player with album artwork, visualizer, scrubber, device picker, and an integrated **Up Next / Queue** list directly below the playback controls.
+  - `MobileNowPlayingSheet.tsx` provides a full-screen mobile player with album artwork, visualizer, scrubber, device picker, and an integrated **Up Next / Queue** list directly below the playback controls.
 
 ---
 
-## 7. Authentication & Cloud Library Synchronization
+## 8. Authentication & Cloud Library Synchronization
 
-Dotify supports dual sign-in paths in [`AuthModal.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/auth/AuthModal.tsx):
+Dotify supports dual sign-in paths in `AuthModal.tsx`:
 
 1. **1-Click Fast Profile (Primary, 0 Passwords)**:
    - User types a nickname or email (e.g. `monty` or friend's name) and clicks **Connect & Sync**.
@@ -171,13 +213,13 @@ Dotify supports dual sign-in paths in [`AuthModal.tsx`](file:///c:/Users/monty/D
 
 ### Cloud Library Synchronization
 - Syncs: **Liked Tracks**, **Custom Playlists**, and **Listening History** across devices in real time.
-- Managed in [`src/store/playerStore.ts`](file:///c:/Users/monty/Documents/AB/notify/src/store/playerStore.ts) via debounced sync (`scheduleCloudLibrarySync`) using Firestore real-time listeners and REST fallback (`/api/user/:userId/library`).
+- Managed in `src/store/playerStore.ts` via debounced sync (`scheduleCloudLibrarySync`) using Firestore real-time listeners and REST fallback (`/api/user/:userId/library`).
 
 ---
 
-## 8. UI Architecture & Modal Invariants ("Gotchas")
+## 9. UI Architecture & Modal Invariants ("Gotchas")
 
-- **CSS Containing Block Trap**: Any DOM ancestor with `backdrop-filter` (e.g. `backdrop-blur-md` on `<TopBar>`) or CSS `transform` creates a new containing block that traps `position: fixed` descendants. Modals MUST be mounted via `createPortal(modalContent, document.body)` at the top level of [`src/App.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/App.tsx).
-- **Dedicated Playlist Page**: Clicking playlists or albums in [`Sidebar.tsx`](file:///c:/Users/monty/Documents/AB/notify/src/components/layout/Sidebar.tsx) MUST call `navigateToPlaylist(playlistId)` or `navigateToAlbum(albumId)`.
+- **CSS Containing Block Trap**: Any DOM ancestor with `backdrop-filter` (e.g. `backdrop-blur-md` on `<TopBar>`) or CSS `transform` creates a new containing block that traps `position: fixed` descendants. Modals MUST be mounted via `createPortal(modalContent, document.body)` at the top level of `src/App.tsx`.
+- **Dedicated Playlist Page**: Clicking playlists or albums in `Sidebar.tsx` MUST call `navigateToPlaylist(playlistId)` or `navigateToAlbum(albumId)`.
 - **Spotify OLED Dark Aesthetic**: Use `bg-surface`, `bg-elevated`, `border-customBorder`, `bg-accent`, `text-accent`. Never use hardcoded Tailwind slate/navy palettes (`#121622`, `border-slate-800`).
 - **Firestore Sanitization**: Always serialize/deserialize data with `JSON.parse(JSON.stringify(...))` before calling Firestore `setDoc()` to strip `undefined` fields.
