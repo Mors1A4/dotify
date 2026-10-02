@@ -79,6 +79,13 @@ export const DevicePickerModal: React.FC = () => {
     }
 
     if (!currentTrack) {
+      if (targetDeviceId === localDev.deviceId || targetDeviceId === 'local_device') {
+        usePlayerStore.getState().setConnectMode('standalone');
+        connectClient.setLocalDevice({ role: 'standalone', isActive: true });
+        connectClient.setActiveDeviceId(localDev.deviceId);
+        toggleDevicePicker(false);
+        return;
+      }
       const targetDev = remoteDevices.find((d) => d.deviceId === targetDeviceId) || {
         deviceId: targetDeviceId,
         deviceName: targetDeviceId.startsWith('cast:') ? 'Google Cast Speaker' : 'Remote Device',

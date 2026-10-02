@@ -347,6 +347,7 @@ const STORAGE_VOLUME = 'audio_volume';
 const STORAGE_AUTOPLAY = 'autoplay_enabled';
 
 let lastUserVolumeInteraction = 0;
+let lastUserPlayToggleTime = 0;
 
 const isCleanTrack = (t: Track | null | undefined): boolean => {
   if (!t || typeof t !== 'object') return false;
@@ -556,9 +557,9 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     const target = devices.find((d) => d.deviceId === activeId) || null;
     const active = isStandalone
       ? { ...localDev, isActive: true, isCurrentDevice: true }
-      : (target && curActive && target.deviceId === curActive.deviceId
+      : (curActive && target && target.deviceId === curActive.deviceId
           ? { ...target, volume: curActive.volume ?? target.volume }
-          : (target || { ...localDev, isActive: true, isCurrentDevice: true }));
+          : (target || curActive || { ...localDev, isActive: true, isCurrentDevice: true }));
     set({
       remoteDevices: devices,
       activeDevice: active,
@@ -861,10 +862,25 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       lastUserVolumeInteraction = 0;
       set({ connectMode: mode, activeDevice: activeDevice || null });
       if (mode === 'remote_controller') {
+        if (activeDevice?.deviceId) {
+          connectClient.setActiveDeviceId(activeDevice.deviceId);
+        }
         audioEngine.setControllerMode(true, (action, data) => {
           if (action === 'seek') {
             const sec = data?.seconds ?? (data?.positionMs ? data.positionMs / 1000 : 0);
             remoteProgressInterpolator.seek(sec);
+          }
+          if (action === 'toggle_play') {
+            const nextPlaying = !get().isPlaying;
+            lastUserPlayToggleTime = Date.now();
+            set({ isPlaying: nextPlaying });
+            if (nextPlaying) {
+              remoteProgressInterpolator.resume();
+            } else {
+              remoteProgressInterpolator.pause();
+            }
+            connectClient.sendRemoteCommand(nextPlaying ? 'play' : 'pause');
+            return;
           }
           connectClient.sendRemoteCommand(action as any, data);
         });
@@ -872,6 +888,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       } else {
         audioEngine.setControllerMode(false);
         remoteProgressInterpolator.stop();
+        connectClient.setActiveDeviceId(connectClient.getLocalDevice().deviceId);
       }
     },
 
@@ -897,19 +914,29 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       }
 
       const activeDevId =
-        (fromId && fromId !== localDev.deviceId)
-          ? fromId
-          : ((state as any).activeDeviceId && (state as any).activeDeviceId !== localDev.deviceId)
-            ? (state as any).activeDeviceId
-            : (connectClient.getActiveDeviceId() !== localDev.deviceId ? connectClient.getActiveDeviceId() : (fromId || null));
+        (state as any).activeDeviceId && (state as any).activeDeviceId !== localDev.deviceId
+          ? (state as any).activeDeviceId
+          : (fromId && fromId !== localDev.deviceId)
+            ? fromId
+            : connectClient.getActiveDeviceId();
       const isRemoteActive = Boolean(activeDevId && activeDevId !== localDev.deviceId);
 
-      if (activeDevId && activeDevId !== localDev.deviceId) {
+      // Only adopt activeDeviceId if we are already in remote_controller mode or if the remote device is actively playing
+      if (isRemoteActive && (currentConnectMode === 'remote_controller' || state.isPlaying)) {
         connectClient.setActiveDeviceId(activeDevId);
       }
 
-      // If a remote device or speaker is active on the network and local device is idle, adopt remote_controller mode
-      if (isRemoteActive && targetTrack && currentConnectMode !== 'remote_controller') {
+      // If a remote device or speaker is actively playing on the network and local device is idle, adopt remote_controller mode
+      if (
+        isRemoteActive &&
+        targetTrack &&
+        state.isPlaying &&
+        !get().isTransferringPlayback &&
+        currentConnectMode !== 'remote_controller' &&
+        currentConnectMode !== 'active_host' &&
+        !get().isPlaying &&
+        !audioEngine.isPlaying()
+      ) {
         const foundDev = get().remoteDevices.find((d) => d.deviceId === activeDevId) || {
           deviceId: activeDevId!,
           deviceName: activeDevId!.startsWith('cast:') ? 'Google Cast Speaker' : 'Remote Device',
@@ -930,6 +957,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
             const sec = data?.seconds ?? (data?.positionMs ? data.positionMs / 1000 : 0);
             remoteProgressInterpolator.seek(sec);
           }
+          if (action === 'toggle_play') {
+            const nextPlaying = !get().isPlaying;
+            lastUserPlayToggleTime = Date.now();
+            set({ isPlaying: nextPlaying });
+            if (nextPlaying) {
+              remoteProgressInterpolator.resume();
+            } else {
+              remoteProgressInterpolator.pause();
+            }
+            connectClient.sendRemoteCommand(nextPlaying ? 'play' : 'pause');
+            return;
+          }
           connectClient.sendRemoteCommand(action as any, data);
         });
         remoteProgressInterpolator.start();
@@ -942,11 +981,14 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       const isUserAdjusting = Date.now() - lastUserVolumeInteraction < 600;
       const effectiveVol = typeof state.volume === 'number' && !isUserAdjusting ? incomingVol : get().volume;
 
+      const isUserPlayToggling = Date.now() - lastUserPlayToggleTime < 1000;
+      const effectivePlaying = isUserPlayToggling ? get().isPlaying : state.isPlaying;
+
       set({
         currentTrack: targetTrack,
         currentTrackIndex: state.currentTrackIndex ?? state.currentIndex ?? 0,
         queue: state.queue && state.queue.length > 0 ? state.queue : get().queue,
-        isPlaying: state.isPlaying,
+        isPlaying: effectivePlaying,
         volume: effectiveVol,
         activeDevice: activeDev
           ? {
@@ -963,7 +1005,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       remoteProgressInterpolator.sync({
         positionMs: state.positionMs,
         durationMs: state.durationMs,
-        isPlaying: state.isPlaying,
+        isPlaying: effectivePlaying,
         remoteTimestamp: state.timestamp,
       });
 
@@ -986,15 +1028,28 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     executeRemoteCommand: (action: string, data?: any) => {
       switch (action) {
         case 'play':
-          if (!get().isPlaying) audioEngine.resume();
+          set({ isPlaying: true });
+          if (!audioEngine.isPlaying()) {
+            audioEngine.resume();
+          }
           break;
         case 'pause':
-          if (get().isPlaying) audioEngine.pause();
+          set({ isPlaying: false });
+          if (audioEngine.isPlaying()) {
+            audioEngine.pause();
+          }
           break;
         case 'toggle_play':
-        case 'togglePlay':
-          audioEngine.togglePlay();
+        case 'togglePlay': {
+          const next = !get().isPlaying;
+          set({ isPlaying: next });
+          if (next) {
+            audioEngine.resume();
+          } else {
+            audioEngine.pause();
+          }
           break;
+        }
         case 'seek': {
           const sec = typeof data?.seconds === 'number' ? data.seconds : (data?.positionMs || 0) / 1000;
           audioEngine.seekTo(sec);
@@ -1084,17 +1139,63 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
           store.connectMode === 'remote_controller'
             ? remoteProgressInterpolator.getCurrentPosition()
             : audioEngine.getCurrentTime();
+        const positionMs = Math.round(currentPosSec * 1000);
+        const shouldPlay = Boolean(store.isPlaying);
+        const targetTrack = store.currentTrack;
 
-        await get().disconnectRemoteDevice();
-
-        if (store.currentTrack && store.isPlaying) {
-          audioEngine.playTrackAtPosition(store.currentTrack, Math.round(currentPosSec * 1000), true).catch(() => {});
+        // 1. Tell previous remote device to pause
+        const previousActive = store.activeDevice;
+        if (previousActive && !previousActive.isCurrentDevice && previousActive.deviceId !== localDevice.deviceId) {
+          if (previousActive.deviceId.startsWith('cast:')) {
+            connectClient.sendRemoteCommand('stop', {}, previousActive.deviceId);
+          } else {
+            connectClient.sendRemoteCommand('pause', {}, previousActive.deviceId);
+          }
         }
 
+        // 2. Shut down controller mode & interpolator
+        audioEngine.setControllerMode(false);
+        remoteProgressInterpolator.stop();
+
+        // 3. Assume active_host or standalone mode locally and register with connectClient
+        const targetMode = shouldPlay ? 'active_host' : 'standalone';
+        connectClient.setLocalDevice({ role: targetMode, isActive: true });
+        connectClient.setActiveDeviceId(localDevice.deviceId);
+
         set({
+          connectMode: targetMode,
+          activeDevice: { ...localDevice, role: targetMode, isActive: true, isCurrentDevice: true },
+          isPlaying: shouldPlay,
           isTransferringPlayback: false,
           transferringToId: null,
         });
+
+        // 4. Notify network peers via HANDOFF_TRANSFER to this device
+        if (targetTrack) {
+          const snapshot: PlaybackSnapshot = {
+            track: targetTrack,
+            queue: store.queue,
+            currentTrackIndex: store.currentTrackIndex,
+            positionMs,
+            isPlaying: shouldPlay,
+            volume: store.volume,
+            repeatMode: store.repeatMode,
+            shuffle: store.shuffle,
+            capturedAt: Date.now(),
+          };
+          connectClient.sendMessage({
+            type: 'HANDOFF_TRANSFER',
+            targetDeviceId: localDevice.deviceId,
+            fromDeviceId: localDevice.deviceId,
+            state: snapshot,
+            timestamp: Date.now(),
+          });
+        }
+
+        // 5. Load track locally (and start playback if shouldPlay is true)
+        if (targetTrack) {
+          audioEngine.playTrackAtPosition(targetTrack, positionMs, shouldPlay).catch(() => {});
+        }
 
         broadcastCurrentState();
         return true;
@@ -1143,6 +1244,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         if (action === 'seek') {
           const sec = data?.seconds ?? (data?.positionMs ? data.positionMs / 1000 : 0);
           remoteProgressInterpolator.seek(sec);
+        }
+        if (action === 'toggle_play') {
+          const nextPlaying = !get().isPlaying;
+          lastUserPlayToggleTime = Date.now();
+          set({ isPlaying: nextPlaying });
+          if (nextPlaying) {
+            remoteProgressInterpolator.resume();
+          } else {
+            remoteProgressInterpolator.pause();
+          }
+          connectClient.sendRemoteCommand(nextPlaying ? 'play' : 'pause');
+          return;
         }
         connectClient.sendRemoteCommand(action as any, data);
       });
@@ -1214,7 +1327,6 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       const store = get();
       const localDevice = connectClient.getLocalDevice();
       const currentActive = store.activeDevice;
-
       if (currentActive?.deviceId?.startsWith('cast:')) {
         connectClient.sendRemoteCommand('stop', {}, currentActive.deviceId);
       } else if (currentActive && !currentActive.isCurrentDevice) {
@@ -1371,13 +1483,20 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       if (!currentTrack) return;
       if (get().connectMode === 'remote_controller') {
         const nextPlaying = !get().isPlaying;
+        lastUserPlayToggleTime = Date.now();
         set({ isPlaying: nextPlaying });
         if (nextPlaying) {
           remoteProgressInterpolator.resume();
         } else {
           remoteProgressInterpolator.pause();
         }
-        connectClient.sendRemoteCommand('toggle_play');
+        connectClient.sendRemoteCommand(nextPlaying ? 'play' : 'pause');
+        return;
+      }
+      if (!audioEngine.getCurrentTrack() && currentTrack) {
+        audioEngine.playTrackAtPosition(currentTrack, 0, true).catch(() => {});
+        set({ isPlaying: true });
+        broadcastCurrentState();
         return;
       }
       audioEngine.togglePlay();

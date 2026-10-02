@@ -304,6 +304,7 @@ export class ConnectClient {
           if (data.state && Date.now() - (data.timestamp || 0) < 60000) {
             this.handleIncomingMessage({
               type: 'PLAYBACK_STATE',
+              messageId: data.messageId,
               state: data.state,
               activeDeviceId: data.activeDeviceId,
               senderDeviceId: data.senderDeviceId,
@@ -333,6 +334,7 @@ export class ConnectClient {
               } else if (isTargeted && data.command) {
                 this.handleIncomingMessage({
                   type: 'REMOTE_COMMAND',
+                  messageId: data.messageId,
                   command: data.command,
                   fromDeviceId: data.fromDeviceId,
                   targetDeviceId: data.targetDeviceId,
@@ -363,6 +365,7 @@ export class ConnectClient {
       if (msg.type === 'PLAYBACK_STATE') {
         const stateDoc = fs.doc(fs.db, 'connect_sessions', sessionId, 'state', 'current');
         await fs.setDoc(stateDoc, JSON.parse(JSON.stringify({
+          messageId: msg.messageId,
           state: msg.state,
           activeDeviceId: msg.activeDeviceId || this.activeDeviceId || this.localDevice.deviceId,
           senderDeviceId: this.localDevice.deviceId,
@@ -371,6 +374,7 @@ export class ConnectClient {
       } else if (msg.type === 'REMOTE_COMMAND') {
         const cmdDoc = fs.doc(fs.collection(fs.db, 'connect_sessions', sessionId, 'commands'));
         await fs.setDoc(cmdDoc, JSON.parse(JSON.stringify({
+          messageId: msg.messageId,
           command: msg.command,
           targetDeviceId: msg.targetDeviceId || this.activeDeviceId || '',
           fromDeviceId: this.localDevice.deviceId,
@@ -379,6 +383,7 @@ export class ConnectClient {
       } else if (msg.type === 'DEVICE_ANNOUNCE') {
         const devDoc = fs.doc(fs.db, 'connect_sessions', sessionId, 'devices', this.localDevice.deviceId);
         await fs.setDoc(devDoc, JSON.parse(JSON.stringify({
+          messageId: msg.messageId,
           ...this.localDevice,
           lastSeen: Date.now(),
         })), { merge: true });
@@ -625,8 +630,12 @@ export class ConnectClient {
       case 'HANDOFF_TRANSFER': {
         const target = msg.targetDeviceId || (msg.payload && msg.payload.toDeviceId);
         if (target === this.localDevice.deviceId) {
-          const snapshot: PlaybackSnapshot = msg.state || (msg.payload && msg.payload.state);
           const fromId = msg.fromDeviceId || (msg.payload && msg.payload.fromDeviceId) || '';
+          // Echo suppression if we initiated handoff takeover to ourselves
+          if (fromId === this.localDevice.deviceId) {
+            break;
+          }
+          const snapshot: PlaybackSnapshot = msg.state || (msg.payload && msg.payload.state);
           const ts = msg.timestamp || (msg.payload && msg.payload.timestamp) || Date.now();
           if (snapshot) {
             for (const listener of this.handoffTransferListeners) {
@@ -764,6 +773,22 @@ export class ConnectClient {
   }
 
   public async transferPlayback(targetDeviceId: string, snapshot: PlaybackSnapshot): Promise<boolean> {
+    if (targetDeviceId === this.localDevice.deviceId || targetDeviceId === 'local_device') {
+      this.activeDeviceId = this.localDevice.deviceId;
+      this.localDevice.isActive = true;
+      this.localDevice.role = 'active_host';
+      this.notifyDeviceList();
+
+      this.sendMessage({
+        type: 'HANDOFF_TRANSFER',
+        targetDeviceId: this.localDevice.deviceId,
+        fromDeviceId: this.localDevice.deviceId,
+        state: snapshot,
+        timestamp: Date.now(),
+      });
+      return true;
+    }
+
     return new Promise((resolve) => {
       let resolved = false;
 

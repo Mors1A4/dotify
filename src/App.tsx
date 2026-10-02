@@ -25,6 +25,7 @@ import { useUpdateStore } from './store/updateStore';
 import { isAndroidApp } from './services/apiConfig';
 import { castService } from './services/castService';
 import { useMp3VaultStore } from './services/mp3VaultService';
+import { initBackNavigation, handleBackAction } from './services/backNavigationService';
 
 export const App: React.FC = () => {
   const { activeView, selectedArtist, selectedAlbum, selectedPlaylistId } = usePlayerStore();
@@ -39,10 +40,12 @@ export const App: React.FC = () => {
     castService.fetchCastDevices().catch(() => {});
     const unsubAuth = useAuthStore.getState().initAuth();
     const unsubUpdater = useUpdateStore.getState().initUpdater();
+    const unsubBack = initBackNavigation();
     restorePlaybackHandoffIfNeeded();
     return () => {
       unsubAuth();
       unsubUpdater();
+      unsubBack();
     };
   }, []);
 
@@ -73,10 +76,9 @@ export const App: React.FC = () => {
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.altKey && e.key === 'ArrowLeft') {
-        const { canNavigateBack, navigateBack } = usePlayerStore.getState();
-        if (canNavigateBack) {
+        const handled = handleBackAction();
+        if (handled) {
           e.preventDefault();
-          navigateBack();
         }
       } else if (e.altKey && e.key === 'ArrowRight') {
         const { canNavigateForward, navigateForward } = usePlayerStore.getState();
@@ -89,10 +91,9 @@ export const App: React.FC = () => {
 
     const handleMouseUp = (e: MouseEvent) => {
       if (e.button === 3) {
-        const { canNavigateBack, navigateBack } = usePlayerStore.getState();
-        if (canNavigateBack) {
+        const handled = handleBackAction();
+        if (handled) {
           e.preventDefault();
-          navigateBack();
         }
       } else if (e.button === 4) {
         const { canNavigateForward, navigateForward } = usePlayerStore.getState();

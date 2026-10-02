@@ -10,6 +10,7 @@ import android.provider.Settings
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.FileProvider
 import org.json.JSONObject
@@ -28,6 +29,22 @@ class MainActivity : TauriActivity() {
     activeInstance = this
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() {
+        val webView = currentWebView
+        if (webView != null) {
+          webView.evaluateJavascript("window.__dotifyHandleBack ? window.__dotifyHandleBack() : false") { result ->
+            val handled = result?.replace("\"", "")?.trim() == "true"
+            if (!handled) {
+              moveTaskToBack(true)
+            }
+          }
+        } else {
+          moveTaskToBack(true)
+        }
+      }
+    })
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -364,6 +381,24 @@ class MainActivity : TauriActivity() {
         }
       }
     }, "AndroidNativeMediaSession")
+
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface
+      fun minimizeApp(): Boolean {
+        runOnUiThread {
+          moveTaskToBack(true)
+        }
+        return true
+      }
+
+      @JavascriptInterface
+      fun exitApp(): Boolean {
+        runOnUiThread {
+          finish()
+        }
+        return true
+      }
+    }, "AndroidNativeApp")
 
     pendingAuthUri?.let { uri ->
       deliverAuthUri(uri)

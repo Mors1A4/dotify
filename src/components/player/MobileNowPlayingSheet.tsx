@@ -83,13 +83,42 @@ export const MobileNowPlayingSheet: React.FC = () => {
     else setRepeatMode('off');
   };
 
+  const touchStartY = React.useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartY.current !== null) {
+      const deltaY = e.changedTouches[0].clientY - touchStartY.current;
+      if (deltaY > 60) {
+        toggleMobileSheet(false);
+      }
+      touchStartY.current = null;
+    }
+  };
+
   return (
     <div
       data-testid="now-playing-sheet"
       className="md:hidden fixed inset-0 bg-base/98 backdrop-blur-2xl z-50 flex flex-col p-6 safe-pb transition-all duration-300 animate-in slide-in-from-bottom overflow-y-auto"
     >
+      {/* Top Drag Handle (Swipe down to dismiss) */}
+      <div
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        className="w-full flex items-center justify-center -mt-3 mb-2 pt-1 pb-1 cursor-grab active:cursor-grabbing shrink-0"
+      >
+        <div className="w-10 h-1 bg-neutral-600/70 rounded-full hover:bg-neutral-500 transition-colors" />
+      </div>
+
       {/* Sheet Top Bar */}
-      <div className="flex items-center justify-between h-12 mb-4 shrink-0">
+      <div
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        className="flex items-center justify-between h-12 mb-4 shrink-0"
+      >
         <button
           onClick={() => toggleMobileSheet(false)}
           data-testid="dismiss-sheet-btn"

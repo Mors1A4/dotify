@@ -86,6 +86,9 @@ export class AudioEngine {
     this.ytBridge = YouTubeIframeBridge.getInstance();
     this.ytBridge.setOnStateChange((isPlaying, isBuffering) => {
       if (this.isUsingYouTubeBridge) {
+        if (!isPlaying && this.isSwitchingTrack) {
+          return;
+        }
         this.notifyState(isPlaying, isBuffering);
       }
     });
