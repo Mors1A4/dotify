@@ -575,142 +575,236 @@ export class CommunityListeningService {
     }));
   }
 
+  public clearCache(): void {
+    this.memoryCachePlays = null;
+    this.memoryCacheTime = 0;
+  }
+
   /**
-   * Generates a curated shelf of songs from artists that others using the app have been listening to.
-   * Ensures diversity across community artists (anti-clumping: 1-2 tracks per artist) and verifies
-   * high quality audio playback parameters.
+   * Curates a shelf of the specific songs that others who have been using the app have listened to.
+   * Features:
+   * 1. Specific songs: Recommends the exact songs listened to by other users and community listeners (not arbitrary artist top tracks).
+   * 2. Anti-clumping rotation: Interleaves tracks across artists round-robin (1 song per artist per pass) so the list rotates between artists.
+   * 3. Natural circular rotation: Dynamically shifts the song list window based on time/session (15-min intervals or offset) so the shelf naturally rotates by design.
+   * 4. Excludes any tracks skipped by the current user.
+   * 5. Enriches with high-fidelity studio artwork and streaming parameters.
    */
   public async getRecommendedSongsFromCommunityArtists(options: {
     excludeUserId?: string;
     userPlays?: TrackPlayRecord[];
     catalogue?: Track[];
     limit?: number;
+    rotationOffset?: number;
   } = {}): Promise<Track[]> {
-    const { excludeUserId, userPlays = [], catalogue = [], limit = 18 } = options;
+    const { excludeUserId, userPlays = [], catalogue = [], limit = 18, rotationOffset } = options;
 
-    const trendingArtists = await this.getTrendingArtists(excludeUserId);
-    if (trendingArtists.length === 0) {
+    // 1. Retrieve all community play events from other listeners
+    const plays = await this.getCommunityPlays(excludeUserId);
+    if (!plays || plays.length === 0) {
       return catalogue.slice(0, limit);
     }
 
-    const skippedTrackIds = new Set(userPlays.filter((p) => p.skipped).map((p) => p.trackId));
-    const result: Track[] = [];
-    const seenTrackIds = new Set<string>();
-    const seenArtistCount = new Map<string, number>();
-
-    // 1. First pass: Pull matching tracks from the active catalogue (charts & feeds) for these community artists.
-    // This provides instantaneous streamable tracks with real durations and real covers.
-    if (catalogue.length > 0) {
-      for (const trend of trendingArtists) {
-        const primaryKey = trend.artist.toLowerCase();
-        for (const catTrack of catalogue) {
-          if (seenTrackIds.has(catTrack.id) || skippedTrackIds.has(catTrack.id)) continue;
-          const catArtist = extractPrimaryArtist(catTrack.artist || '').toLowerCase();
-          if (catArtist === primaryKey) {
-            const count = seenArtistCount.get(primaryKey) || 0;
-            if (count >= 2) break; // Anti-clumping: max 2 tracks per artist
-
-            seenArtistCount.set(primaryKey, count + 1);
-            seenTrackIds.add(catTrack.id);
-
-            result.push({
-              ...catTrack,
-              artworkUrl: getTrackArtwork(catTrack),
-              sourceMetadata: {
-                ...catTrack.sourceMetadata,
-                communityArtist: trend.artist,
-                listenerCount: trend.listenerCount,
-                communityReason: `Listened by ${trend.listenerCount} other listener${
-                  trend.listenerCount > 1 ? 's' : ''
-                }`,
-              },
-            });
-            if (result.length >= limit) break;
-          }
-        }
-        if (result.length >= limit) break;
+    // 2. Identify skipped tracks by current user so they are excluded
+    const skippedTrackIds = new Set<string>();
+    const skippedTitleKeys = new Set<string>();
+    for (const p of userPlays) {
+      if (p.skipped) {
+        if (p.trackId) skippedTrackIds.add(p.trackId);
+        const art = extractPrimaryArtist(p.artist || '').toLowerCase().trim();
+        const tit = (p.title || '').toLowerCase().trim();
+        if (art && tit) skippedTitleKeys.add(`${art}:::${tit}`);
       }
     }
 
-    // 2. Second pass: For any trending artists who don't have 2 tracks yet, fetch their top tracks via artistService!
-    // This uses the EXACT SAME pipeline as the rest of the application (Made For You, charts, artist views).
-    const artistsNeedingTracks = trendingArtists.filter(
-      (trend) => (seenArtistCount.get(trend.artist.toLowerCase()) || 0) < 2
-    );
+    // 3. Fast lookup map for catalogue tracks by id and title+artist
+    const catalogueById = new Map<string, Track>();
+    const catalogueByKey = new Map<string, Track>();
+    for (const t of catalogue) {
+      if (t.id) catalogueById.set(t.id, t);
+      const art = extractPrimaryArtist(t.artist || '').toLowerCase().trim();
+      const tit = (t.title || '').toLowerCase().trim();
+      if (art && tit) catalogueByKey.set(`${art}:::${tit}`, t);
+    }
 
-    if (artistsNeedingTracks.length > 0 && result.length < limit) {
-      try {
-        const topArtistsToFetch = artistsNeedingTracks.slice(0, 8);
-        const profiles = await Promise.allSettled(
-          topArtistsToFetch.map((a) => artistService.getArtistProfile(a.artist))
-        );
+    // 4. Aggregate community plays into specific unique songs
+    interface SongCandidate {
+      key: string;
+      trackId: string;
+      title: string;
+      artist: string;
+      primaryArtist: string;
+      album: string;
+      artworkUrl: string;
+      genre: string;
+      duration: number;
+      streamUrl: string;
+      playCount: number;
+      lastPlayedAt: number;
+      listeners: Set<string>;
+      matchedCatalogueTrack?: Track;
+    }
 
-        for (let i = 0; i < profiles.length; i++) {
-          const res = profiles[i];
-          const trend = topArtistsToFetch[i];
-          const primaryKey = trend.artist.toLowerCase();
+    const songMap = new Map<string, SongCandidate>();
 
-          if (res.status === 'fulfilled' && Array.isArray(res.value?.topTracks)) {
-            for (const t of res.value.topTracks) {
-              if (seenTrackIds.has(t.id) || skippedTrackIds.has(t.id)) continue;
-              const count = seenArtistCount.get(primaryKey) || 0;
-              if (count >= 2) break;
+    for (const p of plays) {
+      const primary = extractPrimaryArtist(p.artist || '').trim();
+      if (!primary || primary === 'Unknown' || primary.toLowerCase().includes('synthetic pulse')) {
+        continue;
+      }
+      const title = (p.title || '').trim();
+      if (!title) continue;
 
-              seenTrackIds.add(t.id);
-              seenArtistCount.set(primaryKey, count + 1);
+      const songKey = `${primary.toLowerCase()}:::${title.toLowerCase()}`;
+      if (skippedTitleKeys.has(songKey) || (p.trackId && skippedTrackIds.has(p.trackId))) {
+        continue;
+      }
 
-              result.push({
-                ...t,
-                artworkUrl: getTrackArtwork(t),
-                sourceMetadata: {
-                  ...t.sourceMetadata,
-                  communityArtist: trend.artist,
-                  listenerCount: trend.listenerCount,
-                  communityReason: `Popular with other listeners`,
-                },
-              });
+      let candidate = songMap.get(songKey);
+      if (!candidate) {
+        // Check catalogue match
+        const matched = (p.trackId && catalogueById.get(p.trackId)) || catalogueByKey.get(songKey);
+        const cleanArt = isUglyPlaceholder(p.artworkUrl) ? '' : (p.artworkUrl || '');
+        const finalArt = matched
+          ? getTrackArtwork(matched)
+          : (cleanArt || getTrackArtwork({ artist: primary, title }));
 
-              if (result.length >= limit) break;
-            }
-          }
-          if (result.length >= limit) break;
-        }
-      } catch (err) {
-        console.debug('[CommunityListeningService] ArtistService resolution skipped:', err);
+        candidate = {
+          key: songKey,
+          trackId: matched?.id || p.trackId,
+          title: matched?.title || title,
+          artist: matched?.artist || primary,
+          primaryArtist: primary,
+          album: matched?.album || p.album || '',
+          artworkUrl: finalArt,
+          genre: p.genre || matched?.sourceMetadata?.genre || 'Trending',
+          duration: matched?.duration || 180,
+          streamUrl: matched?.streamUrl || '',
+          playCount: 0,
+          lastPlayedAt: p.timestamp || Date.now(),
+          listeners: new Set<string>(),
+          matchedCatalogueTrack: matched,
+        };
+        songMap.set(songKey, candidate);
+      }
+
+      candidate.playCount += 1;
+      if (p.timestamp && p.timestamp > candidate.lastPlayedAt) {
+        candidate.lastPlayedAt = p.timestamp;
+      }
+      if (p.userId) {
+        candidate.listeners.add(p.userId);
       }
     }
 
-    // 3. Third pass: For offline/cold-start or any artist still missing tracks, use trend.recentTracks (which includes verified seeds)
-    if (result.length < limit) {
-      for (const trend of trendingArtists) {
-        const primaryKey = trend.artist.toLowerCase();
-        for (const track of trend.recentTracks) {
-          if (seenTrackIds.has(track.id) || skippedTrackIds.has(track.id)) continue;
-          const count = seenArtistCount.get(primaryKey) || 0;
-          if (count >= 2) break;
-
-          seenArtistCount.set(primaryKey, count + 1);
-          seenTrackIds.add(track.id);
-
-          result.push({
-            ...track,
-            artworkUrl: getTrackArtwork(track),
-            sourceMetadata: {
-              ...track.sourceMetadata,
-              communityArtist: trend.artist,
-              listenerCount: trend.listenerCount,
-              communityReason: `Listened by ${trend.listenerCount} other listener${
-                trend.listenerCount > 1 ? 's' : ''
-              }`,
-            },
-          });
-          if (result.length >= limit) break;
-        }
-        if (result.length >= limit) break;
-      }
+    if (songMap.size === 0) {
+      return catalogue.slice(0, limit);
     }
 
-    return result.length > 0 ? result.slice(0, limit) : catalogue.slice(0, limit);
+    // 5. Score songs based on unique listeners, play count, and recency
+    const now = Date.now();
+    const scoredSongs: (SongCandidate & { score: number })[] = [];
+
+    for (const song of songMap.values()) {
+      const hoursAgo = Math.max(0, (now - song.lastPlayedAt) / 3600000);
+      const recencyBonus = Math.max(0, 25 - hoursAgo * 0.5);
+      const listenerScore = Math.max(1, song.listeners.size) * 12;
+      const playScore = song.playCount * 3;
+      const totalScore = listenerScore + playScore + recencyBonus;
+
+      scoredSongs.push({
+        ...song,
+        score: totalScore,
+      });
+    }
+
+    // 6. Anti-Clumping Grouping: Group songs by primary artist
+    // and sort songs within each artist by score descending
+    const artistGroups = new Map<string, (SongCandidate & { score: number })[]>();
+    for (const song of scoredSongs) {
+      const artKey = song.primaryArtist.toLowerCase();
+      if (!artistGroups.has(artKey)) {
+        artistGroups.set(artKey, []);
+      }
+      artistGroups.get(artKey)!.push(song);
+    }
+
+    for (const list of artistGroups.values()) {
+      list.sort((a, b) => b.score - a.score);
+    }
+
+    // Sort artist groups by their top song's score
+    const sortedArtistBuckets = Array.from(artistGroups.entries())
+      .map(([artKey, list]) => ({
+        artKey,
+        topScore: list[0]?.score || 0,
+        songs: list,
+      }))
+      .sort((a, b) => b.topScore - a.topScore);
+
+    // 7. Round-Robin Interleave: 1 song per artist at a time so the list rotates between artists
+    const interleavedSongs: (SongCandidate & { score: number })[] = [];
+    let hasMore = true;
+    let depth = 0;
+
+    while (hasMore) {
+      hasMore = false;
+      for (const bucket of sortedArtistBuckets) {
+        if (depth < bucket.songs.length) {
+          interleavedSongs.push(bucket.songs[depth]);
+          hasMore = true;
+        }
+      }
+      depth += 1;
+    }
+
+    // 8. Natural Circular Rotation:
+    // Rotates the song list by nature of design based on 15-minute time window or custom offset.
+    // As time passes throughout the day or sessions, different songs rotate to the front of the shelf.
+    const defaultShift = Math.floor(now / (1000 * 60 * 15));
+    const effectiveShift = typeof rotationOffset === 'number' ? Math.abs(rotationOffset) : defaultShift;
+    const rotationIndex = interleavedSongs.length > 0 ? effectiveShift % interleavedSongs.length : 0;
+
+    const rotatedSongs =
+      rotationIndex > 0
+        ? [...interleavedSongs.slice(rotationIndex), ...interleavedSongs.slice(0, rotationIndex)]
+        : interleavedSongs;
+
+    // 9. Convert candidates to final rich Track objects
+    const result: Track[] = rotatedSongs.slice(0, limit).map((cand) => {
+      const matched = cand.matchedCatalogueTrack;
+      const cleanArt = isUglyPlaceholder(cand.artworkUrl)
+        ? getTrackArtwork({ artist: cand.artist, title: cand.title })
+        : (cand.artworkUrl || getTrackArtwork({ artist: cand.artist, title: cand.title }));
+
+      return {
+        id: matched?.id || cand.trackId,
+        source: matched?.source || 'charts',
+        title: cand.title,
+        artist: cand.artist,
+        album: matched?.album || cand.album || '',
+        duration: matched?.duration || cand.duration || 180,
+        streamUrl: matched?.streamUrl || cand.streamUrl || '',
+        artworkUrl: cleanArt,
+        sourceMetadata: {
+          ...(matched?.sourceMetadata || {}),
+          genre: cand.genre,
+          communityArtist: cand.artist,
+          listenerCount: Math.max(1, cand.listeners.size),
+          communityReason: `Listened to by ${Math.max(1, cand.listeners.size)} other listener${
+            cand.listeners.size > 1 ? 's' : ''
+          }`,
+          lastPlayedAt: cand.lastPlayedAt,
+        },
+      };
+    });
+
+    return result.length > 0 ? result : catalogue.slice(0, limit);
+  }
+
+  public getRecommendedSongsFromCommunity(
+    options: Parameters<CommunityListeningService['getRecommendedSongsFromCommunityArtists']>[0]
+  ): Promise<Track[]> {
+    return this.getRecommendedSongsFromCommunityArtists(options);
   }
 }
 

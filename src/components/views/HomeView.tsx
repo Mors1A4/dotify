@@ -23,7 +23,7 @@ import { DailyVibePlaylist } from '../../types/vibes';
 import { useAuthStore } from '../../store/authStore';
 import { CustomizeVibesModal } from '../modals/CustomizeVibesModal';
 import { artistService, extractPrimaryArtist } from '../../services/artistService';
-import { communityListeningService, CommunityArtistTrend } from '../../services/communityListeningService';
+import { communityListeningService } from '../../services/communityListeningService';
 import {
   DEFAULT_MUSIC_ARTWORK,
   getTrackArtwork,
@@ -177,9 +177,8 @@ export const HomeView: React.FC = () => {
   const [heavyRotation, setHeavyRotation] = useState<Track[]>([]);
   const [forgottenFavorites, setForgottenFavorites] = useState<Track[]>([]);
 
-  // Community Recommendations: Songs from artists others have been listening to
+  // Community Recommendations: Specific songs others have been listening to
   const [communityTracks, setCommunityTracks] = useState<Track[]>([]);
-  const [communityArtists, setCommunityArtists] = useState<CommunityArtistTrend[]>([]);
   const [isCommunityLoading, setIsCommunityLoading] = useState(true);
 
   const handleRefreshVibes = useCallback(async () => {
@@ -295,15 +294,7 @@ export const HomeView: React.FC = () => {
             if (!mounted) return;
             setMadeForYou(recommendationEngine.generateMadeForYou(plays, enrichedCatalogue, likedTracks, followedArtists));
 
-            // 3. Fetch community recommendations: songs from artists others have been listening to
-            communityListeningService
-              .getTrendingArtists(user?.uid)
-              .then((trends) => {
-                if (mounted && trends.length > 0) {
-                  setCommunityArtists(trends.slice(0, 8));
-                }
-              })
-              .catch(() => {});
+            // 3. Fetch community recommendations: specific songs others have been listening to
 
             communityListeningService
               .getRecommendedSongsFromCommunityArtists({
@@ -687,23 +678,16 @@ export const HomeView: React.FC = () => {
             )
           )}
 
-          {/* Shelf: Trending Among Other Listeners (Recommended songs from artists others are listening to) */}
+          {/* Shelf: Trending Among Other Listeners (Specific songs others have been listening to) */}
           {(communityTracks.length > 0 || isCommunityLoading) && (
             <section data-testid="community-recommendations-shelf" className="flex flex-col gap-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/25 flex items-center justify-center text-cyan-400 shrink-0">
-                    <Users size={20} />
-                  </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Headphones className="text-accent" size={22} />
                   <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-xl font-bold text-primary">Trending Among Other Listeners</h2>
-                      <span className="px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 text-[10px] font-bold uppercase tracking-wider">
-                        Community
-                      </span>
-                    </div>
+                    <h2 className="text-xl font-bold text-primary">Trending Among Other Listeners</h2>
                     <p className="text-xs text-muted font-medium">
-                      Songs from artists that others who have been using the app have been also listening to
+                      Songs that others who have been using the app have been listening to
                     </p>
                   </div>
                 </div>
@@ -711,37 +695,13 @@ export const HomeView: React.FC = () => {
                   <button
                     data-testid="play-shelf-community"
                     onClick={() => playTrack(communityTracks[0], communityTracks, 0, { origin: 'recommendation' })}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md cursor-pointer self-start sm:self-auto"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-content text-xs font-bold hover:scale-105 transition-all shadow-md cursor-pointer"
                   >
                     <Play size={14} fill="currentColor" />
                     <span>Play Shelf</span>
                   </button>
                 )}
               </div>
-
-              {/* Active community artist pills */}
-              {communityArtists.length > 0 && (
-                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-                  <span className="text-[11px] font-semibold text-secondary whitespace-nowrap mr-1">
-                    Others are listening to:
-                  </span>
-                  {communityArtists.map((trend) => (
-                    <button
-                      key={`comm-artist-${trend.artist}`}
-                      onClick={() => navigateToArtist(trend.artist)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-elevated/60 hover:bg-elevated text-secondary hover:text-primary text-xs font-medium transition-all border border-subtle/40 hover:border-subtle cursor-pointer whitespace-nowrap shrink-0 group"
-                      title={`Browse songs by ${trend.artist} (${trend.listenerCount} listeners)`}
-                    >
-                      <span className="group-hover:text-accent transition-colors font-semibold">
-                        {trend.artist}
-                      </span>
-                      <span className="text-[10px] text-muted bg-highlight/60 px-1.5 py-0.5 rounded-full">
-                        {trend.listenerCount} {trend.listenerCount === 1 ? 'listener' : 'listeners'}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
 
               {/* Track list carousel */}
               {isCommunityLoading && communityTracks.length === 0 ? (
@@ -761,8 +721,6 @@ export const HomeView: React.FC = () => {
                 <div className="flex gap-4 overflow-x-auto pb-3 pt-1 scrollbar-thin scrollbar-thumb-highlight scrollbar-track-transparent">
                   {communityTracks.map((track) => {
                     const isCurrent = currentTrack?.id === track.id;
-                    const communityArtist = track.sourceMetadata?.communityArtist || track.artist;
-                    const listenerCount = track.sourceMetadata?.listenerCount;
 
                     return (
                       <div
@@ -789,15 +747,6 @@ export const HomeView: React.FC = () => {
                           >
                             <Play size={16} fill="currentColor" className="ml-0.5" />
                           </button>
-                          {listenerCount && listenerCount > 1 && (
-                            <div
-                              className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/75 backdrop-blur-md border border-cyan-500/40 text-[9px] font-bold text-cyan-300 flex items-center gap-1 shadow-sm"
-                              title={`${listenerCount} other users listening to this artist`}
-                            >
-                              <Users size={10} />
-                              <span>{listenerCount}</span>
-                            </div>
-                          )}
                         </div>
 
                         <div className="flex flex-col min-w-0">
@@ -819,10 +768,6 @@ export const HomeView: React.FC = () => {
                           >
                             {track.artist}
                           </p>
-                          <span className="text-[10px] text-cyan-400/90 truncate mt-0.5 font-medium flex items-center gap-1">
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
-                            From {communityArtist}
-                          </span>
                         </div>
                       </div>
                     );

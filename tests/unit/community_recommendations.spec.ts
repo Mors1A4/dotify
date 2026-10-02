@@ -83,6 +83,7 @@ describe('Community Listening & Cross-User Artist Recommendations', () => {
 
   beforeEach(() => {
     safeStorage.removeItem('dotify_community_recent_plays');
+    service.clearCache();
   });
 
   it('records play events into local cache and ignores duplicate rapid plays of the same track', async () => {
@@ -226,5 +227,57 @@ describe('Community Listening & Cross-User Artist Recommendations', () => {
     expect(
       artists.some((a) => ['The Weeknd', 'Billie Eilish', 'Arctic Monkeys', 'Dua Lipa', 'Taylor Swift'].includes(a))
     ).toBe(true);
+  });
+
+  it('recommends the specific songs that people have listened to and rotates them naturally by design', async () => {
+    service.clearCache();
+    // Simulate other listeners playing specific songs
+    const SPECIFIC_SONG_1: Track = {
+      id: 'charts:sp_1',
+      source: 'charts',
+      title: 'Midnight City',
+      artist: 'M83',
+      album: "Hurry Up, We're Dreaming",
+      duration: 243,
+      streamUrl: '',
+      artworkUrl: 'https://example.com/m83.jpg',
+      sourceMetadata: {},
+    };
+    const SPECIFIC_SONG_2: Track = {
+      id: 'charts:sp_2',
+      source: 'charts',
+      title: 'Kids',
+      artist: 'MGMT',
+      album: 'Oracular Spectacular',
+      duration: 302,
+      streamUrl: '',
+      artworkUrl: 'https://example.com/mgmt.jpg',
+      sourceMetadata: {},
+    };
+
+    await service.recordPlay(SPECIFIC_SONG_1, 'listener_alpha');
+    await service.recordPlay(SPECIFIC_SONG_2, 'listener_beta');
+
+    const recommended = await service.getRecommendedSongsFromCommunityArtists({
+      excludeUserId: 'current_user',
+      rotationOffset: 0,
+      limit: 40,
+    });
+
+    const titles = recommended.map((t) => t.title);
+    expect(titles).toContain('Midnight City');
+    expect(titles).toContain('Kids');
+
+    // Natural rotation test: circular shift with offset
+    const rotated = await service.getRecommendedSongsFromCommunityArtists({
+      excludeUserId: 'current_user',
+      rotationOffset: 1,
+      limit: 40,
+    });
+
+    expect(rotated.length).toBeGreaterThan(0);
+    if (recommended.length > 1) {
+      expect(rotated[0].id).not.toBe(recommended[0].id);
+    }
   });
 });
