@@ -95,7 +95,7 @@ export class YouTubeIframeBridge {
       container.id = 'dotify-yt-bridge-wrapper';
       container.setAttribute(
         'style',
-        'position: fixed; width: 200px; height: 200px; left: -9999px; bottom: -9999px; pointer-events: none; opacity: 0.001; z-index: -9999;'
+        'position: fixed; width: 2px; height: 2px; left: 0; bottom: 0; pointer-events: none; opacity: 0.005; z-index: -9999;'
       );
 
       const target = document.createElement('div');
@@ -106,8 +106,8 @@ export class YouTubeIframeBridge {
 
     try {
       this.player = new window.YT.Player('dotify-yt-player-target', {
-        height: '200',
-        width: '200',
+        height: '2',
+        width: '2',
         playerVars: {
           autoplay: 1,
           controls: 0,

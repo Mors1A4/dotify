@@ -13,6 +13,8 @@ import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.FileProvider
+import androidx.lifecycle.ProcessLifecycleOwner
+import android.os.PowerManager
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
@@ -29,6 +31,25 @@ class MainActivity : TauriActivity() {
     activeInstance = this
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    // Remove WryLifecycleObserver so Rust.stop()/Rust.pause() do not freeze background execution
+    try {
+      ProcessLifecycleOwner.get().lifecycle.removeObserver(WryLifecycleObserver)
+    } catch (_: Exception) {}
+
+    // Request exemption from aggressive OS battery throttling for persistent background audio
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      val pm = getSystemService(POWER_SERVICE) as? PowerManager
+      if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+        try {
+          val bIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            data = Uri.parse("package:$packageName")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          }
+          startActivity(bIntent)
+        } catch (_: Exception) {}
+      }
+    }
 
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
@@ -84,14 +105,19 @@ class MainActivity : TauriActivity() {
 
   override fun onPause() {
     super.onPause()
-    // Tauri's WryActivity calls mWebView.onPause(), which pauses all HTML5/WebAudio playback.
-    // Immediately call onResume() on currentWebView to keep audio playback alive in the background.
     currentWebView?.onResume()
+    currentWebView?.resumeTimers()
   }
 
   override fun onStop() {
     super.onStop()
     currentWebView?.onResume()
+    currentWebView?.resumeTimers()
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    currentWebView?.resumeTimers()
   }
 
   override fun onWebViewCreate(webView: WebView) {
