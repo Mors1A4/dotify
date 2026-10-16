@@ -32,25 +32,6 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
-    // Remove WryLifecycleObserver so Rust.stop()/Rust.pause() do not freeze background execution
-    try {
-      ProcessLifecycleOwner.get().lifecycle.removeObserver(WryLifecycleObserver)
-    } catch (_: Exception) {}
-
-    // Request exemption from aggressive OS battery throttling for persistent background audio
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      val pm = getSystemService(POWER_SERVICE) as? PowerManager
-      if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
-        try {
-          val bIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-            data = Uri.parse("package:$packageName")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-          }
-          startActivity(bIntent)
-        } catch (_: Exception) {}
-      }
-    }
-
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
         val webView = currentWebView

@@ -10,9 +10,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
@@ -41,83 +38,12 @@ class DotifyMediaService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
-    private var audioManager: AudioManager? = null
-    private var audioFocusRequest: AudioFocusRequest? = null
-    private var hasAudioFocus: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         initMediaSession()
         initWakeLocks()
-        initAudioManager()
-        // Immediately start foreground on creation so Android never kills the service during startup
-        syncStateAndNotification()
-    }
-
-    private fun initAudioManager() {
-        try {
-            audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        } catch (_: Exception) {}
-    }
-
-    private fun requestAudioFocus() {
-        if (hasAudioFocus) return
-        val am = audioManager ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val playbackAttributes = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-                val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                    .setAudioAttributes(playbackAttributes)
-                    .setAcceptsDelayedFocusGain(true)
-                    .setOnAudioFocusChangeListener { focusChange ->
-                        when (focusChange) {
-                            AudioManager.AUDIOFOCUS_LOSS -> {
-                                MainActivity.dispatchMediaAction("pause")
-                            }
-                            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                                MainActivity.dispatchMediaAction("pause")
-                            }
-                            AudioManager.AUDIOFOCUS_GAIN -> {
-                                MainActivity.dispatchMediaAction("play")
-                            }
-                        }
-                    }
-                    .build()
-                audioFocusRequest = request
-                val res = am.requestAudioFocus(request)
-                hasAudioFocus = (res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
-            } else {
-                @Suppress("DEPRECATION")
-                val res = am.requestAudioFocus(
-                    { focusChange ->
-                        if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
-                            MainActivity.dispatchMediaAction("pause")
-                        }
-                    },
-                    AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN
-                )
-                hasAudioFocus = (res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun abandonAudioFocus() {
-        if (!hasAudioFocus) return
-        val am = audioManager ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
-            } else {
-                @Suppress("DEPRECATION")
-                am.abandonAudioFocus(null)
-            }
-        } catch (_: Exception) {}
-        hasAudioFocus = false
     }
 
     private fun initWakeLocks() {
@@ -140,7 +66,6 @@ class DotifyMediaService : Service() {
     private fun updateLocks() {
         try {
             if (isPlaying) {
-                requestAudioFocus()
                 if (wakeLock?.isHeld != true) {
                     wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24hr safety timeout
                 }
@@ -148,7 +73,6 @@ class DotifyMediaService : Service() {
                     wifiLock?.acquire()
                 }
             } else {
-                abandonAudioFocus()
                 if (wakeLock?.isHeld == true) {
                     wakeLock?.release()
                 }
@@ -160,7 +84,6 @@ class DotifyMediaService : Service() {
     }
 
     private fun releaseLocks() {
-        abandonAudioFocus()
         try {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
