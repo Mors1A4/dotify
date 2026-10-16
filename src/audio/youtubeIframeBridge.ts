@@ -26,6 +26,8 @@ export class YouTubeIframeBridge {
   private currentVideoId: string | null = null;
   private targetStartSeconds = 0;
   private currentVolume = 1.0; // 0.0 - 1.0
+  private userInitiatedPause = false;
+  private lastAutoResumeTime = 0;
 
   private onStateChangeCallback: PlayerStateCallback | null = null;
   private onEndedCallback: EndedCallback | null = null;
@@ -165,6 +167,18 @@ export class YouTubeIframeBridge {
         this.onStateChangeCallback?.(true, false);
         break;
       case 2: // PAUSED
+        if (!this.userInitiatedPause) {
+          // System or OS throttled/paused the iframe when screen turned off or backgrounded.
+          // Auto-resume playback immediately.
+          const now = Date.now();
+          if (now - this.lastAutoResumeTime > 200) {
+            this.lastAutoResumeTime = now;
+            try {
+              this.player?.playVideo();
+            } catch {}
+            return;
+          }
+        }
         this.isPlayingState = false;
         this.isBufferingState = false;
         this.onStateChangeCallback?.(false, false);
@@ -174,6 +188,7 @@ export class YouTubeIframeBridge {
         this.onStateChangeCallback?.(this.isPlayingState, true);
         break;
       case 0: // ENDED
+        this.userInitiatedPause = false;
         this.isPlayingState = false;
         this.isBufferingState = false;
         this.onStateChangeCallback?.(false, false);
@@ -192,6 +207,7 @@ export class YouTubeIframeBridge {
       return;
     }
 
+    this.userInitiatedPause = false;
     this.currentVideoId = videoId;
     this.targetStartSeconds = startSeconds;
 
@@ -213,6 +229,7 @@ export class YouTubeIframeBridge {
   }
 
   public pause(): void {
+    this.userInitiatedPause = true;
     if (!this.player || !this.isReady) return;
     try {
       this.player.pauseVideo();
@@ -222,6 +239,7 @@ export class YouTubeIframeBridge {
   }
 
   public resume(): void {
+    this.userInitiatedPause = false;
     if (!this.player || !this.isReady) return;
     try {
       this.player.playVideo();

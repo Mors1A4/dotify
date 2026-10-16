@@ -209,9 +209,9 @@ export class AudioEngine {
   }
 
   private startProgressLoop(): void {
-    if (this.rafId !== null || typeof requestAnimationFrame === 'undefined') return;
     const tick = () => {
       this.rafId = null;
+      this.lastTickTime = Date.now();
       if (this.isControllerMode) return;
 
       if (this.isUsingYouTubeBridge) {
@@ -227,7 +227,9 @@ export class AudioEngine {
               cb();
             }
           }
-          this.rafId = requestAnimationFrame(tick);
+          if (typeof requestAnimationFrame !== 'undefined') {
+            this.rafId = requestAnimationFrame(tick);
+          }
         }
         return;
       }
@@ -245,16 +247,33 @@ export class AudioEngine {
             cb();
           }
         }
-        this.rafId = requestAnimationFrame(tick);
+        if (typeof requestAnimationFrame !== 'undefined') {
+          this.rafId = requestAnimationFrame(tick);
+        }
       }
     };
-    this.rafId = requestAnimationFrame(tick);
+
+    if (this.backgroundHeartbeatTimer === null && typeof setInterval !== 'undefined') {
+      this.backgroundHeartbeatTimer = setInterval(() => {
+        if (Date.now() - this.lastTickTime >= 200) {
+          tick();
+        }
+      }, 250);
+    }
+
+    if (this.rafId === null && typeof requestAnimationFrame !== 'undefined') {
+      this.rafId = requestAnimationFrame(tick);
+    }
   }
 
   private stopProgressLoop(): void {
     if (this.rafId !== null && typeof cancelAnimationFrame !== 'undefined') {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
+    }
+    if (this.backgroundHeartbeatTimer !== null) {
+      clearInterval(this.backgroundHeartbeatTimer);
+      this.backgroundHeartbeatTimer = null;
     }
   }
 
@@ -422,6 +441,8 @@ export class AudioEngine {
   private playRequestId: number = 0;
   private upgradedPlayReqId: number = 0;
   private rafId: number | null = null;
+  private backgroundHeartbeatTimer: any = null;
+  private lastTickTime: number = 0;
   private isSwitchingTrack: boolean = false;
   private standbyFadeTimer: ReturnType<typeof setTimeout> | null = null;
   private standbyFadePromise: Promise<void> | null = null;

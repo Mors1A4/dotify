@@ -82,9 +82,25 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  override fun onPause() {
+    super.onPause()
+    // Tauri's WryActivity calls mWebView.onPause(), which pauses all HTML5/WebAudio playback.
+    // Immediately call onResume() on currentWebView to keep audio playback alive in the background.
+    currentWebView?.onResume()
+  }
+
+  override fun onStop() {
+    super.onStop()
+    currentWebView?.onResume()
+  }
+
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     currentWebView = webView
+
+    try {
+      webView.settings.mediaPlaybackRequiresUserGesture = false
+    } catch (_: Exception) {}
 
     webView.addJavascriptInterface(object {
       @JavascriptInterface

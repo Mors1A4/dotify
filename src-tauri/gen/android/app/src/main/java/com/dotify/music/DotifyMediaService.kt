@@ -10,8 +10,10 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
@@ -34,10 +36,62 @@ class DotifyMediaService : Service() {
     private var currentPositionMs: Long = 0L
     private var isPlaying: Boolean = false
 
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         initMediaSession()
+        initWakeLocks()
+    }
+
+    private fun initWakeLocks() {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Dotify:MediaPlaybackWakeLock")
+            wakeLock?.setReferenceCounted(false)
+
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "Dotify:MediaPlaybackWifiLock")
+            } else {
+                @Suppress("DEPRECATION")
+                wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Dotify:MediaPlaybackWifiLock")
+            }
+            wifiLock?.setReferenceCounted(false)
+        } catch (_: Exception) {}
+    }
+
+    private fun updateLocks() {
+        try {
+            if (isPlaying) {
+                if (wakeLock?.isHeld != true) {
+                    wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24hr safety timeout
+                }
+                if (wifiLock?.isHeld != true) {
+                    wifiLock?.acquire()
+                }
+            } else {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+                if (wifiLock?.isHeld == true) {
+                    wifiLock?.release()
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun releaseLocks() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+            if (wifiLock?.isHeld == true) {
+                wifiLock?.release()
+            }
+        } catch (_: Exception) {}
     }
 
     private fun createNotificationChannel() {
@@ -129,7 +183,7 @@ class DotifyMediaService : Service() {
             }
         }
 
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun loadArtworkAsync(urlStr: String) {
@@ -158,6 +212,7 @@ class DotifyMediaService : Service() {
     }
 
     private fun syncStateAndNotification() {
+        updateLocks()
         val stateBuilder = PlaybackStateCompat.Builder()
             .setActions(
                 PlaybackStateCompat.ACTION_PLAY or
@@ -272,6 +327,7 @@ class DotifyMediaService : Service() {
     }
 
     private fun stopForegroundService() {
+        releaseLocks()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -286,6 +342,7 @@ class DotifyMediaService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseLocks()
         mediaSession.release()
     }
 

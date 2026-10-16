@@ -10,6 +10,26 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="/manifest.json" />
     <title>dotify · Free Music Streaming</title>
+    <script>
+      // Persistent Background Audio Protection:
+      // YouTube Iframe and Web Audio players inspect document.hidden & document.visibilityState
+      // to pause playback when phone screen turns off or user switches apps.
+      // Override Page Visibility API to report visible and stop visibilitychange events.
+      try {
+        const fakeVisibility = {
+          hidden: { get: () => false, configurable: true },
+          visibilityState: { get: () => 'visible', configurable: true },
+          webkitHidden: { get: () => false, configurable: true },
+          webkitVisibilityState: { get: () => 'visible', configurable: true },
+        };
+        Object.defineProperties(document, fakeVisibility);
+        if (typeof Document !== 'undefined' && Document.prototype) {
+          Object.defineProperties(Document.prototype, fakeVisibility);
+        }
+        window.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
+        document.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
+      } catch (e) {}
+    </script>
   </head>
   <body class="bg-base text-primary overflow-hidden antialiased">
     <div id="root"></div>
