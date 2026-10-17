@@ -14,6 +14,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import android.os.PowerManager
 import org.json.JSONObject
 import java.io.File
@@ -105,6 +107,7 @@ class MainActivity : TauriActivity() {
 
   override fun onWindowFocusChanged(hasFocus: Boolean) {
     super.onWindowFocusChanged(hasFocus)
+    currentWebView?.onResume()
     currentWebView?.resumeTimers()
   }
 
@@ -114,6 +117,39 @@ class MainActivity : TauriActivity() {
 
     try {
       webView.settings.mediaPlaybackRequiresUserGesture = false
+      webView.settings.javaScriptEnabled = true
+      webView.settings.domStorageEnabled = true
+      webView.settings.databaseEnabled = true
+    } catch (_: Exception) {}
+
+    // Inject document start script across ALL frames (including cross-origin YouTube player iframes)
+    // to mock the Page Visibility API and prevent audio pausing when the app is minimized or screen locks.
+    try {
+      if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+        val bgScript = """
+          (function() {
+            try {
+              var fakeHidden = { get: function() { return false; }, configurable: true };
+              var fakeState = { get: function() { return 'visible'; }, configurable: true };
+              Object.defineProperty(document, 'hidden', fakeHidden);
+              Object.defineProperty(document, 'visibilityState', fakeState);
+              Object.defineProperty(document, 'webkitHidden', fakeHidden);
+              Object.defineProperty(document, 'webkitVisibilityState', fakeState);
+              if (typeof Document !== 'undefined' && Document.prototype) {
+                Object.defineProperty(Document.prototype, 'hidden', fakeHidden);
+                Object.defineProperty(Document.prototype, 'visibilityState', fakeState);
+                Object.defineProperty(Document.prototype, 'webkitHidden', fakeHidden);
+                Object.defineProperty(Document.prototype, 'webkitVisibilityState', fakeState);
+              }
+              window.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+              document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+              window.addEventListener('blur', function(e) { e.stopImmediatePropagation(); }, true);
+              document.hasFocus = function() { return true; };
+            } catch (e) {}
+          })();
+        """.trimIndent()
+        WebViewCompat.addDocumentStartJavaScript(webView, bgScript, setOf("*"))
+      }
     } catch (_: Exception) {}
 
     // Defer battery-optimization exemption request so it does not steal window

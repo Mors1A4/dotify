@@ -95,7 +95,7 @@ export class YouTubeIframeBridge {
       container.id = 'dotify-yt-bridge-wrapper';
       container.setAttribute(
         'style',
-        'position: fixed; width: 200px; height: 200px; left: -9999px; bottom: -9999px; pointer-events: none; opacity: 0.001; z-index: -9999;'
+        'position: fixed; width: 200px; height: 200px; left: 0; bottom: 0; pointer-events: none; opacity: 0.001; z-index: -9999;'
       );
 
       const target = document.createElement('div');
@@ -169,15 +169,18 @@ export class YouTubeIframeBridge {
       case 2: // PAUSED
         if (!this.userInitiatedPause) {
           // System or OS throttled/paused the iframe when screen turned off or backgrounded.
-          // Auto-resume playback immediately.
-          const now = Date.now();
-          if (now - this.lastAutoResumeTime > 200) {
-            this.lastAutoResumeTime = now;
-            try {
-              this.player?.playVideo();
-            } catch {}
-            return;
-          }
+          // Auto-resume playback immediately without propagating pause to playerStore or UI.
+          try {
+            this.player?.playVideo();
+          } catch {}
+          setTimeout(() => {
+            if (!this.userInitiatedPause && this.player && !this.isPlayingState) {
+              try {
+                this.player.playVideo();
+              } catch {}
+            }
+          }, 150);
+          return;
         }
         this.isPlayingState = false;
         this.isBufferingState = false;
