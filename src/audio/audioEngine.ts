@@ -74,6 +74,42 @@ export class AudioEngine {
   private controllerCurrentTime: number = 0;
   private controllerDuration: number = 0;
 
+  // Silent audio keeper to maintain an active top-level HTML5 media stream handle
+  // in Chromium on Android, preventing the OS from cutting off audio when the screen is turned off.
+  private silentKeeperAudio: HTMLAudioElement | null = null;
+
+  private initSilentBackgroundKeeper(): void {
+    if (typeof window === 'undefined' || this.silentKeeperAudio) return;
+    try {
+      const audio = createAudioElement();
+      audio.src =
+        'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+      audio.loop = true;
+      audio.volume = 0.0001;
+      this.silentKeeperAudio = audio;
+    } catch {}
+  }
+
+  private startSilentBackgroundKeeper(): void {
+    if (!this.silentKeeperAudio) {
+      this.initSilentBackgroundKeeper();
+    }
+    if (this.silentKeeperAudio) {
+      try {
+        this.silentKeeperAudio.currentTime = 0;
+        this.silentKeeperAudio.play().catch(() => {});
+      } catch {}
+    }
+  }
+
+  private stopSilentBackgroundKeeper(): void {
+    if (this.silentKeeperAudio) {
+      try {
+        this.silentKeeperAudio.pause();
+      } catch {}
+    }
+  }
+
   private constructor() {
     this.primaryAudio = createAudioElement();
     this.primaryAudio.crossOrigin = 'anonymous';
@@ -711,6 +747,7 @@ export class AudioEngine {
 
     if (this.isUsingYouTubeBridge) {
       this.ytBridge.pause();
+      this.stopSilentBackgroundKeeper();
       this.isUsingYouTubeBridge = false;
     }
 
@@ -729,6 +766,7 @@ export class AudioEngine {
       if (ok) return;
     }
 
+    this.stopSilentBackgroundKeeper();
     this.initWebAudio();
 
     // Check synchronously (before any await) if the requested track is pre-buffered on standby
@@ -885,9 +923,12 @@ export class AudioEngine {
       this.standbyAudio.pause();
       this.isUsingYouTubeBridge = true;
 
+      this.startSilentBackgroundKeeper();
+
       await this.ytBridge.play(videoId, startSeconds);
       if (!shouldPlay) {
         this.ytBridge.pause();
+        this.stopSilentBackgroundKeeper();
       }
       this.isSwitchingTrack = false;
       this.notifyState(shouldPlay, false);
@@ -897,6 +938,7 @@ export class AudioEngine {
       return true;
     } catch (err: any) {
       console.warn('[AudioEngine] YouTube IFrame playback failed:', err);
+      this.stopSilentBackgroundKeeper();
       this.isUsingYouTubeBridge = false;
       return false;
     }
@@ -910,6 +952,7 @@ export class AudioEngine {
       // Clean direct local audio silencing without firing state changes or delegating pause to remote
       this.isSwitchingTrack = false;
       this.stopProgressLoop();
+      this.stopSilentBackgroundKeeper();
       if (this.standbyFadeTimer) {
         clearTimeout(this.standbyFadeTimer);
         this.standbyFadeTimer = null;
@@ -1011,6 +1054,7 @@ export class AudioEngine {
       this.standbyFadePromise = null;
     }
     if (this.isUsingYouTubeBridge) {
+      this.stopSilentBackgroundKeeper();
       this.ytBridge.pause();
       this.notifyState(false, false);
       return;
@@ -1025,6 +1069,7 @@ export class AudioEngine {
       return;
     }
     if (this.isUsingYouTubeBridge) {
+      this.startSilentBackgroundKeeper();
       this.ytBridge.resume();
       this.notifyState(true, false);
       return;
@@ -1072,6 +1117,7 @@ export class AudioEngine {
 
     if (this.isUsingYouTubeBridge) {
       this.ytBridge.pause();
+      this.stopSilentBackgroundKeeper();
       this.isUsingYouTubeBridge = false;
     }
 

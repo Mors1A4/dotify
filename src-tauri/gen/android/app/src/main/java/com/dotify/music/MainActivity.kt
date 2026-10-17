@@ -830,6 +830,15 @@ class MainActivity : TauriActivity() {
       }
     }
 
+    fun refreshWebViewState() {
+      activeInstance?.let { activity ->
+        activity.runOnUiThread {
+          activity.currentWebView?.onResume()
+          activity.currentWebView?.resumeTimers()
+        }
+      }
+    }
+
     private val ALIAS_MAP = mapOf(
       "green" to "MainActivityDefault",
       "cyan" to "MainActivityCyan",

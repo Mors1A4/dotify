@@ -119,6 +119,8 @@ export function updateMediaSession(
         }
       });
     }
+
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
   } catch {
     // Action handlers might be unsupported on certain platforms
   }
