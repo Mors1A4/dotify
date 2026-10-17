@@ -32,6 +32,13 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
+    // Remove WryLifecycleObserver so Rust.pause()/Rust.stop() do not freeze
+    // the WebView event loop when the app goes to the background — this is
+    // essential for continuous background audio playback.
+    try {
+      ProcessLifecycleOwner.get().lifecycle.removeObserver(WryLifecycleObserver)
+    } catch (_: Exception) {}
+
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
         val webView = currentWebView
@@ -108,6 +115,24 @@ class MainActivity : TauriActivity() {
     try {
       webView.settings.mediaPlaybackRequiresUserGesture = false
     } catch (_: Exception) {}
+
+    // Defer battery-optimization exemption request so it does not steal window
+    // focus during the initial activity render. Without this exemption Android
+    // Doze may kill background audio during long screen-off sessions.
+    android.os.Handler(mainLooper).postDelayed({
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+          val pm = getSystemService(POWER_SERVICE) as? PowerManager
+          if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+            val bIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+              data = Uri.parse("package:$packageName")
+              flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(bIntent)
+          }
+        }
+      } catch (_: Exception) {}
+    }, 3000L)
 
     webView.addJavascriptInterface(object {
       @JavascriptInterface

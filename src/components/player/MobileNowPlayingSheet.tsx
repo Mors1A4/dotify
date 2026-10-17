@@ -61,6 +61,7 @@ export const MobileNowPlayingSheet: React.FC = () => {
   const displayTrack = currentTrack || audioEngine.getCurrentTrack();
 
   const [sheetTab, setSheetTab] = useState<'art' | 'visualizer' | 'equalizer'>('art');
+  const touchStartY = React.useRef<number | null>(null);
 
   const {
     seekbarRef,
@@ -75,15 +76,11 @@ export const MobileNowPlayingSheet: React.FC = () => {
     isActive: isMobileSheetOpen,
   });
 
-  if (!isMobileSheetOpen || !displayTrack) return null;
-
   const cycleRepeat = () => {
     if (repeatMode === 'off') setRepeatMode('all');
     else if (repeatMode === 'all') setRepeatMode('one');
     else setRepeatMode('off');
   };
-
-  const touchStartY = React.useRef<number | null>(null);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
@@ -98,6 +95,8 @@ export const MobileNowPlayingSheet: React.FC = () => {
       touchStartY.current = null;
     }
   };
+
+  if (!isMobileSheetOpen || !displayTrack) return null;
 
   return (
     <div

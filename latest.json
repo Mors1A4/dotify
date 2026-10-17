@@ -1,0 +1,9 @@
+{
+  "version": "1.0.33",
+  "notes": "fix(mobile): resolve Minified React error #310 when expanding song sheet",
+  "publishedAt": 1792240352220,
+  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.33/dotify.exe",
+  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.33/dotify-setup.exe",
+  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.33/dotify.apk",
+  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.33"
+}
