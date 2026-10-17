@@ -20,6 +20,9 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.media.app.NotificationCompat.MediaStyle
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
@@ -38,6 +41,8 @@ class DotifyMediaService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
 
     private val screenReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -53,6 +58,7 @@ class DotifyMediaService : Service() {
         createNotificationChannel()
         initMediaSession()
         initWakeLocks()
+        initAudioRouting()
         try {
             val filter = android.content.IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
@@ -80,9 +86,69 @@ class DotifyMediaService : Service() {
         } catch (_: Exception) {}
     }
 
+    private fun initAudioRouting() {
+        try {
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        } catch (_: Exception) {}
+    }
+
+    private fun requestAudioFocus() {
+        try {
+            val am = audioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (audioFocusRequest == null) {
+                    val audioAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                    audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                        .setAudioAttributes(audioAttributes)
+                        .setAcceptsDelayedFocusGain(true)
+                        .setOnAudioFocusChangeListener { focusChange ->
+                            when (focusChange) {
+                                AudioManager.AUDIOFOCUS_LOSS,
+                                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                                    MainActivity.dispatchMediaAction("pause")
+                                }
+                                AudioManager.AUDIOFOCUS_GAIN -> {
+                                    // Audio focus regained
+                                }
+                            }
+                        }
+                        .build()
+                }
+                audioFocusRequest?.let { am.requestAudioFocus(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    { focusChange ->
+                        if (focusChange == AudioManager.AUDIOFOCUS_LOSS || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                            MainActivity.dispatchMediaAction("pause")
+                        }
+                    },
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun abandonAudioFocus() {
+        try {
+            val am = audioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(null)
+            }
+        } catch (_: Exception) {}
+    }
+
     private fun updateLocks() {
         try {
             if (isPlaying) {
+                requestAudioFocus()
                 if (wakeLock?.isHeld != true) {
                     wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24hr safety timeout
                 }
@@ -90,6 +156,7 @@ class DotifyMediaService : Service() {
                     wifiLock?.acquire()
                 }
             } else {
+                abandonAudioFocus()
                 if (wakeLock?.isHeld == true) {
                     wakeLock?.release()
                 }
@@ -102,6 +169,7 @@ class DotifyMediaService : Service() {
 
     private fun releaseLocks() {
         try {
+            abandonAudioFocus()
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }

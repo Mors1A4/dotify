@@ -95,7 +95,7 @@ export class YouTubeIframeBridge {
       container.id = 'dotify-yt-bridge-wrapper';
       container.setAttribute(
         'style',
-        'position: fixed; width: 200px; height: 200px; left: 0; bottom: 0; pointer-events: none; opacity: 0.02; z-index: -9999;'
+        'position: fixed; width: 200px; height: 200px; left: -9999px; top: -9999px; pointer-events: none; opacity: 1; z-index: 1;'
       );
 
       const target = document.createElement('div');
