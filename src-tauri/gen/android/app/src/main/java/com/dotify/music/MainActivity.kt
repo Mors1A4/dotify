@@ -17,12 +17,23 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import android.os.PowerManager
+import android.content.Context
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.Socket
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MainActivity : TauriActivity() {
   private var currentWebView: WebView? = null
@@ -144,7 +155,22 @@ class MainActivity : TauriActivity() {
               window.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
               document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
               window.addEventListener('blur', function(e) { e.stopImmediatePropagation(); }, true);
+              window.addEventListener('pagehide', function(e) { e.stopImmediatePropagation(); }, true);
+              window.addEventListener('freeze', function(e) { e.stopImmediatePropagation(); }, true);
               document.hasFocus = function() { return true; };
+
+              // Inside YouTube player iframes, spoof Desktop Chrome so mobile playback
+              // restrictions and anti-background pauses are completely deactivated.
+              var host = (window.location && window.location.hostname) ? window.location.hostname : '';
+              if (host.indexOf('youtube.com') !== -1 || host.indexOf('googlevideo.com') !== -1) {
+                try {
+                  var desktopUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
+                  Object.defineProperty(navigator, 'userAgent', { get: function() { return desktopUA; }, configurable: true });
+                  Object.defineProperty(navigator, 'appVersion', { get: function() { return desktopUA; }, configurable: true });
+                  Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; }, configurable: true });
+                  Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; }, configurable: true });
+                } catch (_) {}
+              }
             } catch (e) {}
           })();
         """.trimIndent()
@@ -484,10 +510,252 @@ class MainActivity : TauriActivity() {
       }
     }, "AndroidNativeApp")
 
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface
+      fun getWifiIp(): String {
+        return getLocalWifiIp()
+      }
+
+      @JavascriptInterface
+      fun probeCastSpeaker(ip: String): String {
+        val dev = probeSingleCastSpeaker(ip.trim(), 1600)
+        return dev?.toString() ?: ""
+      }
+
+      @JavascriptInterface
+      fun scanCastDevices(): String {
+        return performAndroidCastScan()
+      }
+    }, "AndroidNativeCast")
+
     pendingAuthUri?.let { uri ->
       deliverAuthUri(uri)
       pendingAuthUri = null
     }
+  }
+
+  private fun getLocalWifiIp(): String {
+    try {
+      val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+      if (wifiManager != null) {
+        val ipInt = wifiManager.connectionInfo?.ipAddress ?: 0
+        if (ipInt != 0) {
+          return String.format(
+            "%d.%d.%d.%d",
+            ipInt and 0xff,
+            ipInt shr 8 and 0xff,
+            ipInt shr 16 and 0xff,
+            ipInt shr 24 and 0xff
+          )
+        }
+      }
+    } catch (_: Exception) {}
+
+    try {
+      val interfaces = java.util.Collections.list(NetworkInterface.getNetworkInterfaces())
+      for (intf in interfaces) {
+        val name = intf.name.lowercase()
+        if (name.startsWith("wlan") || name.startsWith("eth") || name.startsWith("wifi")) {
+          val addrs = java.util.Collections.list(intf.inetAddresses)
+          for (addr in addrs) {
+            if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
+              val s = addr.hostAddress ?: ""
+              if (s.isNotEmpty() && !s.startsWith("127.")) {
+                return s
+              }
+            }
+          }
+        }
+      }
+    } catch (_: Exception) {}
+    return ""
+  }
+
+  private fun probeSingleCastSpeaker(ip: String, timeoutMs: Int): JSONObject? {
+    val cleanIp = ip.trim()
+    if (cleanIp.isEmpty() || cleanIp == "127.0.0.1") return null
+
+    // 1. Direct TCP handshake to Cast V2 TLS port 8009
+    var port8009Open = false
+    try {
+      Socket().use { sock ->
+        sock.connect(InetSocketAddress(cleanIp, 8009), timeoutMs)
+        port8009Open = true
+      }
+    } catch (_: Exception) {}
+
+    if (!port8009Open) return null
+
+    // 2. Fetch Eureka info if available on port 8008 for friendly name and model
+    var speakerName = "Google Cast Speaker ($cleanIp)"
+    var modelName = "Google Cast Speaker"
+    var udn = ""
+
+    try {
+      val url = URL("http://$cleanIp:8008/setup/eureka_info?params=name,device_info")
+      val conn = (url.openConnection() as HttpURLConnection).apply {
+        connectTimeout = 1000
+        readTimeout = 1000
+        requestMethod = "GET"
+      }
+      if (conn.responseCode == 200) {
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        val json = JSONObject(body)
+        val nameFromHttp = json.optString("name").takeIf { it.isNotEmpty() }
+          ?: json.optJSONObject("device_info")?.optString("name")
+        if (!nameFromHttp.isNullOrEmpty()) {
+          speakerName = nameFromHttp
+        }
+        val modelFromHttp = json.optJSONObject("device_info")?.optString("model_name")
+          ?: json.optString("model_name")
+        if (!modelFromHttp.isNullOrEmpty()) {
+          modelName = modelFromHttp
+        }
+        udn = json.optString("ssdp_udn", "")
+      }
+      conn.disconnect()
+    } catch (_: Exception) {}
+
+    val dev = JSONObject().apply {
+      put("deviceId", "cast:$cleanIp:8009")
+      put("deviceName", speakerName)
+      put("deviceType", "speaker")
+      put("role", "active_host")
+      put("isCurrentDevice", false)
+      put("isActive", false)
+      put("volume", 0.7)
+      put("lastSeen", System.currentTimeMillis())
+      put("capabilities", JSONObject().apply {
+        put("canPlayAudio", true)
+        put("isController", false)
+      })
+      put("castDetails", JSONObject().apply {
+        put("ip", cleanIp)
+        put("port", 8009)
+        put("model", modelName)
+        put("udn", udn)
+      })
+    }
+    return dev
+  }
+
+  private fun performAndroidCastScan(): String {
+    val discovered = ConcurrentHashMap<String, JSONObject>()
+    val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+    var multicastLock: WifiManager.MulticastLock? = null
+    try {
+      multicastLock = wifiManager?.createMulticastLock("dotify_cast_multicast")?.apply {
+        setReferenceCounted(true)
+        acquire()
+      }
+    } catch (_: Exception) {}
+
+    // 1. Android NSD (mDNS) Discovery for _googlecast._tcp
+    val nsdManager = getSystemService(Context.NSD_SERVICE) as? NsdManager
+    var nsdListener: NsdManager.DiscoveryListener? = null
+    try {
+      if (nsdManager != null) {
+        val listener = object : NsdManager.DiscoveryListener {
+          override fun onDiscoveryStarted(regType: String) {}
+          override fun onServiceFound(service: NsdServiceInfo) {
+            val type = service.serviceType ?: ""
+            if (type.contains("_googlecast")) {
+              try {
+                nsdManager.resolveService(service, object : NsdManager.ResolveListener {
+                  override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+                  override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                    val host = serviceInfo.host?.hostAddress ?: return
+                    if (host.isEmpty() || host == "127.0.0.1") return
+                    val attrs = serviceInfo.attributes
+                    val fnBytes = attrs?.get("fn")
+                    val friendlyName = if (fnBytes != null) String(fnBytes, Charsets.UTF_8) else (serviceInfo.serviceName ?: "Google Cast Speaker")
+                    val mdBytes = attrs?.get("md")
+                    val model = if (mdBytes != null) String(mdBytes, Charsets.UTF_8) else "Google Cast Speaker"
+
+                    val dev = JSONObject().apply {
+                      put("deviceId", "cast:$host:8009")
+                      put("deviceName", friendlyName)
+                      put("deviceType", "speaker")
+                      put("role", "active_host")
+                      put("isCurrentDevice", false)
+                      put("isActive", false)
+                      put("volume", 0.7)
+                      put("lastSeen", System.currentTimeMillis())
+                      put("capabilities", JSONObject().apply {
+                        put("canPlayAudio", true)
+                        put("isController", false)
+                      })
+                      put("castDetails", JSONObject().apply {
+                        put("ip", host)
+                        put("port", 8009)
+                        put("model", model)
+                        put("udn", "")
+                      })
+                    }
+                    discovered[host] = dev
+                  }
+                })
+              } catch (_: Exception) {}
+            }
+          }
+          override fun onServiceLost(service: NsdServiceInfo) {}
+          override fun onDiscoveryStopped(serviceType: String) {}
+          override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
+          override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+        }
+        nsdListener = listener
+        nsdManager.discoverServices("_googlecast._tcp", NsdManager.PROTOCOL_DNS_SD, listener)
+      }
+    } catch (_: Exception) {}
+
+    // 2. Parallel Subnet Probe on Port 8009 across Wi-Fi subnet
+    val wifiIp = getLocalWifiIp()
+    if (wifiIp.isNotEmpty()) {
+      val parts = wifiIp.split(".")
+      if (parts.size == 4) {
+        val prefix = "${parts[0]}.${parts[1]}.${parts[2]}."
+        val myHost = parts[3].toIntOrNull() ?: 0
+        val pool = Executors.newFixedThreadPool(20)
+        val futures = mutableListOf<java.util.concurrent.Future<*>>()
+
+        for (i in 1..254) {
+          if (i == myHost) continue
+          val targetIp = "$prefix$i"
+          futures.add(pool.submit {
+            val dev = probeSingleCastSpeaker(targetIp, 1200)
+            if (dev != null) {
+              discovered[targetIp] = dev
+            }
+          })
+        }
+
+        for (f in futures) {
+          try {
+            f.get(2200, TimeUnit.MILLISECONDS)
+          } catch (_: Exception) {}
+        }
+        pool.shutdownNow()
+      }
+    }
+
+    // Stop NSD discovery and release lock
+    try {
+      if (nsdManager != null && nsdListener != null) {
+        nsdManager.stopServiceDiscovery(nsdListener)
+      }
+    } catch (_: Exception) {}
+
+    try {
+      multicastLock?.let {
+        if (it.isHeld) it.release()
+      }
+    } catch (_: Exception) {}
+
+    val array = JSONArray()
+    for (dev in discovered.values) {
+      array.put(dev)
+    }
+    return array.toString()
   }
 
   private fun launchPackageInstaller(apkFile: File) {

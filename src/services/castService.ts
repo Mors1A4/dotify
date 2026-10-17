@@ -75,6 +75,22 @@ class CastService {
     const cleanIp = (ip || '').trim();
     if (!cleanIp) return null;
 
+    // 0. Try Android Native Cast bridge if running inside Android APK
+    if (typeof window !== 'undefined' && (window as any).AndroidNativeCast?.probeCastSpeaker) {
+      try {
+        const rawJson = (window as any).AndroidNativeCast.probeCastSpeaker(cleanIp);
+        if (rawJson && typeof rawJson === 'string' && rawJson.trim()) {
+          const dev = JSON.parse(rawJson);
+          if (dev && dev.deviceId) {
+            this.rememberDevices([dev]);
+            return dev;
+          }
+        }
+      } catch (err) {
+        console.debug('[CastService] AndroidNativeCast probe error:', err);
+      }
+    }
+
     // 1. Try Tauri native invoke
     if (isTauriEnvironment()) {
       try {
@@ -162,6 +178,21 @@ class CastService {
 
     this.isScanning = true;
     try {
+      // 0. Trigger Android Native NSD / Wi-Fi scan if on Android
+      if (typeof window !== 'undefined' && (window as any).AndroidNativeCast?.scanCastDevices) {
+        try {
+          const rawJson = (window as any).AndroidNativeCast.scanCastDevices();
+          if (rawJson && typeof rawJson === 'string' && rawJson.trim()) {
+            const nativeDevs = JSON.parse(rawJson);
+            if (Array.isArray(nativeDevs) && nativeDevs.length > 0) {
+              this.rememberDevices(nativeDevs);
+            }
+          }
+        } catch (err) {
+          console.debug('[CastService] AndroidNativeCast scan error:', err);
+        }
+      }
+
       // 1. Trigger native Tauri Rust scan if on Desktop or Android
       if (isTauriEnvironment()) {
         try {
@@ -196,6 +227,16 @@ class CastService {
     }
 
     return Array.from(this.discoveredCastDevices.values());
+  }
+
+  public getWifiIp(): string {
+    if (typeof window !== 'undefined' && (window as any).AndroidNativeCast?.getWifiIp) {
+      try {
+        const ip = (window as any).AndroidNativeCast.getWifiIp();
+        if (ip && typeof ip === 'string') return ip.trim();
+      } catch {}
+    }
+    return '';
   }
 
   public getDevices(): ConnectedDevice[] {

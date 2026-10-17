@@ -11,8 +11,13 @@ export function isTauriEnvironment(): boolean {
 }
 
 export function isAndroidApp(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return isTauriEnvironment() && /android/i.test(navigator.userAgent);
+  if (typeof window === 'undefined') return false;
+  return (
+    isTauriEnvironment() &&
+    ((typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)) ||
+      typeof (window as any).AndroidNativeApp !== 'undefined' ||
+      typeof (window as any).AndroidNativeMediaSession !== 'undefined')
+  );
 }
 
 const CUSTOM_API_STORAGE_KEY = 'dotify_custom_api_url';

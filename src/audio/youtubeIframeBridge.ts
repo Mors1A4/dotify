@@ -95,7 +95,7 @@ export class YouTubeIframeBridge {
       container.id = 'dotify-yt-bridge-wrapper';
       container.setAttribute(
         'style',
-        'position: fixed; width: 200px; height: 200px; left: 0; bottom: 0; pointer-events: none; opacity: 0.001; z-index: -9999;'
+        'position: fixed; width: 200px; height: 200px; left: 0; bottom: 0; pointer-events: none; opacity: 0.02; z-index: -9999;'
       );
 
       const target = document.createElement('div');
@@ -220,6 +220,10 @@ export class YouTubeIframeBridge {
         startSeconds,
         suggestedQuality: 'small',
       });
+      try {
+        this.player.unMute();
+        this.player.setVolume(Math.round(this.currentVolume * 100));
+      } catch {}
       this.player.playVideo();
       this.isPlayingState = true;
     } catch (err) {

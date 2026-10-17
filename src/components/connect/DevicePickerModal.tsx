@@ -5,11 +5,16 @@ import { DeviceIcon } from './DeviceIcon';
 import { castService } from '../../services/castService';
 import { connectClient } from '../../services/connectClient';
 import { isAndroidApp } from '../../services/apiConfig';
-import { X, Volume2, Loader2, Wifi, Check, RefreshCw } from 'lucide-react';
+import { X, Volume2, Loader2, Wifi, Check, RefreshCw, Plus } from 'lucide-react';
 
 export const DevicePickerModal: React.FC = () => {
   const [isScanning, setIsScanning] = useState(false);
   const [sliderVal, setSliderVal] = useState<number | null>(null);
+  const [isManualIpOpen, setIsManualIpOpen] = useState(false);
+  const [manualIpInput, setManualIpInput] = useState('');
+  const [isProbingIp, setIsProbingIp] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [wifiIp, setWifiIp] = useState<string>('');
   const isDraggingVol = useRef<boolean>(false);
 
   const isDevicePickerOpen = usePlayerStore((s) => s.isDevicePickerOpen);
@@ -29,8 +34,30 @@ export const DevicePickerModal: React.FC = () => {
     if (isDevicePickerOpen) {
       // Query already-discovered & cached smart speakers instantly via lightweight mDNS
       castService.fetchCastDevices();
+      const detectedWifi = castService.getWifiIp();
+      if (detectedWifi) setWifiIp(detectedWifi);
     }
   }, [isDevicePickerOpen]);
+
+  const handleProbeManualIp = async () => {
+    const ip = manualIpInput.trim();
+    if (!ip) return;
+    setIsProbingIp(true);
+    setProbeError(null);
+    try {
+      const dev = await castService.probeSpeakerIp(ip);
+      if (dev && dev.deviceId) {
+        setIsManualIpOpen(false);
+        setManualIpInput('');
+      } else {
+        setProbeError(`Could not reach Cast speaker at ${ip} on port 8009. Check the IP in the Google Home app.`);
+      }
+    } catch (err: any) {
+      setProbeError(err?.message || `Failed to connect to ${ip}`);
+    } finally {
+      setIsProbingIp(false);
+    }
+  };
 
   const handleScanClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -220,14 +247,77 @@ export const DevicePickerModal: React.FC = () => {
 
         {/* Discovered Devices List */}
         <div className="flex flex-col gap-2">
-          <span className="text-xs font-bold uppercase tracking-wider text-muted px-1">
-            Select a device
-          </span>
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted">
+              Select a device
+            </span>
+            <button
+              onClick={() => {
+                setIsManualIpOpen(!isManualIpOpen);
+                setProbeError(null);
+              }}
+              className="text-xs text-accent hover:underline flex items-center gap-1 cursor-pointer font-medium"
+            >
+              <Plus size={13} />
+              <span>{isManualIpOpen ? 'Close IP Entry' : 'Add by IP'}</span>
+            </button>
+          </div>
+
+          {/* Manual Speaker IP Input Drawer */}
+          {isManualIpOpen && (
+            <div className="flex flex-col gap-2 p-3 rounded-xl bg-elevated/80 border border-accent/40 text-xs animate-in fade-in">
+              <span className="text-primary font-semibold">
+                Direct Google Cast Speaker Connection
+              </span>
+              <p className="text-[11px] text-secondary">
+                Enter your Google Home or Nest speaker's local IP address:
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. 192.168.0.48"
+                  value={manualIpInput}
+                  onChange={(e) => {
+                    setManualIpInput(e.target.value);
+                    setProbeError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleProbeManualIp();
+                  }}
+                  className="flex-1 bg-surface border border-customBorder rounded-lg px-3 py-1.5 text-xs text-primary font-mono focus:outline-none focus:border-accent"
+                />
+                <button
+                  onClick={handleProbeManualIp}
+                  disabled={isProbingIp || !manualIpInput.trim()}
+                  className="px-3.5 py-1.5 rounded-lg bg-accent text-accentContent font-semibold text-xs hover:opacity-90 disabled:opacity-40 flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  {isProbingIp ? <Loader2 size={12} className="animate-spin" /> : null}
+                  <span>{isProbingIp ? 'Probing...' : 'Connect'}</span>
+                </button>
+              </div>
+              {probeError && (
+                <p className="text-[11px] text-red-400 leading-tight">{probeError}</p>
+              )}
+              <p className="text-[10px] text-muted">
+                Tip: In the Google Home app, tap your speaker → Settings gear → Device Information → Technical Information to see its IP.
+              </p>
+            </div>
+          )}
 
           <div className="flex flex-col gap-1.5 max-h-60 overflow-y-auto">
             {remoteDevices.length === 0 ? (
-              <div className="p-4 rounded-xl border border-customBorder/40 bg-elevated/20 text-center text-xs text-muted">
-                No other devices found on local network.
+              <div className="p-4 rounded-xl border border-customBorder/40 bg-elevated/20 text-center text-xs text-muted flex flex-col gap-1.5 items-center">
+                <span>No other devices found on local network.</span>
+                <span className="text-[11px] text-secondary">
+                  If your Google Home is on Wi-Fi, tap{' '}
+                  <button
+                    onClick={() => setIsManualIpOpen(true)}
+                    className="text-accent underline font-semibold cursor-pointer"
+                  >
+                    Add by IP
+                  </button>{' '}
+                  to connect directly.
+                </span>
               </div>
             ) : (
               remoteDevices.map((dev) => {
@@ -312,7 +402,13 @@ export const DevicePickerModal: React.FC = () => {
               className="flex items-center gap-2 hover:text-primary transition-colors cursor-pointer"
             >
               <RefreshCw size={12} className={isScanning ? 'animate-spin text-accent' : 'text-accent'} />
-              <span>{isScanning ? 'Scanning Wi-Fi network...' : 'Scan for Speakers'}</span>
+              <span>
+                {isScanning
+                  ? wifiIp
+                    ? `Scanning ${wifiIp.split('.').slice(0, 3).join('.')}.x Wi-Fi...`
+                    : 'Scanning Wi-Fi network...'
+                  : 'Scan for Speakers'}
+              </span>
             </button>
             <div className="flex items-center gap-1">
               <Wifi size={13} />
