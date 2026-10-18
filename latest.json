@@ -1,9 +1,9 @@
 {
-  "version": "1.0.41",
-  "notes": "Mobile wrong-song and skip fix v1.0.41: the native resolver now validates extracted streams against the track title and duration before playing (rejects mismatched videos like remixes from stale cached ids), and queue identification via on-device YouTube search now runs through the updated NewPipeExtractor (v0.26.5) search instead of the dead public Piped fleet, so queue entries resolve into the correct song instead of skipping",
-  "publishedAt": 1792322027895,
-  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.41/dotify.exe",
-  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.41/dotify-setup.exe",
-  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.41/dotify.apk",
-  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.41"
+  "version": "1.0.42",
+  "notes": "Cast sync fix v1.0.42: when the phone hands playback to a speaker and becomes the controller, the local native engine is now fully silenced (previously it kept playing on the phone, so pause did nothing audible and the two drifted out of sync); queue-sync events no longer restart local playback while casting; native queue sync while idle only updates bookkeeping. Desktop behavior unchanged",
+  "publishedAt": 1792323464507,
+  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.42/dotify.exe",
+  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.42/dotify-setup.exe",
+  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.42/dotify.apk",
+  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.42"
 }
