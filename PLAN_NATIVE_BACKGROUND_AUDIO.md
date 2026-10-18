@@ -1,5 +1,10 @@
 # Foolproof Plan: Native Background & Screen-Off Audio Streaming for Dotify (Android)
 
+> **STATUS (2026-10-18): IMPLEMENTED & SHIPPED as v1.0.39.** See commit `c1eda30`
+> (`NativePlayerEngine.kt`, `YtStreamResolver.kt`, `DotifyMediaService.kt`,
+> `MainActivity.kt` bridge, `build-apk.bat` guard) and the live release at
+> <https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.39>.
+
 > **Version:** 1.0.0 · **Date:** 2026-10-18
 > **Precondition:** v1.0.30–v1.0.38 WebView-rescue attempts documented in `MOBILE-BACKGROUND-STREAMING-POST-MORTEM.md` all failed for one root cause: **the audio source lives in the Chromium WebView, which Android suspends when the Activity's display surface is destroyed.** No web-level trick survives that.
 > **This plan stops rescuing the WebView and moves the audio engine out of it.**
