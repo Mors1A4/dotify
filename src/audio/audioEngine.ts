@@ -938,6 +938,15 @@ export class AudioEngine {
         this.standbyFadeTimer = null;
         this.standbyFadePromise = null;
       }
+      // The native ExoPlayer engine is also a LOCAL audio path. Leaving it
+      // running while the local device becomes a controller made the phone
+      // keep playing (audibly) next to the speaker and desync from the remote
+      // host — the WebView-era paths were silenced here, the engine was not.
+      if (this.isUsingNativeEngine) {
+        this.isUsingNativeEngine = false;
+        try { androidNativePlayback.stop(); } catch { /* noop */ }
+      }
+      YouTubeIframeBridge.setNativeOwner(false);
       if (this.isUsingYouTubeBridge) {
         this.ytBridge.pause();
       } else {
@@ -1008,6 +1017,10 @@ export class AudioEngine {
    * currently playing track (cache hit ⇒ sub-second).
    */
   public syncNativeQueue(tracks: Track[]): void {
+    // Never sync while this device is only a remote controller (casting to a
+    // speaker/host): the engine must stay idle, otherwise the sync would
+    // (re)start local playback next to the remote host.
+    if (this.isControllerMode) return;
     if (!this.isUsingNativeEngine || !androidNativePlayback.isAvailable()) return;
     try {
       const currentId = this.currentTrack?.id ?? null;

@@ -26,6 +26,19 @@
 > implausible match is dropped and the search tiers resolve the real video.
 > PC harness verified search outputs for 3 known songs all return canonical
 > uploads and resolve with full audio streams.
+>
+> **FOLLOW-UP 3 (2026-10-18, shipped as v1.0.42):** cast/controller desync —
+> the phone kept playing local audio after handing playback to a speaker.
+> Cause: `audioEngine.setControllerMode(true)` silenced only the WebView-side
+> paths (iframe + HTML5 elements); the native ExoPlayer engine was left
+> running, so "pause" as a controller did nothing audible on the phone and the
+> two streams drifted apart. Additionally `NativePlayerEngine.updateQueue`
+> was aliased to `playQueue`, so store-side queue syncs (which the store
+> performs most when the user is casting = assuming no local audio) would
+> RESTART local playback. Fixes: setControllerMode stops the native engine
+> and clears native ownership; `syncNativeQueue` no-ops in controller mode;
+> Kotlin `updateQueue` is now bookkeeping-only (idle: refresh metas, active:
+> leave the running playlist untouched).
 
 > **Version:** 1.0.0 · **Date:** 2026-10-18
 > **Precondition:** v1.0.30–v1.0.38 WebView-rescue attempts documented in `MOBILE-BACKGROUND-STREAMING-POST-MORTEM.md` all failed for one root cause: **the audio source lives in the Chromium WebView, which Android suspends when the Activity's display surface is destroyed.** No web-level trick survives that.

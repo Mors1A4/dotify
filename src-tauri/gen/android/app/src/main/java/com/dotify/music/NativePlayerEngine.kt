@@ -121,7 +121,20 @@ object NativePlayerEngine {
      * startIndex = index of the currently playing track in the NEW queue and
      * startMs = current position, so the implementation reuses playQueue.
      */
-    fun updateQueue(payloadJson: String): Boolean = playQueue(payloadJson)
+    fun updateQueue(payloadJson: String): Boolean {
+        // A queue *sync* must never (re)start playback: TS calls this whenever
+        // the store queue changes — including while this device only acts as a
+        // remote controller for a speaker or another active host. Refresh the
+        // bookkeeping when idle; while a queue plays, the running playlist
+        // stays authoritative (the resolver keeps it fed, transitions map
+        // through playlistToPayload).
+        val payload = parseQueuePayload(payloadJson) ?: return false
+        if (!hasActiveQueue) {
+            queueMetas = payload.metas
+            lastPayloadIndex = -1
+        }
+        return true
+    }
 
     fun pause() {
         mainHandler.post {
