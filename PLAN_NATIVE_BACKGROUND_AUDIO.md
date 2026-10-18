@@ -12,6 +12,20 @@
 > wall ("Sign in to confirm you're not a bot"), killing the Piped fallback
 > tiers. Dependency bumped to **v0.26.5** (PC-side harness re-verified both:
 > real googlevideo URLs for multiple videoIds via `StreamInfo.getInfo`).
+>
+> **FOLLOW-UP 2 (2026-10-18, shipped as v1.0.41):** field symptoms on device —
+> wrong song played ("funny remix") and queue-wide skip chains. Causes: (a)
+> the meta passed for non-target queue entries carries no videoId, and the
+> previous tier-4 fallback searched the now-dead Piped fleet → `resolve()`
+> null → skip for every item; (b) the tapped track's id came from the TS
+> resolver whose persistent winners were never re-validated (stale localStorage
+> mapping can point at a different video). Fixes, both in Kotlin:
+> extractor-based YouTube search (`SearchInfo.getInfo`, duration + title
+> scoring) replaces the Piped search as primary identification; and tier-2
+> results are now plausibility-checked against artist/title/duration — an
+> implausible match is dropped and the search tiers resolve the real video.
+> PC harness verified search outputs for 3 known songs all return canonical
+> uploads and resolve with full audio streams.
 
 > **Version:** 1.0.0 · **Date:** 2026-10-18
 > **Precondition:** v1.0.30–v1.0.38 WebView-rescue attempts documented in `MOBILE-BACKGROUND-STREAMING-POST-MORTEM.md` all failed for one root cause: **the audio source lives in the Chromium WebView, which Android suspends when the Activity's display surface is destroyed.** No web-level trick survives that.

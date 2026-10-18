@@ -8,26 +8,30 @@ import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.localization.Localization
+import org.schabi.newpipe.extractor.search.SearchInfo
 import org.schabi.newpipe.extractor.stream.StreamInfo
+import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 
 /**
  * On-device YouTube stream URL resolver for native background playback.
  *
- * Tier 1: NewPipeExtractor (same engine NewPipe/RiMusic bundle) — resolves
- *         progressive audio URLs for a known videoId directly from YouTube.
- * Tier 2: Public Piped instances (plain JSON) — reliable fallback when the
- *         extractor is temporarily broken by a YouTube layout change.
- * Tier 3: Piped search (artist + title + duration match) when no videoId is
- *         known, then tiers 1/2 run again for the found id.
+ * Tier 1: fresh in-memory cache (4h TTL).
+ * Tier 2: NewPipeExtractor on the known videoId (v0.26.5 — the SABR-capable
+ *         generation), validated so a stale/odd id cannot make the app play a
+ *         completely different song (e.g. a remix).
+ * Tier 3: Piped /streams on known id — the public fleet has been behind
+ *         YouTube's anti-bot wall since 2026; kept as cheap opportunism.
+ * Tier 4: on-device search for artist+title (extractor search first, Piped
+ *         search only if the fleet recovers), then extraction of the found id.
  *
- * Everything is cached in-memory for 4 hours (googlevideo URLs typically live
- * ~6 hours). All resolution is BLOCKING — callers must invoke off the main
- * thread (NativePlayerEngine does exactly that).
+ * All resolution is BLOCKING — callers must invoke off the main thread
+ * (NativePlayerEngine does exactly that).
  */
 object YtStreamResolver {
 
@@ -42,10 +46,23 @@ object YtStreamResolver {
         val url: String,
         val mimeType: String,
         val bitrateKbps: Int,
-        val videoId: String
+        val videoId: String,
+        /** Title reported by the resolved video — used by plausibility checks. */
+        val actualTitle: String = "",
+        /** Duration reported by the resolved video — used by plausibility checks. */
+        val actualDurationSec: Long = 0L
     )
 
-    private class CacheEntry(val videoId: String, val url: String, val mimeType: String, val bitrateKbps: Int, val createdAt: Long)
+    private class CacheEntry(
+        val videoId: String,
+        val url: String,
+        val mimeType: String,
+        val bitrateKbps: Int,
+        val title: String,
+        val durationSec: Long,
+        val createdAt: Long
+    )
+
     private class SearchEntry(val videoId: String, val createdAt: Long)
 
     private val cache = ConcurrentHashMap<String, CacheEntry>()
@@ -90,13 +107,30 @@ object YtStreamResolver {
             }
         }
 
-        // 2. Extractor on known id
+        // 2. Extractor on known id — accept only *plausible* matches. A stale
+        //    cache or an odd ranking can hand us an id for a DIFFERENT song
+        //    (the "funny remix" bug); on a bad match we drop it and let the
+        //    search tiers find the right video.
+        var knownIdImplausible = false
         if (candidateId != null) {
-            resolveViaExtractor(candidateId, forceRefresh)?.let { cached(it, candidateId, query); return it }
+            val viaExtractor =
+                resolveViaExtractor(candidateId, forceRefresh, artist, title, expectedDurationSec)
+            if (viaExtractor != null) {
+                if (isPlausibleMatch(viaExtractor, artist, title, expectedDurationSec)) {
+                    cached(viaExtractor, candidateId, query)
+                    return viaExtractor
+                }
+                Log.w(
+                    TAG,
+                    "implausible match for $candidateId ('${viaExtractor.actualTitle}', " +
+                        "${viaExtractor.actualDurationSec}s) — searching for the real video"
+                )
+                knownIdImplausible = true
+            }
         }
 
-        // 3. Piped streams on known id
-        if (candidateId != null) {
+        // 3. Piped streams on known id (filler tier, mostly dead since 2026)
+        if (candidateId != null && !knownIdImplausible) {
             resolveViaPiped(candidateId)?.let { cached(it, candidateId, query); return it }
         }
 
@@ -104,7 +138,13 @@ object YtStreamResolver {
         if (query.isNotEmpty()) {
             val found = searchVideoId(query, expectedDurationSec)
             if (found != null && found != candidateId) {
-                resolveViaExtractor(found, true)?.let { cached(it, found, query); return it }
+                resolveViaExtractor(found, true, artist, title, expectedDurationSec)?.let {
+                    if (isPlausibleMatch(it, artist, title, expectedDurationSec)) {
+                        cached(it, found, query)
+                        return it
+                    }
+                    Log.w(TAG, "search result ${it.videoId} also implausible ('${it.actualTitle}')")
+                }
                 resolveViaPiped(found)?.let { cached(it, found, query); return it }
             }
         }
@@ -113,17 +153,77 @@ object YtStreamResolver {
     }
 
     private fun entryToResolved(entry: CacheEntry): ResolvedStream =
-        ResolvedStream(entry.url, entry.mimeType, entry.bitrateKbps, entry.videoId)
+        ResolvedStream(entry.url, entry.mimeType, entry.bitrateKbps, entry.videoId, entry.title, entry.durationSec)
 
     private fun cached(resolved: ResolvedStream, keyId: String, query: String) {
-        cache[keyId] = CacheEntry(resolved.videoId, resolved.url, resolved.mimeType, resolved.bitrateKbps, now())
+        val entry = CacheEntry(
+            resolved.videoId,
+            resolved.url,
+            resolved.mimeType,
+            resolved.bitrateKbps,
+            resolved.actualTitle,
+            resolved.actualDurationSec,
+            now()
+        )
+        cache[keyId] = entry
         if (query.isNotEmpty()) {
-            cache["q:$query"] =
-                CacheEntry(resolved.videoId, resolved.url, resolved.mimeType, resolved.bitrateKbps, now())
+            cache["q:$query"] = entry
         }
     }
 
     private fun now(): Long = System.currentTimeMillis()
+
+    // ---------------------------------------------------------------------
+    // Plausibility checks (wrong-song guard)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Rejects extracted videos that plainly are not the requested song. This is
+     * the safety net against stale search caches and ranking misses that would
+     * otherwise make the app play, e.g., a comedy remix under the user's title.
+     */
+    private fun isPlausibleMatch(
+        resolved: ResolvedStream,
+        artist: String,
+        title: String,
+        expectedDurationSec: Long
+    ): Boolean {
+        if (resolved.actualTitle.isBlank() && resolved.actualDurationSec <= 0L) return true
+
+        val expected = normalizeForCompare("$artist $title")
+        val actual = normalizeForCompare(resolved.actualTitle)
+        val sim = if (expected.isNotEmpty() && actual.isNotEmpty()) {
+            tokenSimilarity(expected, actual)
+        } else 0.0
+
+        if (expectedDurationSec > 0L && resolved.actualDurationSec > 0L) {
+            val diff = abs(expectedDurationSec - resolved.actualDurationSec)
+            return when {
+                diff <= 20L -> true // duration is the strongest signal
+                diff <= 240L -> sim >= 0.35
+                else -> sim >= 0.60
+            }
+        }
+        return sim >= 0.30
+    }
+
+    private fun normalizeForCompare(raw: String): String = raw
+        .lowercase(Locale.US)
+        .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
+        .replace(
+            Regex("(official|lyrics?|video|audio|visualizer|hd|hq|mv|remaster(ed)?|album|version|extended|e\\/s|c\\/w)"),
+            " "
+        )
+        .replace(Regex("[^a-z0-9\\u00c0-\\u024f\\u0400-\\u04ff ]+"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+    private fun tokenSimilarity(a: String, b: String): Double {
+        val ta = a.split(' ').filter { it.isNotBlank() }.toSet()
+        val tb = b.split(' ').filter { it.isNotBlank() }.toSet()
+        if (ta.isEmpty() || tb.isEmpty()) return 0.0
+        return ta.intersect(tb).size.toDouble() / minOf(ta.size, tb.size).toDouble()
+    }
 
     // ---------------------------------------------------------------------
     // Tier: NewPipeExtractor
@@ -138,10 +238,18 @@ object YtStreamResolver {
         }
     }
 
-    private fun resolveViaExtractor(videoId: String, forceRefresh: Boolean): ResolvedStream? {
+    private fun resolveViaExtractor(
+        videoId: String,
+        forceRefresh: Boolean,
+        artist: String = "",
+        title: String = "",
+        expectedDurationSec: Long = 0L
+    ): ResolvedStream? {
         if (!forceRefresh) {
             cache[videoId]?.takeIf { now() - it.createdAt < CACHE_TTL_MS }?.let { return entryToResolved(it) }
         }
+        // artist/title/expectedDurationSec are carried for signature symmetry
+        // with resolve(); validation runs there via isPlausibleMatch().
         return try {
             ensureNewPipe()
             val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoId")
@@ -173,7 +281,14 @@ object YtStreamResolver {
                 ?: candidates.first()
             val mimeToUse = if (best.mime.isNotEmpty()) best.mime else guessMimeFromUrl(best.url)
 
-            ResolvedStream(best.url, mimeToUse, best.bitrate / 1000, videoId)
+            ResolvedStream(
+                best.url,
+                mimeToUse,
+                best.bitrate / 1000,
+                videoId,
+                try { info.name } catch (_: Throwable) { "" },
+                try { info.duration } catch (_: Throwable) { 0L }
+            )
         } catch (e: Throwable) {
             Log.w(TAG, "extractor resolve failed for $videoId: ${e.message}")
             null
@@ -226,7 +341,7 @@ object YtStreamResolver {
     }
 
     // ---------------------------------------------------------------------
-    // Tier: Piped search (artist + title / duration matching)
+    // Tier: on-device search (artist + title / duration matching)
     // ---------------------------------------------------------------------
 
     private fun searchVideoId(query: String, expectedDurationSec: Long): String? {
@@ -235,6 +350,15 @@ object YtStreamResolver {
 
         searchCache[q]?.takeIf { now() - it.createdAt < CACHE_TTL_MS }?.let { return it.videoId }
 
+        // NewPipeExtractor search first: it works on-device with the v0.26.x
+        // player clients, while the public Piped /search fleet has been behind
+        // YouTube's anti-bot wall since 2026.
+        searchVideoIdViaExtractor(q, expectedDurationSec)?.let {
+            searchCache[q] = SearchEntry(it, now())
+            return it
+        }
+
+        // Piped search fallback (opportunistic; fleet mostly unreachable).
         for (instance in PIPED_INSTANCES) {
             try {
                 val encoded = URLEncoder.encode(q, "UTF-8")
@@ -274,6 +398,52 @@ object YtStreamResolver {
         }
         return null
     }
+
+    /**
+     * Searches YouTube on-device through the NewPipeExtractor video search and
+     * scores items by duration match and title similarity. This is the primary
+     * identification fallback when (a) the WebView/TS layer produced no videoId
+     * for a queue entry or (b) the extractor rejected a given id as implausible.
+     */
+    private fun searchVideoIdViaExtractor(query: String, expectedDurationSec: Long): String? {
+        return try {
+            ensureNewPipe()
+            val handler = ServiceList.YouTube.searchQHFactory
+                .fromQuery(query, listOf("videos"), "")
+            val info = SearchInfo.getInfo(ServiceList.YouTube, handler)
+
+            val expectedTokens = normalizeForCompare(query)
+            var bestId: String? = null
+            var bestScore = Int.MIN_VALUE
+            for (item in info.relatedItems) {
+                if (item !is StreamInfoItem) continue
+                val id = try { extractVideoId(item.url) } catch (_: Throwable) { null } ?: continue
+                val duration = try { item.duration } catch (_: Throwable) { -1L }
+                if (duration <= 0L || duration > 1800L) continue // skip live / 30-min+ items
+
+                val durationScore: Int = if (expectedDurationSec <= 0L) {
+                    50_000
+                } else {
+                    val diff = abs(duration - expectedDurationSec)
+                    (if (diff <= 45L) 1_000_000 else if (diff <= 150L) 150_000 else 100_000) - diff.toInt()
+                }
+
+                val titleSim = tokenSimilarity(expectedTokens, normalizeForCompare(item.name))
+                val score = durationScore + (500 * titleSim).toInt()
+
+                if (score > bestScore) {
+                    bestScore = score
+                    bestId = id
+                }
+            }
+            bestId
+        } catch (e: Throwable) {
+            Log.w(TAG, "extractor search failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun diffOf(a: Long, b: Long): Long = abs(a - b)
 
     private fun extractVideoId(url: String): String? {
         val marker = "v="
