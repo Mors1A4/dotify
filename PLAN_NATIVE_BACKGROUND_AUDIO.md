@@ -39,6 +39,18 @@
 > and clears native ownership; `syncNativeQueue` no-ops in controller mode;
 > Kotlin `updateQueue` is now bookkeeping-only (idle: refresh metas, active:
 > leave the running playlist untouched).
+>
+> **FOLLOW-UP 4 (2026-10-18, shipped as v1.0.44):** logic-audit fixes. (1)
+> `NativePlayerEngine.stop()` never invalidated the background resolution
+> worker — an append/retry landing right after a stop re-attached the
+> playlist and `play()`ed again (the remaining "phone keeps playing after
+> stop" class during cast transfers/lockscreen stops on cold queues); stop
+> now bumps the generation and append/retry are `hasActiveQueue`-guarded.
+> (2) cast-transfer failure rollback resumed with a bare `resume()` against
+> the emptied engine (dead play button); it now restarts the track via
+> `playTrackAtPosition`. (3) native `idle` state events never cleared
+> `isUsingNativeEngine`, leaving stop-driven dead controls; `idle` now
+> clears ownership like `ended`.
 
 > **Version:** 1.0.0 · **Date:** 2026-10-18
 > **Precondition:** v1.0.30–v1.0.38 WebView-rescue attempts documented in `MOBILE-BACKGROUND-STREAMING-POST-MORTEM.md` all failed for one root cause: **the audio source lives in the Chromium WebView, which Android suspends when the Activity's display surface is destroyed.** No web-level trick survives that.

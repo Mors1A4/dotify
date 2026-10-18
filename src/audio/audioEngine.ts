@@ -1066,7 +1066,15 @@ export class AudioEngine {
         } else if (state === 'paused') {
           this.notifyState(false, false);
         }
-        // 'idle' / 'ended' are handled by onEnded below.
+        // 'idle' means the engine was stopped (user stop, teardown or a
+        // player error): native ownership must be dropped too, otherwise
+        // later transport calls (lockscreen/stop→play) only tickle an
+        // emptied engine and the play button goes dead. Same cleanup as
+        // onEnded below.
+        if (state === 'idle') {
+          this.isUsingNativeEngine = false;
+          YouTubeIframeBridge.setNativeOwner(false);
+        }
       },
       onTransition: (track, payloadIndex) => {
         if (!this.isUsingNativeEngine) return;

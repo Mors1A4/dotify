@@ -1354,7 +1354,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
             transferringToId: null,
           });
           if (store.isPlaying) {
-            audioEngine.resume();
+            // Entering controller mode already stopped the native engine
+            // (its playlist is emptied by the hard stop) — a bare resume()
+            // would be a dead button. Restart the actual track instead.
+            audioEngine.playTrackAtPosition(snapshot.track, snapshot.positionMs, true).catch(() => {});
           }
         }
         return success;

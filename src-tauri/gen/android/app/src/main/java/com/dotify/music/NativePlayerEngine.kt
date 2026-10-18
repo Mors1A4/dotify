@@ -117,9 +117,10 @@ object NativePlayerEngine {
     }
 
     /**
-     * Replace the playlist while keeping current playback. The JS wrapper sends
-     * startIndex = index of the currently playing track in the NEW queue and
-     * startMs = current position, so the implementation reuses playQueue.
+     * Queue *sync* from the store: refresh bookkeeping only. Must never start
+     * or restart playback — TS calls this whenever the store queue changes,
+     * including while the local device only acts as a remote controller for a
+     * speaker or another active host.
      */
     fun updateQueue(payloadJson: String): Boolean {
         // A queue *sync* must never (re)start playback: TS calls this whenever
@@ -192,6 +193,12 @@ object NativePlayerEngine {
 
     fun stop() {
         mainHandler.post {
+            // Invalidate any in-flight resolution/retry work FIRST: a resolver
+            // append or an error-retry finishing right after stop() would
+            // otherwise re-set the playlist, prepare() and play() again —
+            // reviving playback the user just stopped (experienced as "the
+            // phone keeps playing" after a cast transfer or lockscreen stop).
+            generation.incrementAndGet()
             val p = player
             hasActiveQueue = false
             if (p != null) {
@@ -398,6 +405,7 @@ object NativePlayerEngine {
 
     private fun appendResolvedItem(gen: Int, payloadIdx: Int, url: String, mime: String?) {
         if (generation.get() != gen) return
+        if (!hasActiveQueue) return
         val p = player ?: return
         val meta = queueMetas.getOrNull(payloadIdx) ?: return
         val item = buildMediaItem(meta, url, mime)
@@ -567,6 +575,7 @@ object NativePlayerEngine {
                 }
                 mainHandler.post {
                     if (generation.get() != gen) return@post
+                    if (!hasActiveQueue) return@post
                     val pl = player
                     if (resolved == null || pl == null) {
                         skipFailed(gen)
