@@ -107,43 +107,66 @@ object YtStreamResolver {
             }
         }
 
-        // 2. Extractor on known id — accept only *plausible* matches. A stale
-        //    cache or an odd ranking can hand us an id for a DIFFERENT song
-        //    (the "funny remix" bug); on a bad match we drop it and let the
-        //    search tiers find the right video.
-        var knownIdImplausible = false
+        // 2. Extractor on known id — preferred path. Plausibility only STEERS
+        //    here: a stale cache/ranking winner is demoted in favour of the
+        //    fresh search below, but if the two CONCUR (search returns the
+        //    same id) the extractor result is accepted — our metadata can be
+        //    wrong (localized titles, drifted durations) while the video is
+        //    exactly right, and treating the gate as a veto would fail to
+        //    find sources for playable songs.
         if (candidateId != null) {
             val viaExtractor =
                 resolveViaExtractor(candidateId, forceRefresh, artist, title, expectedDurationSec)
+            if (viaExtractor != null && isPlausibleMatch(viaExtractor, artist, title, expectedDurationSec)) {
+                cached(viaExtractor, candidateId, query)
+                return viaExtractor
+            }
             if (viaExtractor != null) {
-                if (isPlausibleMatch(viaExtractor, artist, title, expectedDurationSec)) {
-                    cached(viaExtractor, candidateId, query)
-                    return viaExtractor
-                }
                 Log.w(
                     TAG,
                     "implausible match for $candidateId ('${viaExtractor.actualTitle}', " +
-                        "${viaExtractor.actualDurationSec}s) — searching for the real video"
+                        "${viaExtractor.actualDurationSec}s) — cross-checking via search"
                 )
-                knownIdImplausible = true
+                val searchBest = if (query.isNotEmpty()) searchVideoId(query, expectedDurationSec) else null
+                if (searchBest == null) {
+                    // No better opinion available: play what the extractor found.
+                    cached(viaExtractor, candidateId, query)
+                    return viaExtractor
+                }
+                if (searchBest == candidateId) {
+                    // Concordance — both ranking paths agree; metadata is likely
+                    // at fault, not the choice.
+                    cached(viaExtractor, candidateId, query)
+                    return viaExtractor
+                }
+                resolveViaExtractor(searchBest, true, artist, title, expectedDurationSec)?.let { alt ->
+                    cached(alt, searchBest, query)
+                    return alt
+                }
+                // Search id failed to yield streams: fall back to the original.
+                Log.w(TAG, "search id $searchBest unresolvable — keeping $candidateId")
+                cached(viaExtractor, candidateId, query)
+                return viaExtractor
             }
         }
 
         // 3. Piped streams on known id (filler tier, mostly dead since 2026)
-        if (candidateId != null && !knownIdImplausible) {
+        if (candidateId != null) {
             resolveViaPiped(candidateId)?.let { cached(it, candidateId, query); return it }
         }
 
-        // 4. On-device search for artist+title, then extraction for the found id
+        // 4. On-device search for artist+title, then extraction for the found
+        //    id. Runs whenever the extractor did not already deliver a playable
+        //    URL for the known id (no id given, or extraction of it failed).
+        //    The search result is accepted directly — it is ranked from the
+        //    golden store metadata, the same class of choice the TS resolver
+        //    made pre-native.
         if (query.isNotEmpty()) {
             val found = searchVideoId(query, expectedDurationSec)
             if (found != null && found != candidateId) {
                 resolveViaExtractor(found, true, artist, title, expectedDurationSec)?.let {
-                    if (isPlausibleMatch(it, artist, title, expectedDurationSec)) {
-                        cached(it, found, query)
-                        return it
-                    }
-                    Log.w(TAG, "search result ${it.videoId} also implausible ('${it.actualTitle}')")
+                    cached(it, found, query)
+                    return it
                 }
                 resolveViaPiped(found)?.let { cached(it, found, query); return it }
             }

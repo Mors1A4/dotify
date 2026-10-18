@@ -226,6 +226,26 @@ export class AudioEngine {
       this.lastTickTime = Date.now();
       if (this.isControllerMode) return;
 
+      if (this.isUsingNativeEngine) {
+        if (androidNativePlayback.isPlaying()) {
+          const cur = this.getCurrentTime();
+          const dur = this.getDuration();
+          for (const cb of this.timeUpdateCallbacks) {
+            cb(cur, dur);
+          }
+          if (isFinite(dur) && dur > 20 && dur - cur <= 15 && !this.hasNotifiedApproachingEnd) {
+            this.hasNotifiedApproachingEnd = true;
+            for (const cb of this.approachingEndCallbacks) {
+              cb();
+            }
+          }
+          if (typeof requestAnimationFrame !== 'undefined') {
+            this.rafId = requestAnimationFrame(tick);
+          }
+        }
+        return;
+      }
+
       if (this.isUsingYouTubeBridge) {
         if (this.ytBridge.isPlaying()) {
           const cur = this.ytBridge.getCurrentTime();
@@ -1051,6 +1071,7 @@ export class AudioEngine {
       onTransition: (track, payloadIndex) => {
         if (!this.isUsingNativeEngine) return;
         if (track) this.currentTrack = track as any;
+        this.hasNotifiedApproachingEnd = false;
         this.nativeTransitionCallbacks.forEach((cb) => {
           try { cb(track, payloadIndex); } catch { /* listener error */ }
         });
