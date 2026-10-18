@@ -1,9 +1,9 @@
 {
-  "version": "1.0.42",
-  "notes": "Cast sync fix v1.0.42: when the phone hands playback to a speaker and becomes the controller, the local native engine is now fully silenced (previously it kept playing on the phone, so pause did nothing audible and the two drifted out of sync); queue-sync events no longer restart local playback while casting; native queue sync while idle only updates bookkeeping. Desktop behavior unchanged",
-  "publishedAt": 1792323464507,
-  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.42/dotify.exe",
-  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.42/dotify-setup.exe",
-  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.42/dotify.apk",
-  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.42"
+  "version": "1.0.43",
+  "notes": "Android polish v1.0.43: seekbar/progress tracker now runs during native playback (since v1.0.39 the WebView progress loop ignored the native engine, freezing the tracker while audio played); source resolution no longer deadlocks - the on-device matcher now cross-checks instead of rejecting, so songs with imperfect metadata still play the best matching upload instead of failing to find a source",
+  "publishedAt": 1792324514528,
+  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.43/dotify.exe",
+  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.43/dotify-setup.exe",
+  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.43/dotify.apk",
+  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.43"
 }
