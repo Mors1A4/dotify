@@ -18,7 +18,7 @@ const MEDIA3_DEPS = [
   'androidx.media3:media3-exoplayer:1.5.1',
   'androidx.media3:media3-common:1.5.1',
   'androidx.media3:media3-datasource:1.5.1',
-  'com.github.TeamNewPipe:NewPipeExtractor:v0.24.5',
+  'com.github.TeamNewPipe:NewPipeExtractor:v0.26.5',
 ];
 
 let changed = 0;

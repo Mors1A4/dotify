@@ -4,6 +4,14 @@
 > (`NativePlayerEngine.kt`, `YtStreamResolver.kt`, `DotifyMediaService.kt`,
 > `MainActivity.kt` bridge, `build-apk.bat` guard) and the live release at
 > <https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.39>.
+>
+> **FOLLOW-UP (2026-10-18, shipped as v1.0.40):** on-device resolution with the
+> pinned NewPipeExtractor **v0.24.5 returned no streams**: YouTube's 2026 SABR
+> enforcement requires the player-client workaround landed in extractor
+> **v0.26.3**, and the entire public Piped instance fleet is hit by the same
+> wall ("Sign in to confirm you're not a bot"), killing the Piped fallback
+> tiers. Dependency bumped to **v0.26.5** (PC-side harness re-verified both:
+> real googlevideo URLs for multiple videoIds via `StreamInfo.getInfo`).
 
 > **Version:** 1.0.0 · **Date:** 2026-10-18
 > **Precondition:** v1.0.30–v1.0.38 WebView-rescue attempts documented in `MOBILE-BACKGROUND-STREAMING-POST-MORTEM.md` all failed for one root cause: **the audio source lives in the Chromium WebView, which Android suspends when the Activity's display surface is destroyed.** No web-level trick survives that.

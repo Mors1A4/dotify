@@ -74,7 +74,7 @@ dependencies {
     implementation("androidx.media3:media3-common:1.5.1")
     implementation("androidx.media3:media3-datasource:1.5.1")
     // On-device YouTube stream resolution (same engine NewPipe / RiMusic bundle)
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.24.5")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
     testImplementation("junit:junit:4.13.2")

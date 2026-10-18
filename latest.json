@@ -1,9 +1,9 @@
 {
-  "version": "1.0.39",
-  "notes": "Android v1.0.39: native background audio engine - screen-off and locked-screen playback now streams continuously via Media3 ExoPlayer inside MediaSessionService with on-device YouTube resolution (NewPipe and Piped fallback), native queue auto-advance and repeat, engine-owned audio focus and wake lock, accurate lockscreen metadata; dev and test instances are now isolated from live sync relays so tests can never trigger playback on real devices",
-  "publishedAt": 1792316469600,
-  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.39/dotify.exe",
-  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.39/dotify-setup.exe",
-  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.39/dotify.apk",
-  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.39"
+  "version": "1.0.40",
+  "notes": "Mobile fix v1.0.40: on-device YouTube extraction upgraded to NewPipeExtractor v0.26.5 - YouTube replaced stream delivery in 2026 (SABR enforcement) which broke the older extractor and every public Piped instance, so songs failed to start on Android; the upgraded extractor restores native stream URLs for screen-off and locked-screen playback. Desktop playback unchanged",
+  "publishedAt": 1792319913683,
+  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.40/dotify.exe",
+  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.40/dotify-setup.exe",
+  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.40/dotify.apk",
+  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.40"
 }
