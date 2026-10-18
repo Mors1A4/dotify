@@ -1,9 +1,9 @@
 {
-  "version": "1.0.40",
-  "notes": "Mobile fix v1.0.40: on-device YouTube extraction upgraded to NewPipeExtractor v0.26.5 - YouTube replaced stream delivery in 2026 (SABR enforcement) which broke the older extractor and every public Piped instance, so songs failed to start on Android; the upgraded extractor restores native stream URLs for screen-off and locked-screen playback. Desktop playback unchanged",
-  "publishedAt": 1792319913683,
-  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.40/dotify.exe",
-  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.40/dotify-setup.exe",
-  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.40/dotify.apk",
-  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.40"
+  "version": "1.0.41",
+  "notes": "Mobile wrong-song and skip fix v1.0.41: the native resolver now validates extracted streams against the track title and duration before playing (rejects mismatched videos like remixes from stale cached ids), and queue identification via on-device YouTube search now runs through the updated NewPipeExtractor (v0.26.5) search instead of the dead public Piped fleet, so queue entries resolve into the correct song instead of skipping",
+  "publishedAt": 1792322027895,
+  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.41/dotify.exe",
+  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.41/dotify-setup.exe",
+  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.41/dotify.apk",
+  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.41"
 }
