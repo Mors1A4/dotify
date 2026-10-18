@@ -13,6 +13,13 @@ set "PATH=%JAVA_HOME%\bin;%PATH%"
 set "ANDROID_HOME=C:\Users\monty\AppData\Local\Android\Sdk"
 set "NDK_HOME=C:\Users\monty\AppData\Local\Android\Sdk\ndk\27.0.12077973"
 
+echo [0/3] Verifying native background-audio wiring (android-native-guard)...
+call node scripts\android-native-guard.mjs
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Native audio guard failed - build aborted!
+    exit /b %ERRORLEVEL%
+)
+
 echo [1/3] Building Web Frontend (Vite)...
 call npm run build
 if %ERRORLEVEL% neq 0 (

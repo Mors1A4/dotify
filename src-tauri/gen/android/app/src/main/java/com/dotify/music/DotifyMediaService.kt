@@ -12,7 +12,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
@@ -23,6 +25,7 @@ import androidx.media.app.NotificationCompat.MediaStyle
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
@@ -59,6 +62,8 @@ class DotifyMediaService : Service() {
         initMediaSession()
         initWakeLocks()
         initAudioRouting()
+        NativePlayerEngine.init(applicationContext)
+        NativePlayerEngine.setListener(engineListener)
         try {
             val filter = android.content.IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
@@ -145,10 +150,91 @@ class DotifyMediaService : Service() {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Native engine events (playing/buffering/transition/ended). These are the
+     * source of truth during native playback; the legacy JS pushes only mirror
+     * the WebView path and are gated in onStartCommand.
+     */
+    private val engineListener = object : NativePlayerEngine.Listener {
+        override fun onEngineStateChanged(playing: Boolean, buffering: Boolean) {
+            isPlaying = playing
+            updateLocks()
+            syncStateAndNotification()
+            if (playing) startTicker() else stopTicker()
+        }
+
+        override fun onTrackTransition(payloadIndex: Int, meta: NativePlayerEngine.TrackMeta?) {
+            if (meta != null) {
+                currentTitle = meta.title
+                currentArtist = meta.artist.ifBlank { "Dotify" }
+                currentAlbum = meta.album.ifBlank { "Dotify" }
+                currentDurationMs = if (meta.durationSec > 0) (meta.durationSec * 1000.0).toLong() else 0L
+                if (meta.artworkUrl.isNotBlank()) {
+                    if (currentArtworkBitmap == null || meta.artworkUrl != currentArtworkUrl) {
+                        currentArtworkUrl = meta.artworkUrl
+                        loadArtworkAsync(meta.artworkUrl)
+                    }
+                } else {
+                    currentArtworkBitmap = null
+                }
+            }
+            currentPositionMs = 0L
+            syncStateAndNotification()
+        }
+
+        override fun onQueueEnded() {
+            isPlaying = false
+            stopTicker()
+            syncStateAndNotification()
+        }
+
+        override fun onEngineError(message: String) {
+            MainActivity.pushNativePlayerEvent(
+                "error",
+                JSONObject().put("message", message).toString()
+            )
+        }
+    }
+
+    private val tickerHandler = Handler(Looper.getMainLooper())
+    private val tickerRunnable = object : Runnable {
+        override fun run() {
+            if (!isPlaying) return
+            try {
+                val snap = NativePlayerEngine.positionSnapshot()
+                currentPositionMs = snap.first
+                if (snap.second > 0) currentDurationMs = snap.second
+                updateSessionPlaybackStateOnly()
+                MainActivity.pushNativePlayerEvent(
+                    "position",
+                    JSONObject()
+                        .put("positionMs", currentPositionMs)
+                        .put("durationMs", currentDurationMs)
+                        .toString()
+                )
+            } catch (_: Exception) {}
+            tickerHandler.postDelayed(this, TICK_INTERVAL_MS)
+        }
+    }
+
+    private fun startTicker() {
+        tickerHandler.removeCallbacks(tickerRunnable)
+        tickerHandler.postDelayed(tickerRunnable, TICK_INTERVAL_MS)
+    }
+
+    private fun stopTicker() {
+        tickerHandler.removeCallbacks(tickerRunnable)
+    }
+
     private fun updateLocks() {
         try {
             if (isPlaying) {
-                requestAudioFocus()
+                // The native engine (ExoPlayer handleAudioFocus=true) manages focus
+                // itself during native playback — a second manual request here would
+                // double-handle focus loss. Keep it only for the WebView audio path.
+                if (!NativePlayerEngine.isActive()) {
+                    requestAudioFocus()
+                }
                 if (wakeLock?.isHeld != true) {
                     wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24hr safety timeout
                 }
@@ -204,26 +290,32 @@ class DotifyMediaService : Service() {
 
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() {
-                    MainActivity.dispatchMediaAction("play")
+                    if (NativePlayerEngine.isActive()) NativePlayerEngine.resume()
+                    else MainActivity.dispatchMediaAction("play")
                 }
 
                 override fun onPause() {
-                    MainActivity.dispatchMediaAction("pause")
+                    if (NativePlayerEngine.isActive()) NativePlayerEngine.pause()
+                    else MainActivity.dispatchMediaAction("pause")
                 }
 
                 override fun onSkipToNext() {
-                    MainActivity.dispatchMediaAction("next")
+                    if (NativePlayerEngine.isActive()) NativePlayerEngine.next()
+                    else MainActivity.dispatchMediaAction("next")
                 }
 
                 override fun onSkipToPrevious() {
-                    MainActivity.dispatchMediaAction("prev")
+                    if (NativePlayerEngine.isActive()) NativePlayerEngine.prev()
+                    else MainActivity.dispatchMediaAction("prev")
                 }
 
                 override fun onSeekTo(pos: Long) {
-                    MainActivity.dispatchMediaAction("seek", pos)
+                    if (NativePlayerEngine.isActive()) NativePlayerEngine.seekTo(pos)
+                    else MainActivity.dispatchMediaAction("seek", pos)
                 }
 
                 override fun onStop() {
+                    if (NativePlayerEngine.isActive()) NativePlayerEngine.stop()
                     MainActivity.dispatchMediaAction("pause")
                     stopForegroundService()
                 }
@@ -236,34 +328,61 @@ class DotifyMediaService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_UPDATE_TRACK -> {
-                currentTitle = intent.getStringExtra(EXTRA_TITLE) ?: "Dotify"
-                currentArtist = intent.getStringExtra(EXTRA_ARTIST) ?: ""
-                currentAlbum = intent.getStringExtra(EXTRA_ALBUM) ?: "Dotify"
-                val artwork = intent.getStringExtra(EXTRA_ARTWORK) ?: ""
-                currentDurationMs = intent.getLongExtra(EXTRA_DURATION, 0L)
-                currentPositionMs = intent.getLongExtra(EXTRA_POSITION, 0L)
-                isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, true)
+                val pushedTitle = intent.getStringExtra(EXTRA_TITLE)
+                val nativeMeta = NativePlayerEngine.currentMeta()
+                if (NativePlayerEngine.isActive() && nativeMeta != null && pushedTitle != nativeMeta.title) {
+                    // Stale WebView-driven metadata push racing a native transition.
+                    // Ignore the payload but keep the foreground contract satisfied.
+                    syncStateAndNotification()
+                } else {
+                    currentTitle = pushedTitle ?: "Dotify"
+                    currentArtist = intent.getStringExtra(EXTRA_ARTIST) ?: ""
+                    currentAlbum = intent.getStringExtra(EXTRA_ALBUM) ?: "Dotify"
+                    val artwork = intent.getStringExtra(EXTRA_ARTWORK) ?: ""
+                    currentDurationMs = intent.getLongExtra(EXTRA_DURATION, 0L)
+                    currentPositionMs = intent.getLongExtra(EXTRA_POSITION, 0L)
+                    isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, true)
 
-                // Enter foreground and acquire locks immediately without blocking on artwork download
-                syncStateAndNotification()
+                    // Enter foreground and acquire locks immediately without blocking on artwork download
+                    syncStateAndNotification()
 
-                if (artwork != currentArtworkUrl) {
-                    currentArtworkUrl = artwork
-                    loadArtworkAsync(artwork)
+                    if (artwork != currentArtworkUrl) {
+                        currentArtworkUrl = artwork
+                        loadArtworkAsync(artwork)
+                    }
                 }
             }
 
             ACTION_UPDATE_PLAYBACK_STATE -> {
-                isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
-                currentPositionMs = intent.getLongExtra(EXTRA_POSITION, currentPositionMs)
-                syncStateAndNotification()
+                // During native playback the engine is the source of truth for play/pause;
+                // JS pushes only drive the WebView (HTML5) path.
+                if (!NativePlayerEngine.isActive()) {
+                    isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
+                    currentPositionMs = intent.getLongExtra(EXTRA_POSITION, currentPositionMs)
+                    syncStateAndNotification()
+                }
             }
 
-            ACTION_PLAY -> MainActivity.dispatchMediaAction("play")
-            ACTION_PAUSE -> MainActivity.dispatchMediaAction("pause")
-            ACTION_PREVIOUS -> MainActivity.dispatchMediaAction("prev")
-            ACTION_NEXT -> MainActivity.dispatchMediaAction("next")
+            ACTION_ENGINE_SYNC -> syncStateAndNotification()
+
+            ACTION_PLAY -> {
+                if (NativePlayerEngine.isActive()) NativePlayerEngine.resume()
+                else MainActivity.dispatchMediaAction("play")
+            }
+            ACTION_PAUSE -> {
+                if (NativePlayerEngine.isActive()) NativePlayerEngine.pause()
+                else MainActivity.dispatchMediaAction("pause")
+            }
+            ACTION_PREVIOUS -> {
+                if (NativePlayerEngine.isActive()) NativePlayerEngine.prev()
+                else MainActivity.dispatchMediaAction("prev")
+            }
+            ACTION_NEXT -> {
+                if (NativePlayerEngine.isActive()) NativePlayerEngine.next()
+                else MainActivity.dispatchMediaAction("next")
+            }
             ACTION_STOP -> {
+                if (NativePlayerEngine.isActive()) NativePlayerEngine.stop()
                 MainActivity.dispatchMediaAction("pause")
                 stopForegroundService()
             }
@@ -297,9 +416,8 @@ class DotifyMediaService : Service() {
         }
     }
 
-    private fun syncStateAndNotification() {
-        updateLocks()
-        val stateBuilder = PlaybackStateCompat.Builder()
+    private fun buildPlaybackStateCompat(): PlaybackStateCompat {
+        return PlaybackStateCompat.Builder()
             .setActions(
                 PlaybackStateCompat.ACTION_PLAY or
                 PlaybackStateCompat.ACTION_PAUSE or
@@ -315,8 +433,22 @@ class DotifyMediaService : Service() {
                 if (isPlaying) 1.0f else 0.0f,
                 SystemClock.elapsedRealtime()
             )
+            .build()
+    }
 
-        mediaSession.setPlaybackState(stateBuilder.build())
+    /**
+     * Light-weight 1 Hz ticker update: refresh the session position without
+     * re-posting the notification (avoids notification churn during playback).
+     */
+    private fun updateSessionPlaybackStateOnly() {
+        try {
+            mediaSession.setPlaybackState(buildPlaybackStateCompat())
+        } catch (_: Exception) {}
+    }
+
+    private fun syncStateAndNotification() {
+        updateLocks()
+        mediaSession.setPlaybackState(buildPlaybackStateCompat())
 
         val metaBuilder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
@@ -428,6 +560,8 @@ class DotifyMediaService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopTicker()
+        NativePlayerEngine.setListener(null)
         try {
             unregisterReceiver(screenReceiver)
         } catch (_: Exception) {}
@@ -440,6 +574,7 @@ class DotifyMediaService : Service() {
     companion object {
         const val CHANNEL_ID = "dotify_playback_channel"
         const val NOTIFICATION_ID = 2001
+        private const val TICK_INTERVAL_MS = 1000L
 
         const val ACTION_PLAY = "com.dotify.music.ACTION_PLAY"
         const val ACTION_PAUSE = "com.dotify.music.ACTION_PAUSE"
@@ -448,6 +583,7 @@ class DotifyMediaService : Service() {
         const val ACTION_STOP = "com.dotify.music.ACTION_STOP"
         const val ACTION_UPDATE_TRACK = "com.dotify.music.ACTION_UPDATE_TRACK"
         const val ACTION_UPDATE_PLAYBACK_STATE = "com.dotify.music.ACTION_UPDATE_PLAYBACK_STATE"
+        const val ACTION_ENGINE_SYNC = "com.dotify.music.ACTION_ENGINE_SYNC"
 
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_ARTIST = "extra_artist"

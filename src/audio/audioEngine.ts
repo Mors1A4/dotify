@@ -4,6 +4,7 @@ import { audioCache } from './audioCache';
 import { getApiUrl, getCustomApiUrl, isAndroidApp } from '../services/apiConfig';
 import { useMp3VaultStore } from '../services/mp3VaultService';
 import { YouTubeIframeBridge } from './youtubeIframeBridge';
+import { androidNativePlayback, NativeTrackPayload } from './androidNativePlayback';
 import { resolveYouTubeVideoId } from '../services/youtubeResolver';
 
 function createAudioElement(): HTMLAudioElement {
@@ -38,6 +39,17 @@ export class AudioEngine {
   // YouTube IFrame Player Bridge for 100% self-contained mobile & fallback playback
   private ytBridge: YouTubeIframeBridge;
   private isUsingYouTubeBridge: boolean = false;
+
+  // Native Media3 ExoPlayer engine (Android) for background / screen-off
+  // resilient streaming. Owning this Russell-free flag reroutes every
+  // transport, time and visualizer hook so the WebView path stays untouched.
+  private isUsingNativeEngine: boolean = false;
+  private nativeQueueContext: Track[] = [];
+  private nativeQueueStartIndex: number = -1;
+  private nativeRepeatMode: 'none' | 'one' | 'all' = 'none';
+  private nativeTransitionCallbacks: Set<(track: NativeTrackPayload | null, payloadIndex: number) => void> = new Set();
+  private nativeQueueEndedCallbacks: Set<() => void> = new Set();
+  private nativeEventsWired: boolean = false;
 
   private prebufferedTrack: Track | null = null;
   private isPrebufferedReady: boolean = false;
@@ -709,9 +721,20 @@ export class AudioEngine {
     this.stopProgressLoop();
     this.isSwitchingTrack = true;
 
+    // Tear down the previous native queue first so two players never overlap.
+    if (this.isUsingNativeEngine) {
+      this.isUsingNativeEngine = false;
+      try { androidNativePlayback.stop(); } catch { /* noop */ }
+    }
     if (this.isUsingYouTubeBridge) {
       this.ytBridge.pause();
       this.isUsingYouTubeBridge = false;
+    }
+
+    // Android: hand playback to the native engine for screen-off-proof audio.
+    if (this.isNativeRoutable(track)) {
+      const nativeOk = await this.playViaNativeEngine(track, reqId);
+      if (nativeOk) return;
     }
 
     const isDirect = this.isDirectAudioTrack(track);
@@ -938,9 +961,227 @@ export class AudioEngine {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Native engine (Android ExoPlayer) queue context + event hooks
+  // ---------------------------------------------------------------------
+
+  /**
+   * Hands the current store queue to the native engine so the Media3 playlist
+   * can auto-advance (and repeat) entirely natively even when WebView/JS
+   * timers are frozen in Doze. playerStore calls this whenever the store queue
+   * or repeat mode is (re)established before triggering playback.
+   */
+  public setNativeQueueContext(
+    tracks: Track[],
+    startIndex: number,
+    repeatMode: 'off' | 'all' | 'one' | 'none' = 'none'
+  ): void {
+    this.nativeQueueContext = Array.isArray(tracks) ? [...tracks] : [];
+    this.nativeQueueStartIndex = typeof startIndex === 'number' ? startIndex : -1;
+    this.nativeRepeatMode = repeatMode === 'one' || repeatMode === 'all' ? repeatMode : 'none';
+  }
+
+  public setNativeRepeatMode(mode: 'off' | 'all' | 'one' | 'none' | 'none'): void {
+    this.nativeRepeatMode = mode === 'one' || mode === 'all' ? mode : 'none';
+    try {
+      androidNativePlayback.setRepeatMode(this.nativeRepeatMode);
+    } catch { /* bridge unavailable */ }
+  }
+
+  public onNativeTransition(cb: (track: NativeTrackPayload | null, payloadIndex: number) => void): () => void {
+    this.nativeTransitionCallbacks.add(cb);
+    return () => { this.nativeTransitionCallbacks.delete(cb); };
+  }
+
+  public onNativeQueueEnded(cb: () => void): () => void {
+    this.nativeQueueEndedCallbacks.add(cb);
+    return () => { this.nativeQueueEndedCallbacks.delete(cb); };
+  }
+
+  public isNativeEngineActive(): boolean {
+    return this.isUsingNativeEngine;
+  }
+
+  /**
+   * Keeps the native playlist in sync with store-side queue edits while the
+   * native engine owns playback. The native side restarts cleanly on the
+   * currently playing track (cache hit ⇒ sub-second).
+   */
+  public syncNativeQueue(tracks: Track[]): void {
+    if (!this.isUsingNativeEngine || !androidNativePlayback.isAvailable()) return;
+    try {
+      const currentId = this.currentTrack?.id ?? null;
+      androidNativePlayback.updateQueue(
+        tracks.map((t) => this.toNativePayload(t, null)),
+        currentId,
+        this.nativeRepeatMode
+      );
+    } catch { /* ignore */ }
+  }
+
+  private wireNativeEvents(): void {
+    if (this.nativeEventsWired) return;
+    this.nativeEventsWired = true;
+    androidNativePlayback.setCallbacks({
+      onState: (state) => {
+        if (!this.isUsingNativeEngine) return;
+        if (state === 'playing') {
+          this.isSwitchingTrack = false;
+          this.notifyState(true, false);
+        } else if (state === 'buffering') {
+          if (!this.isSwitchingTrack) this.notifyState(true, true);
+        } else if (state === 'paused') {
+          this.notifyState(false, false);
+        }
+        // 'idle' / 'ended' are handled by onEnded below.
+      },
+      onTransition: (track, payloadIndex) => {
+        if (!this.isUsingNativeEngine) return;
+        if (track) this.currentTrack = track as any;
+        this.nativeTransitionCallbacks.forEach((cb) => {
+          try { cb(track, payloadIndex); } catch { /* listener error */ }
+        });
+      },
+      onEnded: () => {
+        if (!this.isUsingNativeEngine) return;
+        this.isUsingNativeEngine = false;
+        YouTubeIframeBridge.setNativeOwner(false);
+        this.stopProgressLoop();
+        this.notifyState(false, false);
+        this.nativeQueueEndedCallbacks.forEach((cb) => {
+          try { cb(); } catch { /* listener error */ }
+        });
+      },
+      onError: (message) => {
+        console.warn('[AudioEngine] Native engine error:', message);
+      },
+    });
+  }
+
+  private isNativeRoutable(track: Track): boolean {
+    if (!androidNativePlayback.isAvailable()) return false;
+    const source = String(track.source || '');
+    if (source === 'p2p') return false; // torrent-backed playback needs the local backend
+    if (this.isDirectAudioTrack(track)) {
+      // Native can only stream absolute http(s) sources (blob:/relative need the WebView)
+      return /^https?:\/\//i.test(String(track.streamUrl || ''));
+    }
+    // Anything resolved via the YouTube bridge path is resolvable on-device.
+    return true;
+  }
+
+  private nativeDirectStreamUrl(track: Track): string | null {
+    const url = String(track.streamUrl || '');
+    return /^https?:\/\//i.test(url) ? url : null;
+  }
+
+  private toNativePayload(track: Track, videoId: string | null): NativeTrackPayload {
+    const safeDur = track.duration && isFinite(track.duration) && track.duration > 0
+      ? Math.round(track.duration)
+      : undefined;
+    return {
+      id: track.id,
+      videoId: videoId ?? null,
+      title: track.title || 'Unknown',
+      artist: track.artist || '',
+      album: track.album ?? null,
+      artworkUrl: track.artworkUrl ?? null,
+      durationSec: safeDur,
+      source: track.source as string,
+      streamUrl: this.nativeDirectStreamUrl(track),
+    };
+  }
+
+  private buildNativePayloadQueue(track: Track, videoIdForCurrent: string | null): NativeTrackPayload[] {
+    const context = this.nativeQueueContext;
+    const idx = context.findIndex((t) => t && t.id === track.id);
+    const base = idx >= 0 ? context : [track];
+    // Exclude tracks the native engine cannot reliably stream (e.g. vault
+    // tracks whose URL is a blob: or server-relative path) — otherwise the
+    // on-device search fallback could match an unrelated YouTube song.
+    const queueSource = base.filter((t) => t && t.id === track.id ? true : this.isNativeRoutable(t));
+    this.nativeQueueStartIndex = queueSource.findIndex((t) => t.id === track.id);
+    return queueSource.map((t) =>
+      this.toNativePayload(t, t.id === track.id ? videoIdForCurrent : null)
+    );
+  }
+
+  private async playViaNativeEngine(
+    track: Track,
+    reqId: number,
+    startSeconds = 0,
+    shouldPlay = true
+  ): Promise<boolean> {
+    try {
+      this.wireNativeEvents();
+
+      // Silence every WebView-side audio path first (single-player invariant
+      // that the v1.0.30–1.0.38 attempts kept violating).
+      this.activeAudio.pause();
+      this.standbyAudio.pause();
+      if (this.isUsingYouTubeBridge) {
+        this.ytBridge.pause();
+        this.isUsingYouTubeBridge = false;
+      }
+
+      const isDirect = this.isDirectAudioTrack(track);
+      let videoId: string | null = null;
+      if (isDirect) {
+        if (!/^https?:\/\//i.test(String(track.streamUrl || ''))) return false;
+      } else {
+        const duration = track.duration && isFinite(track.duration) ? track.duration : 0;
+        this.notifyState(true, true); // buffering while resolving
+        videoId = await resolveYouTubeVideoId(track.artist, track.title, duration);
+        if (reqId !== this.playRequestId) return false;
+        if (!videoId) return false;
+      }
+
+      const payloadTracks = this.buildNativePayloadQueue(track, videoId);
+      const startIndex = Math.max(0, this.nativeQueueStartIndex >= 0 ? this.nativeQueueStartIndex : 0);
+      const target = payloadTracks[startIndex];
+
+      this.currentTrack = track;
+      this.hasNotifiedApproachingEnd = false;
+      this.prebufferedTrack = null;
+      this.isPrebufferedReady = false;
+      const fallbackDur = target?.durationSec || (track.duration && isFinite(track.duration) ? track.duration : 210);
+      this.emitSyntheticTimeUpdate(startSeconds, fallbackDur);
+
+      this.isUsingNativeEngine = true;
+      const started = androidNativePlayback.playWithQueue(
+        payloadTracks,
+        startIndex,
+        startSeconds * 1000,
+        this.nativeRepeatMode,
+        Math.round(this.currentVolume * 100)
+      );
+      if (!started) {
+        this.isUsingNativeEngine = false;
+        YouTubeIframeBridge.setNativeOwner(false);
+        return false;
+      }
+
+      YouTubeIframeBridge.setNativeOwner(true);
+      this.isSwitchingTrack = false;
+      this.notifyState(shouldPlay, true);
+      if (shouldPlay) {
+        this.startProgressLoop();
+      }
+      return true;
+    } catch (err) {
+      console.warn('[AudioEngine] Native routing failed, falling back to WebView path:', err);
+      this.isUsingNativeEngine = false;
+      YouTubeIframeBridge.setNativeOwner(false);
+      return false;
+    }
+  }
+
   public getCurrentTime(): number {
     if (this.isControllerMode) {
       return this.controllerCurrentTime;
+    }
+    if (this.isUsingNativeEngine) {
+      return (androidNativePlayback.getCurrentPositionMs() || 0) / 1000;
     }
     if (this.isUsingYouTubeBridge) {
       return this.ytBridge.getCurrentTime();
@@ -954,6 +1195,13 @@ export class AudioEngine {
       if (this.currentTrack?.duration && isFinite(this.currentTrack.duration) && this.currentTrack.duration > 0) {
         return this.currentTrack.duration;
       }
+      return 0;
+    }
+    if (this.isUsingNativeEngine) {
+      const nativeDurSec = androidNativePlayback.getDurationSec();
+      if (nativeDurSec > 0) return nativeDurSec;
+      const trackDur = this.currentTrack?.duration;
+      if (trackDur && isFinite(trackDur) && trackDur > 0) return trackDur;
       return 0;
     }
     if (this.isUsingYouTubeBridge) {
@@ -976,6 +1224,15 @@ export class AudioEngine {
   public togglePlay(): void {
     if (this.isControllerMode) {
       this.remoteCommandDelegate?.('toggle_play');
+      return;
+    }
+
+    if (this.isUsingNativeEngine) {
+      if (androidNativePlayback.isPlaying()) {
+        androidNativePlayback.pause();
+      } else {
+        androidNativePlayback.resume();
+      }
       return;
     }
 
@@ -1010,6 +1267,11 @@ export class AudioEngine {
       this.standbyFadeTimer = null;
       this.standbyFadePromise = null;
     }
+    if (this.isUsingNativeEngine) {
+      androidNativePlayback.pause();
+      this.notifyState(false, false);
+      return;
+    }
     if (this.isUsingYouTubeBridge) {
       this.ytBridge.pause();
       this.notifyState(false, false);
@@ -1022,6 +1284,11 @@ export class AudioEngine {
   public resume(): void {
     if (this.isControllerMode) {
       this.remoteCommandDelegate?.('play');
+      return;
+    }
+    if (this.isUsingNativeEngine) {
+      androidNativePlayback.resume();
+      this.notifyState(true, false);
       return;
     }
     if (this.isUsingYouTubeBridge) {
@@ -1037,6 +1304,12 @@ export class AudioEngine {
       const dur = this.getDuration();
       this.emitSyntheticTimeUpdate(seconds, dur);
       this.remoteCommandDelegate?.('seek', { seconds, positionMs: seconds * 1000 });
+      return;
+    }
+    if (this.isUsingNativeEngine) {
+      androidNativePlayback.seekTo(seconds);
+      const dur = this.getDuration();
+      this.emitSyntheticTimeUpdate(seconds, dur);
       return;
     }
     if (this.isUsingYouTubeBridge) {
@@ -1070,12 +1343,23 @@ export class AudioEngine {
     this.stopProgressLoop();
     this.isSwitchingTrack = shouldPlay;
 
+    // Tear down the previous native queue first so two players never overlap.
+    if (this.isUsingNativeEngine) {
+      this.isUsingNativeEngine = false;
+      try { androidNativePlayback.stop(); } catch { /* noop */ }
+    }
     if (this.isUsingYouTubeBridge) {
       this.ytBridge.pause();
       this.isUsingYouTubeBridge = false;
     }
 
     const targetSeconds = Math.max(0, positionMs / 1000);
+
+    // Android: hand playback to the native engine for screen-off-proof audio.
+    if (this.isNativeRoutable(track)) {
+      const nativeOk = await this.playViaNativeEngine(track, ++this.playRequestId, targetSeconds, shouldPlay);
+      if (nativeOk) return;
+    }
 
     const isDirect = this.isDirectAudioTrack(track);
 
@@ -1155,6 +1439,10 @@ export class AudioEngine {
     const clamped = Math.max(0, Math.min(1, volume));
     this.currentVolume = clamped;
     this.ytBridge.setVolume(clamped);
+    if (this.isUsingNativeEngine) {
+      // Native uses the raw percentage; the 1.8 gain curve is WebAudio-only.
+      try { androidNativePlayback.setVolume(clamped * 100); } catch { /* noop */ }
+    }
     if (this.isControllerMode) {
       this.remoteCommandDelegate?.('set_volume', { volume: clamped });
       return;
@@ -1182,6 +1470,9 @@ export class AudioEngine {
   }
 
   public isPlaying(): boolean {
+    if (this.isUsingNativeEngine) {
+      return androidNativePlayback.isPlaying();
+    }
     if (this.isUsingYouTubeBridge) {
       return this.ytBridge.isPlaying();
     }
@@ -1206,7 +1497,7 @@ export class AudioEngine {
    * expecting real FFT data.
    */
   public isBridgePlayback(): boolean {
-    return this.isUsingYouTubeBridge;
+    return this.isUsingYouTubeBridge || this.isUsingNativeEngine;
   }
 
   /**
@@ -1215,6 +1506,13 @@ export class AudioEngine {
    * states return false so visualizers fall back to idle breathing.
    */
   public isBridgeAudible(): boolean {
+    if (this.isUsingNativeEngine) {
+      // Native playback has no AnalyserNode either → same synthetic-pulse path
+      // the YouTube bridge used (silence invariant preserved).
+      if (!androidNativePlayback.isPlaying()) return false;
+      if (this.currentVolume <= 0.001) return false;
+      return true;
+    }
     if (!this.isUsingYouTubeBridge) return false;
     try {
       if (!this.ytBridge.isPlaying()) return false;
@@ -1226,6 +1524,13 @@ export class AudioEngine {
   }
 
   public getBridgeVisualTime(): number {
+    if (this.isUsingNativeEngine) {
+      try {
+        return (androidNativePlayback.getCurrentPositionMs() || 0) / 1000;
+      } catch {
+        return 0;
+      }
+    }
     try {
       return this.ytBridge.getCurrentTime() || 0;
     } catch {
@@ -1299,7 +1604,7 @@ export class AudioEngine {
    * Returns 0 if silent, paused, buffering, seeking, or audio context suspended.
    */
   public getAudioEnergy(): number {
-    if (this.isUsingYouTubeBridge) {
+    if (this.isUsingYouTubeBridge || this.isUsingNativeEngine) {
       if (this.isBridgeAudible()) {
         const cur = this.getBridgeVisualTime();
         const beatInterval = 60 / 124;

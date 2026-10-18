@@ -16,6 +16,18 @@ export type EndedCallback = () => void;
 export type ErrorCallback = (errorCode: number) => void;
 
 export class YouTubeIframeBridge {
+  private static nativeOwner: boolean = false;
+
+  /**
+   * True while the native (Media3) engine owns playback. The hidden iframe is
+   * then inert: its system-triggered PAUSED events must never trigger the
+   * auto-resume loop that historically collided with WebView audio elements
+   * (the "1ms pause stutter" bug) or fought the native player for the audio path.
+   */
+  public static setNativeOwner(value: boolean): void {
+    YouTubeIframeBridge.nativeOwner = value;
+  }
+
   private static instance: YouTubeIframeBridge | null = null;
 
   private player: any = null;
@@ -167,6 +179,10 @@ export class YouTubeIframeBridge {
         this.onStateChangeCallback?.(true, false);
         break;
       case 2: // PAUSED
+        if (YouTubeIframeBridge.nativeOwner) {
+          // Native engine owns playback: the hidden bridge is inert.
+          return;
+        }
         if (!this.userInitiatedPause) {
           // System or OS throttled/paused the iframe when screen turned off or backgrounded.
           // Auto-resume playback immediately without propagating pause to playerStore or UI.

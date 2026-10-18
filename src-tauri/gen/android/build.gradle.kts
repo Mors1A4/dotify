@@ -13,6 +13,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // Native background audio: NewPipeExtractor ships its own artifacts only via JitPack.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

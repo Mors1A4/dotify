@@ -591,6 +591,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       audioEngine.setControllerMode(false);
       remoteProgressInterpolator.stop();
 
+      // Hand the full handoff queue to the native engine (Android Doze-safe).
+      const handoffIdx = queue.findIndex((t) => t.id === track.id);
+      audioEngine.setNativeQueueContext(queue, handoffIdx >= 0 ? handoffIdx : (currentTrackIndex ?? 0), repeatMode);
+
       await audioEngine.playTrackAtPosition(track, positionMs, isPlaying);
 
       connectClient.ackHandoff(fromId, true, positionMs);
@@ -715,6 +719,73 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     } else {
       nextTrack();
     }
+  });
+
+  // Native (Android Media3) engine hooks -------------------------------------
+  // Native auto-advances WITHOUT JS (Doze-safe); mirror transitions into the
+  // store without re-triggering audioEngine playback (no restarts, no overlap).
+  audioEngine.onNativeTransition((payload, payloadIndex) => {
+    if (get().connectMode === 'remote_controller') return;
+    const prevTrack = get().currentTrack;
+    void finalizeCurrentPlayRecord();
+
+    if (prevTrack && prevTrack.source !== 'radio') {
+      try {
+        const vault = useMp3VaultStore.getState();
+        if (vault.autoSaveCompleted) {
+          vault.saveTrackAsMp3(prevTrack, 'auto_complete').catch(() => {});
+        }
+      } catch {}
+    }
+
+    const queue = get().queue;
+    let nextTrackLocal: Track | null = null;
+    let nextIndex = typeof payloadIndex === 'number' ? payloadIndex : 0;
+    if (payload?.id) {
+      const idx = queue.findIndex((t) => t.id === payload.id);
+      if (idx >= 0) {
+        nextIndex = idx;
+        nextTrackLocal = queue[idx];
+      }
+    }
+    if (!nextTrackLocal) {
+      nextTrackLocal = {
+        id: String(payload?.id ?? `native-${nextIndex}`),
+        source: (payload?.source as any) ?? 'charts',
+        title: payload?.title ?? 'Unknown',
+        artist: payload?.artist ?? '',
+        album: payload?.album ?? undefined,
+        duration: payload?.durationSec ?? 0,
+        streamUrl: payload?.streamUrl ?? '',
+        artworkUrl: payload?.artworkUrl ?? undefined,
+        sourceMetadata: {},
+      } as Track;
+    }
+
+    audioEngine.setCurrentTrack(nextTrackLocal);
+    set({ currentTrack: nextTrackLocal, currentTrackIndex: nextIndex, isPlaying: true });
+    updateMediaSessionPlaybackState(true, audioEngine.getCurrentTime());
+    updateMediaSession(
+      nextTrackLocal,
+      {
+        onPlay: () => get().togglePlay(),
+        onPause: () => get().togglePlay(),
+        onPrevious: () => get().previousTrack(),
+        onNext: () => get().nextTrack(),
+        onSeekTo: (time) => get().seekTo(time),
+      },
+      true,
+      0
+    );
+    broadcastCurrentState();
+  });
+
+  audioEngine.onNativeQueueEnded(() => {
+    if (get().connectMode === 'remote_controller') return;
+    void finalizeCurrentPlayRecord();
+    set({ isPlaying: false, isBuffering: false });
+    updateMediaSessionPlaybackState(false, audioEngine.getCurrentTime());
+    broadcastCurrentState();
   });
 
   function areNavEntriesEqual(a?: NavigationEntry, b?: NavigationEntry): boolean {
@@ -1430,6 +1501,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       safeStorage.setItem('queue', updatedQueue);
       set({ currentTrack: track, currentTrackIndex: activeTrackIndex, queue: updatedQueue });
 
+      // Hand the store queue to the native engine (Android) so Media3 can
+      // auto-advance & repeat without any JS involvement while screen-off.
+      audioEngine.setNativeQueueContext(updatedQueue, activeTrackIndex, get().repeatMode);
+
       const replayed = lastPlayedTrackId === track.id || get().repeatMode === 'one';
       lastPlayedTrackId = track.id;
       activePlayRecord = {
@@ -1704,6 +1779,8 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         connectClient.sendRemoteCommand('set_repeat', { mode });
       }
       set({ repeatMode: mode });
+      // Forward to the native engine so repeat-one/all works with JS frozen.
+      audioEngine.setNativeRepeatMode(mode);
       broadcastCurrentState();
     },
     toggleShuffle: () => {
@@ -1737,6 +1814,10 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       }
       safeStorage.setItem('queue', queue);
       set({ queue, currentTrackIndex: newIndex });
+      if (newIndex >= 0 && currentTrack) {
+        audioEngine.setNativeQueueContext(queue, newIndex, get().repeatMode);
+      }
+      audioEngine.syncNativeQueue(queue);
       broadcastCurrentState();
     },
 

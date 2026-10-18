@@ -510,6 +510,91 @@ class MainActivity : TauriActivity() {
       }
     }, "AndroidNativeApp")
 
+    // Native background/screen-off audio engine (Media3 ExoPlayer + on-device
+    // stream resolution). The WebView hands the full queue over once; Media3
+    // owns play/pause/advance natively from here on.
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface
+      fun playQueue(payloadJson: String): Boolean {
+        return try {
+          NativePlayerEngine.init(applicationContext)
+          val ok = NativePlayerEngine.playQueue(payloadJson)
+          if (ok) ensureMediaServiceForeground()
+          ok
+        } catch (e: Exception) {
+          e.printStackTrace()
+          false
+        }
+      }
+
+      @JavascriptInterface
+      fun updateQueue(payloadJson: String): Boolean {
+        return try {
+          val ok = NativePlayerEngine.updateQueue(payloadJson)
+          if (ok) ensureMediaServiceForeground()
+          ok
+        } catch (e: Exception) {
+          e.printStackTrace()
+          false
+        }
+      }
+
+      @JavascriptInterface
+      fun pause() {
+        NativePlayerEngine.pause()
+      }
+
+      @JavascriptInterface
+      fun resume() {
+        NativePlayerEngine.resume()
+      }
+
+      @JavascriptInterface
+      fun seekTo(positionMs: Long) {
+        NativePlayerEngine.seekTo(positionMs)
+      }
+
+      @JavascriptInterface
+      fun next() {
+        NativePlayerEngine.next()
+      }
+
+      @JavascriptInterface
+      fun prev() {
+        NativePlayerEngine.prev()
+      }
+
+      @JavascriptInterface
+      fun stop() {
+        NativePlayerEngine.stop()
+      }
+
+      @JavascriptInterface
+      fun setVolume(volumePct: Int) {
+        NativePlayerEngine.setVolume(volumePct)
+      }
+
+      @JavascriptInterface
+      fun setRepeatMode(mode: String) {
+        NativePlayerEngine.setRepeatMode(mode)
+      }
+
+      @JavascriptInterface
+      fun isActive(): Boolean {
+        return NativePlayerEngine.isActive()
+      }
+
+      @JavascriptInterface
+      fun currentTimeMs(): Long {
+        return NativePlayerEngine.currentTimeMs()
+      }
+
+      @JavascriptInterface
+      fun durationMs(): Long {
+        return NativePlayerEngine.durationMs()
+      }
+    }, "AndroidNativePlayer")
+
     webView.addJavascriptInterface(object {
       @JavascriptInterface
       fun getWifiIp(): String {
@@ -534,8 +619,26 @@ class MainActivity : TauriActivity() {
     }
   }
 
-  private fun getLocalWifiIp(): String {
+  /**
+   * Keeps the media service foreground contract valid whenever the native
+   * engine starts working (playQueue/updateQueue may arrive while the app is
+   * headless during a restore or a wake from Doze).
+   */
+  private fun ensureMediaServiceForeground() {
     try {
+      val intent = Intent(this@MainActivity, DotifyMediaService::class.java)
+      intent.action = DotifyMediaService.ACTION_ENGINE_SYNC
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        startForegroundService(intent)
+      } else {
+        startService(intent)
+      }
+    } catch (e: Exception) {
+      e.printStackTrace()
+    }
+  }
+
+  private fun getLocalWifiIp(): String {    try {
       val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
       if (wifiManager != null) {
         val ipInt = wifiManager.connectionInfo?.ipAddress ?: 0
@@ -826,6 +929,23 @@ class MainActivity : TauriActivity() {
             "if (window.__dotifyNativeMediaAction) { window.__dotifyNativeMediaAction('$action'); }"
           }
           activity.currentWebView?.evaluateJavascript(js, null)
+        }
+      }
+    }
+
+    /**
+     * Pushes a native-engine event into the WebView. Payload must be a valid
+     * JSON object string; it is quoted and parsed inside the page.
+     */
+    fun pushNativePlayerEvent(type: String, payloadJson: String) {
+      activeInstance?.let { activity ->
+        val webView = activity.currentWebView ?: return
+        webView.post {
+          try {
+            val quoted = JSONObject.quote(payloadJson)
+            val js = "if (window.__dotifyNativePlaybackEvent) { try { window.__dotifyNativePlaybackEvent('$type', JSON.parse($quoted)); } catch (e) {} }"
+            webView.evaluateJavascript(js, null)
+          } catch (_: Exception) {}
         }
       }
     }

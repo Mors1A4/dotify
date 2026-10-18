@@ -46,6 +46,12 @@ export interface ConnectClientOptions {
   channelName?: string;
   enableWebSocket?: boolean;
   wsUrl?: string;
+  /**
+   * Explicitly attach the shared Firestore relay. When omitted, the relay is
+   * only started in production builds (see constructor gate below) so dev/test
+   * sessions never join the room shared with real user devices.
+   */
+  enableFirestoreRelay?: boolean;
 }
 
 import { getWsUrl } from './apiConfig';
@@ -138,10 +144,23 @@ export class ConnectClient {
     }
 
     this.initBroadcastChannel();
-    if (this.enableWebSocket) {
+    // Relay isolation gate (Google Home safeguard):
+    // A dev/test instance that silently joins the live relays (LAN WebSocket hub
+    // or the shared Firestore room) can receive real device state and emit
+    // remote commands — which is how test sessions ended up blasting playback
+    // on the user's Google Home. Relay auto-attach is therefore production-only.
+    // - Tests with explicit wsUrl (local hub fixtures) still attach.
+    // - Dev sessions can opt back in with localStorage 'dotify_dev_relay' = '1'.
+    const runMode =
+      (import.meta as { env?: { MODE?: string } } | undefined)?.env?.MODE ?? 'production';
+    const devRelayOverride = safeStorage.getItem<string>('dotify_dev_relay', '') === '1';
+    const relayAllowed = runMode === 'production' || devRelayOverride;
+    const hasExplicitWsTarget = options.wsUrl !== undefined;
+    if (this.enableWebSocket && (relayAllowed || hasExplicitWsTarget)) {
       this.initWebSocket();
     }
-    if (typeof window !== 'undefined' && options.enableWebSocket !== false) {
+    const wantsFirestore = options.enableFirestoreRelay ?? relayAllowed;
+    if (typeof window !== 'undefined' && wantsFirestore) {
       this.initFirestoreRelay().catch(() => {});
     }
   }
