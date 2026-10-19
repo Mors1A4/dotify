@@ -53,6 +53,36 @@ object YtStreamResolver {
         val actualDurationSec: Long = 0L
     )
 
+    data class Candidate(
+        val videoId: String,
+        val title: String,
+        val duration: Long,
+        val uploader: String = ""
+    )
+
+    fun searchCandidates(query: String): List<Candidate> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        return try {
+            ensureNewPipe()
+            val handler = ServiceList.YouTube.searchQHFactory
+                .fromQuery(q, listOf("videos"), "")
+            val info = SearchInfo.getInfo(ServiceList.YouTube, handler)
+            val list = mutableListOf<Candidate>()
+            for (item in info.relatedItems) {
+                if (item !is StreamInfoItem) continue
+                val id = try { extractVideoId(item.url) } catch (_: Throwable) { null } ?: continue
+                val duration = try { item.duration } catch (_: Throwable) { 0L }
+                val uploader = try { item.uploaderName ?: "" } catch (_: Throwable) { "" }
+                list.add(Candidate(id, item.name ?: "", if (duration > 0L) duration else 0L, uploader))
+            }
+            list
+        } catch (e: Throwable) {
+            Log.w(TAG, "searchCandidates via NewPipe failed: ${e.message}")
+            emptyList()
+        }
+    }
+
     private class CacheEntry(
         val videoId: String,
         val url: String,
@@ -162,7 +192,17 @@ object YtStreamResolver {
         //    golden store metadata, the same class of choice the TS resolver
         //    made pre-native.
         if (query.isNotEmpty()) {
-            val found = searchVideoId(query, expectedDurationSec)
+            var found = searchVideoId(query, expectedDurationSec)
+            if (found == null && title.isNotBlank()) {
+                val cleanTitle = title.trim()
+                val cleanArtist = artist.trim()
+                if (cleanArtist.isNotEmpty() && "$cleanTitle $cleanArtist" != query) {
+                    found = searchVideoId("$cleanTitle $cleanArtist", expectedDurationSec)
+                }
+                if (found == null && cleanTitle != query) {
+                    found = searchVideoId(cleanTitle, expectedDurationSec)
+                }
+            }
             if (found != null && found != candidateId) {
                 resolveViaExtractor(found, true, artist, title, expectedDurationSec)?.let {
                     cached(it, found, query)
@@ -237,7 +277,7 @@ object YtStreamResolver {
             Regex("(official|lyrics?|video|audio|visualizer|hd|hq|mv|remaster(ed)?|album|version|extended|e\\/s|c\\/w)"),
             " "
         )
-        .replace(Regex("[^a-z0-9\\u00c0-\\u024f\\u0400-\\u04ff ]+"), " ")
+        .replace(Regex("[^\\p{L}\\p{N} ]+"), " ")
         .replace(Regex("\\s+"), " ")
         .trim()
 
@@ -444,15 +484,28 @@ object YtStreamResolver {
                 val duration = try { item.duration } catch (_: Throwable) { -1L }
                 if (duration <= 0L || duration > 1800L) continue // skip live / 30-min+ items
 
+                val titleTokens = normalizeForCompare(item.name)
+                val uploaderTokens = try { normalizeForCompare(item.uploaderName ?: "") } catch (_: Throwable) { "" }
+                val combinedActual = if (uploaderTokens.isNotEmpty()) "$uploaderTokens $titleTokens" else titleTokens
+
+                val titleSim = tokenSimilarity(expectedTokens, combinedActual)
+                val exactTitleBonus = if (expectedTokens.contains(titleTokens) || (titleTokens.length > 3 && titleTokens.contains(expectedTokens))) 200_000 else 0
+                val titleScore = (500_000 * titleSim).toInt()
+
                 val durationScore: Int = if (expectedDurationSec <= 0L) {
                     50_000
                 } else {
                     val diff = abs(duration - expectedDurationSec)
-                    (if (diff <= 45L) 1_000_000 else if (diff <= 150L) 150_000 else 100_000) - diff.toInt()
+                    when {
+                        diff <= 5L -> 300_000 - (diff * 2_000).toInt()
+                        diff <= 15L -> 250_000 - (diff * 2_000).toInt()
+                        diff <= 45L -> 150_000 - (diff * 1_000).toInt()
+                        diff <= 120L -> 50_000 - (diff * 200).toInt()
+                        else -> -200_000
+                    }
                 }
 
-                val titleSim = tokenSimilarity(expectedTokens, normalizeForCompare(item.name))
-                val score = durationScore + (500 * titleSim).toInt()
+                val score = titleScore + exactTitleBonus + durationScore
 
                 if (score > bestScore) {
                     bestScore = score

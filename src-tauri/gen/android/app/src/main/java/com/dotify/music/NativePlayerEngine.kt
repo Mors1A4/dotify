@@ -351,8 +351,8 @@ object NativePlayerEngine {
 
                     var url = ""
                     var mime: String? = null
-                    if (meta.streamUrl.startsWith("http")) {
-                        // Direct-source track (radio / vault LAN / Audius / Deezer preview):
+                    if (isDirectStreamUrl(meta.streamUrl)) {
+                        // Direct-source track (radio / vault LAN / Audius):
                         // no resolution needed — Media3 reads the URL immediately.
                         url = meta.streamUrl
                         mime = mimeFromUrl(url)
@@ -650,6 +650,20 @@ object NativePlayerEngine {
         url.contains(".ogg", ignoreCase = true) || url.contains(".opus", ignoreCase = true) -> "audio/ogg"
         url.contains(".flac", ignoreCase = true) -> "audio/x-flac"
         else -> null
+    }
+
+    private fun isDirectStreamUrl(url: String): Boolean {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return false
+        val lower = url.lowercase(java.util.Locale.US)
+        // Proxy endpoints, local dev ports, and 30s Deezer previews must never bypass resolution
+        if (lower.contains("/api/stream/track") ||
+            lower.contains("dzcdn.net") ||
+            lower.contains("127.0.0.1") ||
+            lower.contains("localhost")
+        ) {
+            return false
+        }
+        return true
     }
 
     private fun isVaultLikeSource(meta: TrackMeta): Boolean {

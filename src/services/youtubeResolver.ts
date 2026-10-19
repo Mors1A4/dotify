@@ -15,7 +15,8 @@ const CACHE_PREFIX = 'dotify_yt_vid_';
 const MEMORY_CACHE = new Map<string, string>();
 
 function normalizeKey(artist: string, title: string): string {
-  return `${artist.toLowerCase().trim()}___${title.toLowerCase().trim()}`.replace(/[^a-z0-9_]/g, '');
+  const norm = `${artist.toLowerCase().trim()}___${title.toLowerCase().trim()}`.replace(/[^\p{L}\p{N}_]/gu, '');
+  return norm.length > 3 ? norm : encodeURIComponent(`${artist.trim()}___${title.trim()}`);
 }
 
 /**
@@ -188,44 +189,91 @@ export async function searchYouTube(query: string): Promise<YouTubeCandidate[]> 
  * Ranks candidate videos against target artist, title, and expected duration.
  * Prefers exact durations, official audio/video, and filters out covers/loops/reactions.
  */
+function extractTokens(str: string): string[] {
+  return str
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N} ]+/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2 && !['the', 'and', 'for', 'feat', 'with'].includes(w));
+}
+
 export function rankCandidates(
   candidates: YouTubeCandidate[],
   artist: string,
   title: string,
   expectedDur = 0
 ): YouTubeCandidate[] {
-  const normTitle = title.toLowerCase();
-  const normArtist = artist.toLowerCase();
+  const normTitle = title.toLowerCase().trim();
+  const normArtist = artist.toLowerCase().trim();
+  const titleTokens = extractTokens(normTitle);
+  const artistTokens = extractTokens(normArtist);
+  const spacelessArtist = normArtist.replace(/\s+/g, '');
 
   return candidates
     .map((c) => {
       let score = 0;
       const cTitle = (c.title || '').toLowerCase();
+      const cTokens = new Set(extractTokens(cTitle));
+      const spacelessCTitle = cTitle.replace(/\s+/g, '');
 
-      // 1. Duration match (within ±20s of target track)
+      // Check title presence
+      let hasTitleMatch = false;
+      if (normTitle && cTitle.includes(normTitle)) {
+        score += 50;
+        hasTitleMatch = true;
+      } else if (titleTokens.length > 0) {
+        const matchedTitleTokens = titleTokens.filter((t) => cTokens.has(t));
+        const ratio = matchedTitleTokens.length / titleTokens.length;
+        if (ratio >= 0.7) {
+          score += 35;
+          hasTitleMatch = true;
+        } else if (ratio >= 0.4) {
+          score += 20;
+          hasTitleMatch = true;
+        }
+      }
+
+      // Check artist presence
+      let hasArtistMatch = false;
+      if (normArtist && cTitle.includes(normArtist)) {
+        score += 40;
+        hasArtistMatch = true;
+      } else if (spacelessArtist && spacelessCTitle.includes(spacelessArtist)) {
+        score += 35;
+        hasArtistMatch = true;
+      } else if (artistTokens.length > 0) {
+        const matchedArtistTokens = artistTokens.filter((t) => cTokens.has(t));
+        const ratio = matchedArtistTokens.length / artistTokens.length;
+        if (ratio >= 0.6) {
+          score += 30;
+          hasArtistMatch = true;
+        }
+      }
+
+      // 1. Duration match (within ±30s of target track)
       if (expectedDur > 0 && c.duration > 0) {
         const diff = Math.abs(c.duration - expectedDur);
         if (diff <= 5) score += 60;
         else if (diff <= 15) score += 45;
         else if (diff <= 30) score += 20;
-        else if (diff > 120) score -= 50; // loop or preview teaser
+        else if (diff <= 60) score += 5;
+        else if (diff > 120) score -= 60; // loop or preview teaser
       }
 
-      // 2. Keyword bonuses
-      if (cTitle.includes('official audio')) score += 35;
-      else if (cTitle.includes('official music video') || cTitle.includes('official video')) score += 30;
-      else if (cTitle.includes('audio')) score += 15;
+      // 2. Keyword bonuses — ONLY if candidate matches the title or artist!
+      if (hasTitleMatch || hasArtistMatch) {
+        if (cTitle.includes('official audio')) score += 35;
+        else if (cTitle.includes('official music video') || cTitle.includes('official video')) score += 30;
+        else if (cTitle.includes('audio') || cTitle.includes('topic') || cTitle.includes('provided to youtube')) score += 15;
+      }
 
-      // 3. Artist & title presence
-      if (cTitle.includes(normArtist)) score += 25;
-      if (cTitle.includes(normTitle)) score += 25;
-
-      // 4. Penalties for non-originals unless explicitly part of the title
-      if (!normTitle.includes('live') && cTitle.includes('live')) score -= 30;
-      if (!normTitle.includes('cover') && cTitle.includes('cover')) score -= 40;
-      if (!normTitle.includes('remix') && cTitle.includes('remix')) score -= 25;
+      // 3. Penalties for non-originals unless explicitly part of the title
+      if (!normTitle.includes('live') && cTitle.includes('live')) score -= 35;
+      if (!normTitle.includes('cover') && cTitle.includes('cover')) score -= 45;
+      if (!normTitle.includes('remix') && cTitle.includes('remix')) score -= 30;
+      if (!normTitle.includes('karaoke') && (cTitle.includes('karaoke') || cTitle.includes('instrumental'))) score -= 50;
       if (!normTitle.includes('slowed') && (cTitle.includes('slowed') || cTitle.includes('reverb'))) score -= 40;
-      if (cTitle.includes('1 hour') || cTitle.includes('10 hours') || cTitle.includes('loop')) score -= 60;
+      if (cTitle.includes('1 hour') || cTitle.includes('10 hours') || cTitle.includes('loop')) score -= 70;
 
       return { ...c, score };
     })
@@ -322,16 +370,48 @@ export async function resolveYouTubeVideoId(
 
   const resolutionPromise = (async (): Promise<string | null> => {
     try {
-      let candidates = await searchYouTube(`${artist} - ${title} official audio`);
-      if (candidates.length === 0) {
-        candidates = await searchYouTube(`${artist} - ${title}`);
+      const cleanArtist = artist.trim();
+      const cleanTitle = title.trim();
+      const primaryQuery = cleanArtist ? `${cleanArtist} - ${cleanTitle}` : cleanTitle;
+
+      let candidates = await searchYouTube(primaryQuery);
+      let ranked = candidates.length > 0 ? rankCandidates(candidates, cleanArtist, cleanTitle, targetDuration) : [];
+
+      // If no candidates found, or if top candidate has weak match (score < 40), expand search
+      if (ranked.length === 0 || (ranked[0].score ?? 0) < 40) {
+        const fallbacks: string[] = [];
+        if (cleanArtist) {
+          fallbacks.push(`${cleanArtist} ${cleanTitle} official audio`);
+          fallbacks.push(`${cleanTitle} ${cleanArtist}`);
+        }
+        if (cleanTitle !== primaryQuery) {
+          fallbacks.push(cleanTitle);
+        }
+
+        const candidateMap = new Map<string, YouTubeCandidate>();
+        candidates.forEach((c) => candidateMap.set(c.videoId, c));
+
+        for (const query of fallbacks) {
+          const extra = await searchYouTube(query);
+          if (extra.length > 0) {
+            extra.forEach((c) => {
+              if (!candidateMap.has(c.videoId)) {
+                candidateMap.set(c.videoId, c);
+              }
+            });
+            candidates = Array.from(candidateMap.values());
+            ranked = rankCandidates(candidates, cleanArtist, cleanTitle, targetDuration);
+            if (ranked.length > 0 && (ranked[0].score ?? 0) >= 40) {
+              break;
+            }
+          }
+        }
       }
 
-      if (candidates.length === 0) {
+      if (ranked.length === 0) {
         return null;
       }
 
-      const ranked = rankCandidates(candidates, artist, title, targetDuration);
       const best = ranked[0];
       if (!best || !best.videoId) {
         return null;

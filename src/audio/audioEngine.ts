@@ -1113,6 +1113,7 @@ export class AudioEngine {
   }
 
   private nativeDirectStreamUrl(track: Track): string | null {
+    if (!this.isDirectAudioTrack(track)) return null;
     const url = String(track.streamUrl || '');
     return /^https?:\/\//i.test(url) ? url : null;
   }
@@ -1173,9 +1174,12 @@ export class AudioEngine {
       } else {
         const duration = track.duration && isFinite(track.duration) ? track.duration : 0;
         this.notifyState(true, true); // buffering while resolving
-        videoId = await resolveYouTubeVideoId(track.artist, track.title, duration);
+        try {
+          videoId = await resolveYouTubeVideoId(track.artist, track.title, duration);
+        } catch {
+          videoId = null;
+        }
         if (reqId !== this.playRequestId) return false;
-        if (!videoId) return false;
       }
 
       const payloadTracks = this.buildNativePayloadQueue(track, videoId);

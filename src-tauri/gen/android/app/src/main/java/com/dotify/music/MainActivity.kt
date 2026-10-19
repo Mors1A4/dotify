@@ -21,6 +21,7 @@ import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -226,9 +227,27 @@ class MainActivity : TauriActivity() {
     webView.addJavascriptInterface(object {
       @JavascriptInterface
       fun searchYouTubeCandidates(query: String): String {
+        try {
+          val candidates = YtStreamResolver.searchCandidates(query)
+          if (candidates.isNotEmpty()) {
+            val array = org.json.JSONArray()
+            for (c in candidates) {
+              val item = org.json.JSONObject()
+              item.put("videoId", c.videoId)
+              item.put("title", c.title)
+              item.put("duration", c.duration)
+              item.put("uploader", c.uploader)
+              array.put(item)
+            }
+            return array.toString()
+          }
+        } catch (e: Throwable) {
+          Log.w("MainActivity", "YtStreamResolver.searchCandidates failed, falling back to scraper: ${e.message}")
+        }
+
         return try {
           val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-          val url = URL("https://www.youtube.com/results?search_query=$encoded")
+          val url = URL("https://www.youtube.com/results?search_query=$encoded&hl=en")
           val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 7000
@@ -238,6 +257,7 @@ class MainActivity : TauriActivity() {
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
             )
             setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+            setRequestProperty("Cookie", "CONSENT=YES+cb.20210328-17-p0.en+FX+478; SOCS=CAESEwgDEgk0ODEzNzk5NDIaAmVuIAEaBgiA_LyaBg")
           }
 
           val html = conn.inputStream.bufferedReader().use { it.readText() }

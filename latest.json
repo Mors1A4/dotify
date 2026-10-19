@@ -1,9 +1,9 @@
 {
-  "version": "1.0.43",
-  "notes": "Android polish v1.0.43: seekbar/progress tracker now runs during native playback (since v1.0.39 the WebView progress loop ignored the native engine, freezing the tracker while audio played); source resolution no longer deadlocks - the on-device matcher now cross-checks instead of rejecting, so songs with imperfect metadata still play the best matching upload instead of failing to find a source",
-  "publishedAt": 1792324514528,
-  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.43/dotify.exe",
-  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.43/dotify-setup.exe",
-  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.43/dotify.apk",
-  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.43"
+  "version": "1.0.44",
+  "notes": "Fix mobile streaming resolution for international, folk, and less popular tracks; bridge YouTube search directly to on-device NewPipeExtractor; eliminate false direct stream misrouting in NativePlayerEngine; upgrade candidate scoring and Unicode token matching",
+  "publishedAt": 1792348181000,
+  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.44/dotify.exe",
+  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.44/dotify-setup.exe",
+  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.44/dotify.apk",
+  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.44"
 }
