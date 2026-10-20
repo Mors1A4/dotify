@@ -1185,7 +1185,7 @@ export class AudioEngine {
         try {
           videoId = await Promise.race([
             resolveYouTubeVideoId(track.artist, track.title, duration),
-            new Promise<null>((res) => setTimeout(() => res(null), 1500)),
+            new Promise<null>((res) => setTimeout(() => res(null), 3500)),
           ]);
         } catch {
           videoId = null;

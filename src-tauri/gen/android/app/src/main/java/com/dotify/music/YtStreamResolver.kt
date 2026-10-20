@@ -78,7 +78,8 @@ object YtStreamResolver {
             }
             list
         } catch (e: Throwable) {
-            Log.w(TAG, "searchCandidates via NewPipe failed: ${e.message}")
+            e.printStackTrace()
+            try { Log.w(TAG, "searchCandidates via NewPipe failed: ${e.message}") } catch (_: Throwable) {}
             emptyList()
         }
     }
@@ -358,7 +359,8 @@ object YtStreamResolver {
                 try { info.duration } catch (_: Throwable) { 0L }
             )
         } catch (e: Throwable) {
-            Log.w(TAG, "extractor resolve failed for $videoId: ${e.message}")
+            e.printStackTrace()
+            try { Log.w(TAG, "extractor resolve failed for $videoId: ${e.message}") } catch (_: Throwable) {}
             null
         }
     }
@@ -497,6 +499,16 @@ object YtStreamResolver {
                 val exactTitleBonus = if (expectedTokens.contains(titleTokens) || (titleTokens.length > 3 && titleTokens.contains(expectedTokens))) 200_000 else 0
                 val titleScore = (500_000 * titleSim).toInt()
 
+                val hasNonLatin = containsNonLatin(query) || containsNonLatin(item.name)
+                val nonLatinBonus = if (hasNonLatin) {
+                    val qChars = query.filter { it.code > 0x0250 }.toSet()
+                    val actualChars = (item.name + " " + (item.uploaderName ?: "")).filter { it.code > 0x0250 }.toSet()
+                    if (qChars.isNotEmpty() && actualChars.isNotEmpty()) {
+                        val overlap = qChars.intersect(actualChars).size.toDouble() / minOf(qChars.size, actualChars.size).toDouble()
+                        (250_000 * overlap).toInt()
+                    } else 0
+                } else 0
+
                 val durationScore: Int = if (expectedDurationSec <= 0L) {
                     50_000
                 } else {
@@ -510,7 +522,7 @@ object YtStreamResolver {
                     }
                 }
 
-                val score = titleScore + exactTitleBonus + durationScore
+                val score = titleScore + exactTitleBonus + nonLatinBonus + durationScore
 
                 if (score > bestScore) {
                     bestScore = score
@@ -519,7 +531,8 @@ object YtStreamResolver {
             }
             bestId
         } catch (e: Throwable) {
-            Log.w(TAG, "extractor search failed: ${e.message}")
+            e.printStackTrace()
+            try { Log.w(TAG, "extractor search failed: ${e.message}") } catch (_: Throwable) {}
             null
         }
     }

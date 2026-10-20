@@ -81,6 +81,7 @@ object NativePlayerEngine {
 
     private val generation = AtomicInteger(0)
     private val retriedPayloadIndexes = ConcurrentHashMap.newKeySet<Int>()
+    private val fallbackAttempted = ConcurrentHashMap.newKeySet<Int>()
     private val resolveLock = Any()
 
     // Main-thread bookkeeping: playlist position -> payload (queue JSON) index.
@@ -308,6 +309,7 @@ object NativePlayerEngine {
     private fun startQueueInternal(payload: QueuePayload) {
         val gen = generation.incrementAndGet()
         retriedPayloadIndexes.clear()
+        fallbackAttempted.clear()
         queueMetas = payload.metas
         hasActiveQueue = true
         playlistToPayload.clear()
@@ -445,7 +447,7 @@ object NativePlayerEngine {
             .setUri(Uri.parse(url))
             .setMediaId(meta.id)
             .setMediaMetadata(metaBuilder.build())
-        if (!mime.isNullOrBlank()) {
+        if (!mime.isNullOrBlank() && !url.contains("googlevideo.com")) {
             try { builder.setMimeType(mime) } catch (_: Throwable) {}
         }
         return builder.build()
@@ -463,12 +465,14 @@ object NativePlayerEngine {
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(15000)
 
+        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(ctx, httpFactory)
+
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(60_000, 300_000, 1_500, 3_000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        val instance = ExoPlayer.Builder(ctx, DefaultMediaSourceFactory(httpFactory))
+        val instance = ExoPlayer.Builder(ctx, DefaultMediaSourceFactory(dataSourceFactory))
             .setLoadControl(loadControl)
             .build()
         instance.setAudioAttributes(
@@ -565,17 +569,21 @@ object NativePlayerEngine {
             return
         }
 
-        // Direct stream fallback: if we have a valid preview/direct stream URL, play it immediately
-        if (meta.streamUrl.startsWith("http") && !meta.streamUrl.contains("127.0.0.1") && !meta.streamUrl.contains("/api/stream/track")) {
-            Log.i(TAG, "ExoPlayer error on ${meta.title}, falling back to direct streamUrl")
+        // Direct stream fallback: if we have a valid preview/direct stream URL, play it immediately once
+        if (fallbackAttempted.add(payloadIdx) &&
+            meta.streamUrl.startsWith("http") &&
+            !meta.streamUrl.contains("127.0.0.1") &&
+            !meta.streamUrl.contains("/api/stream/track")
+        ) {
+            Log.i(TAG, "ExoPlayer error on ${meta.title}, falling back to direct streamUrl: ${meta.streamUrl}")
             try {
                 p.replaceMediaItem(playlistIdx, buildMediaItem(meta, meta.streamUrl, mimeFromUrl(meta.streamUrl)))
-                if (p.playbackState == Player.STATE_IDLE) {
-                    p.prepare()
-                    p.play()
-                }
+                p.prepare()
+                p.play()
                 return
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.w(TAG, "Direct stream fallback failed: ${e.message}")
+            }
         }
 
         if (retriedPayloadIndexes.add(payloadIdx)) {
