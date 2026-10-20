@@ -82,7 +82,31 @@ export async function searchYouTube(query: string): Promise<YouTubeCandidate[]> 
   const cleanQuery = query.trim();
   if (!cleanQuery) return [];
 
-  // 1. Cross-platform Tauri native Rust command (invoked identically on Windows and Android)
+  // 1. Android Native Bridge (On Android, NewPipeExtractor directly on-device in MainActivity.kt)
+  try {
+    if (typeof window !== 'undefined') {
+      const androidNative = (window as any).AndroidNativeYouTube;
+      if (androidNative && typeof androidNative.searchYouTubeCandidates === 'function') {
+        const jsonStr = androidNative.searchYouTubeCandidates(cleanQuery);
+        if (jsonStr && typeof jsonStr === 'string' && jsonStr.startsWith('[')) {
+          const parsed = JSON.parse(jsonStr);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed
+              .map((item: any) => ({
+                videoId: String(item.videoId || ''),
+                title: String(item.title || ''),
+                duration: Number(item.duration) || 0,
+              }))
+              .filter((c) => c.videoId.length === 11);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[YouTubeResolver] Android native search error:', err);
+  }
+
+  // 2. Desktop Tauri Native Rust command (curl.exe on Windows)
   try {
     if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -107,30 +131,6 @@ export async function searchYouTube(query: string): Promise<YouTubeCandidate[]> 
     }
   } catch {
     // Tauri invoke not active or command fell through
-  }
-
-  // 2. Android Native Bridge (OkHttp/HttpURLConnection in MainActivity.kt)
-  try {
-    if (typeof window !== 'undefined') {
-      const androidNative = (window as any).AndroidNativeYouTube;
-      if (androidNative && typeof androidNative.searchYouTubeCandidates === 'function') {
-        const jsonStr = androidNative.searchYouTubeCandidates(cleanQuery);
-        if (jsonStr && typeof jsonStr === 'string' && jsonStr.startsWith('[')) {
-          const parsed = JSON.parse(jsonStr);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed
-              .map((item: any) => ({
-                videoId: String(item.videoId || ''),
-                title: String(item.title || ''),
-                duration: Number(item.duration) || 0,
-              }))
-              .filter((c) => c.videoId.length === 11);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('[YouTubeResolver] Android native search error:', err);
   }
 
   // 3. Local/Embedded Backend or LAN peer search (:3001)

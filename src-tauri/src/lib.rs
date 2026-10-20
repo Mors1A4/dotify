@@ -230,6 +230,11 @@ fn search_youtube_candidates(query: String) -> Result<String, String> {
         return Ok("[]".to_string());
     }
 
+    #[cfg(target_os = "android")]
+    {
+        return Ok("[]".to_string());
+    }
+
     let encoded: String = percent_encoding::utf8_percent_encode(
         clean,
         percent_encoding::NON_ALPHANUMERIC,

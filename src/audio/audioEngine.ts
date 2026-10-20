@@ -1061,6 +1061,7 @@ export class AudioEngine {
         if (state === 'playing') {
           this.isSwitchingTrack = false;
           this.notifyState(true, false);
+          this.startProgressLoop();
         } else if (state === 'buffering') {
           if (!this.isSwitchingTrack) this.notifyState(true, true);
         } else if (state === 'paused') {
@@ -1096,6 +1097,17 @@ export class AudioEngine {
       },
       onError: (message) => {
         console.warn('[AudioEngine] Native engine error:', message);
+        if (this.isUsingNativeEngine && this.currentTrack && !this.isDirectAudioTrack(this.currentTrack)) {
+          console.info('[AudioEngine] Native engine error encountered, falling back to YouTube bridge...');
+          this.isUsingNativeEngine = false;
+          YouTubeIframeBridge.setNativeOwner(false);
+          try { androidNativePlayback.stop(); } catch {}
+          const failedTrack = this.currentTrack;
+          const reqId = this.playRequestId;
+          this.playViaYouTubeBridge(failedTrack, reqId).catch((err) => {
+            console.warn('[AudioEngine] YouTube bridge fallback also failed:', err);
+          });
+        }
       },
     });
   }
@@ -1180,6 +1192,7 @@ export class AudioEngine {
           videoId = null;
         }
         if (reqId !== this.playRequestId) return false;
+        if (!videoId) return false;
       }
 
       const payloadTracks = this.buildNativePayloadQueue(track, videoId);

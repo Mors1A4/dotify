@@ -349,13 +349,10 @@ object NativePlayerEngine {
                     if (generation.get() != gen) return@Thread
                     val meta = metas.getOrNull(payloadIdx) ?: continue
 
-                    var url = ""
-                    var mime: String? = null
-                    if (isDirectStreamUrl(meta.streamUrl)) {
+                    val (url, mime) = if (isDirectStreamUrl(meta.streamUrl)) {
                         // Direct-source track (radio / vault LAN / Audius):
                         // no resolution needed — Media3 reads the URL immediately.
-                        url = meta.streamUrl
-                        mime = mimeFromUrl(url)
+                        Pair(meta.streamUrl, mimeFromUrl(meta.streamUrl))
                     } else if (meta.videoId.isBlank() && isVaultLikeSource(meta)) {
                         // Vault/radio entries without a usable URL must never fall
                         // into the YouTube search fallback — that would play an
@@ -378,15 +375,20 @@ object NativePlayerEngine {
                         }
                         if (generation.get() != gen) return@Thread
                         if (resolved == null) {
-                            val skipPayload = JSONObject()
-                                .put("payloadIndex", payloadIdx)
-                                .put("id", meta.id)
-                                .put("title", meta.title)
-                            pushRaw("skip", skipPayload.toString())
-                            continue
+                            if (meta.streamUrl.startsWith("http") && !meta.streamUrl.contains("127.0.0.1") && !meta.streamUrl.contains("/api/stream/track")) {
+                                Pair(meta.streamUrl, mimeFromUrl(meta.streamUrl))
+                            } else {
+                                val skipPayload = JSONObject()
+                                    .put("payloadIndex", payloadIdx)
+                                    .put("id", meta.id)
+                                    .put("title", meta.title)
+                                pushRaw("skip", skipPayload.toString())
+                                pushRaw("error", skipPayload.toString())
+                                continue
+                            }
+                        } else {
+                            Pair(resolved.url, if (resolved.mimeType.isBlank()) null else resolved.mimeType)
                         }
-                        url = resolved.url
-                        mime = if (resolved.mimeType.isBlank()) null else resolved.mimeType
                     }
 
                     val fUrl = url
@@ -443,7 +445,7 @@ object NativePlayerEngine {
             .setUri(Uri.parse(url))
             .setMediaId(meta.id)
             .setMediaMetadata(metaBuilder.build())
-        if (!mime.isNullOrBlank()) {
+        if (!mime.isNullOrBlank() && !url.contains("googlevideo.com")) {
             try { builder.setMimeType(mime) } catch (_: Throwable) {}
         }
         return builder.build()
@@ -456,7 +458,6 @@ object NativePlayerEngine {
         val ctx = appContext ?: return
 
         val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(BROWSER_UA)
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(10000)
             .setReadTimeoutMs(10000)
@@ -556,6 +557,7 @@ object NativePlayerEngine {
         val playlistIdx = p.currentMediaItemIndex
         val payloadIdx = playlistToPayload.getOrNull(playlistIdx)
         val meta = payloadIdx?.let { queueMetas.getOrNull(it) }
+        Log.w(TAG, "handlePlayerError on playlistIdx=$playlistIdx (payloadIdx=$payloadIdx): ${error.errorCodeName} (${error.errorCode}) - ${error.message}")
         if (payloadIdx == null || meta == null) {
             notifyStateInternal()
             return
@@ -578,7 +580,7 @@ object NativePlayerEngine {
                     if (!hasActiveQueue) return@post
                     val pl = player
                     if (resolved == null || pl == null) {
-                        skipFailed(gen)
+                        skipFailed(gen, payloadIdx, meta)
                         return@post
                     }
                     try {
@@ -588,19 +590,29 @@ object NativePlayerEngine {
                             pl.play()
                         }
                     } catch (_: Exception) {
-                        skipFailed(gen)
+                        skipFailed(gen, payloadIdx, meta)
                     }
                 }
             }.start()
         } else {
-            skipFailed(gen)
+            skipFailed(gen, payloadIdx, meta)
         }
     }
 
-    private fun skipFailed(gen: Int) {
+    private fun skipFailed(gen: Int, payloadIdx: Int = -1, meta: TrackMeta? = null) {
         if (generation.get() != gen) return
         val p = player ?: return
         try {
+            val errPayload = JSONObject()
+                .put("message", "Playback failed")
+            if (payloadIdx >= 0) errPayload.put("payloadIndex", payloadIdx)
+            if (meta != null) {
+                errPayload.put("id", meta.id)
+                errPayload.put("title", meta.title)
+            }
+            pushRaw("error", errPayload.toString())
+            pushRaw("skip", errPayload.toString())
+
             if (p.hasNextMediaItem()) {
                 p.seekToNextMediaItem()
                 p.play()

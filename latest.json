@@ -1,9 +1,9 @@
 {
-  "version": "1.0.44",
-  "notes": "Fix mobile streaming resolution for international, folk, and less popular tracks; bridge YouTube search directly to on-device NewPipeExtractor; eliminate false direct stream misrouting in NativePlayerEngine; upgrade candidate scoring and Unicode token matching",
-  "publishedAt": 1792348181000,
-  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.44/dotify.exe",
-  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.44/dotify-setup.exe",
-  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.44/dotify.apk",
-  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.44"
+  "version": "1.0.45",
+  "notes": "Fix mobile playback: restore YouTube bridge fallback, optimize Android candidate search, and remove desktop UA in ExoPlayer",
+  "publishedAt": 1792400350000,
+  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.45/dotify.exe",
+  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.45/dotify-setup.exe",
+  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.45/dotify.apk",
+  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.45"
 }
