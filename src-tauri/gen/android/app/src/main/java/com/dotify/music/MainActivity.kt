@@ -967,6 +967,17 @@ class MainActivity : TauriActivity() {
             webView.evaluateJavascript(js, null)
           } catch (_: Exception) {}
         }
+        if (type == "error") {
+          try {
+            val root = JSONObject(payloadJson)
+            val msg = root.optString("message", "Playback error")
+            val title = root.optString("title", "")
+            val display = if (title.isNotBlank()) "Track issue ($title): $msg" else msg
+            activity.runOnUiThread {
+              android.widget.Toast.makeText(activity, display, android.widget.Toast.LENGTH_SHORT).show()
+            }
+          } catch (_: Exception) {}
+        }
       }
     }
 

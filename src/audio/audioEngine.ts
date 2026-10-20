@@ -1105,17 +1105,6 @@ export class AudioEngine {
       },
       onError: (message) => {
         console.warn('[AudioEngine] Native engine error:', message);
-        if (this.isUsingNativeEngine && this.currentTrack && !this.isDirectAudioTrack(this.currentTrack)) {
-          console.info('[AudioEngine] Native engine error encountered, falling back to YouTube bridge...');
-          this.isUsingNativeEngine = false;
-          YouTubeIframeBridge.setNativeOwner(false);
-          try { androidNativePlayback.stop(); } catch {}
-          const failedTrack = this.currentTrack;
-          const reqId = this.playRequestId;
-          this.playViaYouTubeBridge(failedTrack, reqId).catch((err) => {
-            console.warn('[AudioEngine] YouTube bridge fallback also failed:', err);
-          });
-        }
       },
     });
   }
@@ -1133,7 +1122,6 @@ export class AudioEngine {
   }
 
   private nativeDirectStreamUrl(track: Track): string | null {
-    if (!this.isDirectAudioTrack(track)) return null;
     const url = String(track.streamUrl || '');
     return /^https?:\/\//i.test(url) ? url : null;
   }

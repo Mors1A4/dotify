@@ -445,7 +445,7 @@ object NativePlayerEngine {
             .setUri(Uri.parse(url))
             .setMediaId(meta.id)
             .setMediaMetadata(metaBuilder.build())
-        if (!mime.isNullOrBlank() && !url.contains("googlevideo.com")) {
+        if (!mime.isNullOrBlank()) {
             try { builder.setMimeType(mime) } catch (_: Throwable) {}
         }
         return builder.build()
@@ -458,9 +458,10 @@ object NativePlayerEngine {
         val ctx = appContext ?: return
 
         val httpFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent(BROWSER_UA)
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(10000)
-            .setReadTimeoutMs(10000)
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(60_000, 300_000, 1_500, 3_000)
@@ -562,6 +563,19 @@ object NativePlayerEngine {
         if (payloadIdx == null || meta == null) {
             notifyStateInternal()
             return
+        }
+
+        // Direct stream fallback: if we have a valid preview/direct stream URL, play it immediately
+        if (meta.streamUrl.startsWith("http") && !meta.streamUrl.contains("127.0.0.1") && !meta.streamUrl.contains("/api/stream/track")) {
+            Log.i(TAG, "ExoPlayer error on ${meta.title}, falling back to direct streamUrl")
+            try {
+                p.replaceMediaItem(playlistIdx, buildMediaItem(meta, meta.streamUrl, mimeFromUrl(meta.streamUrl)))
+                if (p.playbackState == Player.STATE_IDLE) {
+                    p.prepare()
+                    p.play()
+                }
+                return
+            } catch (_: Exception) {}
         }
 
         if (retriedPayloadIndexes.add(payloadIdx)) {

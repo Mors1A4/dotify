@@ -259,16 +259,21 @@ object YtStreamResolver {
             tokenSimilarity(expected, actual)
         } else 0.0
 
+        val hasNonLatin = containsNonLatin(actual) || containsNonLatin(expected)
+
         if (expectedDurationSec > 0L && resolved.actualDurationSec > 0L) {
             val diff = abs(expectedDurationSec - resolved.actualDurationSec)
             return when {
-                diff <= 20L -> true // duration is the strongest signal
-                diff <= 240L -> sim >= 0.35
-                else -> sim >= 0.60
+                diff <= 45L -> true // duration is the strongest signal, allow intro/outro variance
+                diff <= 240L -> sim >= 0.20 || hasNonLatin
+                else -> sim >= 0.45
             }
         }
-        return sim >= 0.30
+        return sim >= 0.20 || hasNonLatin
     }
+
+    private fun containsNonLatin(s: String): Boolean =
+        s.any { it.code > 0x0250 } // Non-basic Latin: CJK, Hangul, Cyrillic, Greek, etc.
 
     private fun normalizeForCompare(raw: String): String = raw
         .lowercase(Locale.US)
@@ -522,13 +527,19 @@ object YtStreamResolver {
     private fun diffOf(a: Long, b: Long): Long = abs(a - b)
 
     private fun extractVideoId(url: String): String? {
-        val marker = "v="
-        val index = url.indexOf(marker)
-        if (index == -1) return null
-        val raw = url.substring(index + marker.length)
-        val end = raw.indexOfFirst { it == '&' || it == '#' }
-        val id = if (end == -1) raw else raw.substring(0, end)
-        return if (id.length == 11) id else null
+        if (url.contains("v=")) {
+            val raw = url.substringAfter("v=")
+            val end = raw.indexOfFirst { it == '&' || it == '#' }
+            val id = if (end == -1) raw else raw.substring(0, end)
+            if (id.length == 11) return id
+        }
+        if (url.contains("youtu.be/")) {
+            val raw = url.substringAfter("youtu.be/")
+            val end = raw.indexOfFirst { it == '?' || it == '&' || it == '#' }
+            val id = if (end == -1) raw else raw.substring(0, end)
+            if (id.length == 11) return id
+        }
+        return null
     }
 
     private fun guessMimeFromUrl(url: String): String = when {
@@ -601,11 +612,15 @@ class DotifyDownloader : Downloader() {
             }
 
             val code = conn.responseCode
+            val isGzip = "gzip".equals(conn.contentEncoding, ignoreCase = true) ||
+                conn.headerFields["Content-Encoding"]?.any { it.contains("gzip", ignoreCase = true) } == true
+            val rawStream = if (code in 200..299) conn.inputStream else conn.errorStream
             val body = try {
-                if (code in 200..299) {
-                    conn.inputStream.bufferedReader().use { it.readText() }
+                if (rawStream != null) {
+                    val stream = if (isGzip) java.util.zip.GZIPInputStream(rawStream) else rawStream
+                    stream.bufferedReader().use { it.readText() }
                 } else {
-                    conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                    ""
                 }
             } catch (_: Throwable) {
                 ""
