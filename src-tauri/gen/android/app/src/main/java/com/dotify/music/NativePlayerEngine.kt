@@ -463,7 +463,7 @@ object NativePlayerEngine {
             .setReadTimeoutMs(10000)
 
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(120_000, 600_000, 4_000, 8_000)
+            .setBufferDurationsMs(60_000, 300_000, 1_500, 3_000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
@@ -544,6 +544,7 @@ object NativePlayerEngine {
     }
 
     private fun mapState(p: Player): String = when {
+        hasActiveQueue && p.playbackState == Player.STATE_IDLE -> "buffering"
         p.playbackState == Player.STATE_BUFFERING && p.playWhenReady -> "buffering"
         p.playbackState == Player.STATE_READY && p.playWhenReady -> "playing"
         p.playbackState == Player.STATE_READY && !p.playWhenReady -> "paused"

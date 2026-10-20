@@ -1057,7 +1057,14 @@ export class AudioEngine {
     this.nativeEventsWired = true;
     androidNativePlayback.setCallbacks({
       onState: (state) => {
-        if (!this.isUsingNativeEngine) return;
+        if (!this.isUsingNativeEngine) {
+          if (state === 'playing' || state === 'buffering') {
+            this.isUsingNativeEngine = true;
+            YouTubeIframeBridge.setNativeOwner(true);
+          } else {
+            return;
+          }
+        }
         if (state === 'playing') {
           this.isSwitchingTrack = false;
           this.notifyState(true, false);
@@ -1075,6 +1082,7 @@ export class AudioEngine {
         if (state === 'idle') {
           this.isUsingNativeEngine = false;
           YouTubeIframeBridge.setNativeOwner(false);
+          this.notifyState(false, false);
         }
       },
       onTransition: (track, payloadIndex) => {
@@ -1187,12 +1195,14 @@ export class AudioEngine {
         const duration = track.duration && isFinite(track.duration) ? track.duration : 0;
         this.notifyState(true, true); // buffering while resolving
         try {
-          videoId = await resolveYouTubeVideoId(track.artist, track.title, duration);
+          videoId = await Promise.race([
+            resolveYouTubeVideoId(track.artist, track.title, duration),
+            new Promise<null>((res) => setTimeout(() => res(null), 1500)),
+          ]);
         } catch {
           videoId = null;
         }
         if (reqId !== this.playRequestId) return false;
-        if (!videoId) return false;
       }
 
       const payloadTracks = this.buildNativePayloadQueue(track, videoId);

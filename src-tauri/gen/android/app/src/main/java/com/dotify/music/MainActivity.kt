@@ -250,8 +250,8 @@ class MainActivity : TauriActivity() {
           val url = URL("https://www.youtube.com/results?search_query=$encoded&hl=en")
           val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = 7000
-            readTimeout = 7000
+            connectTimeout = 3000
+            readTimeout = 3500
             setRequestProperty(
               "User-Agent",
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"

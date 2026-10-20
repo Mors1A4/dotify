@@ -98,6 +98,9 @@ class DotifyMediaService : Service() {
     }
 
     private fun requestAudioFocus() {
+        if (NativePlayerEngine.hasActiveQueue || NativePlayerEngine.isActive()) {
+            return
+        }
         try {
             val am = audioManager ?: return
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -113,7 +116,9 @@ class DotifyMediaService : Service() {
                             when (focusChange) {
                                 AudioManager.AUDIOFOCUS_LOSS,
                                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                                    MainActivity.dispatchMediaAction("pause")
+                                    if (!NativePlayerEngine.hasActiveQueue && !NativePlayerEngine.isActive()) {
+                                        MainActivity.dispatchMediaAction("pause")
+                                    }
                                 }
                                 AudioManager.AUDIOFOCUS_GAIN -> {
                                     // Audio focus regained
@@ -128,7 +133,9 @@ class DotifyMediaService : Service() {
                 am.requestAudioFocus(
                     { focusChange ->
                         if (focusChange == AudioManager.AUDIOFOCUS_LOSS || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                            MainActivity.dispatchMediaAction("pause")
+                            if (!NativePlayerEngine.hasActiveQueue && !NativePlayerEngine.isActive()) {
+                                MainActivity.dispatchMediaAction("pause")
+                            }
                         }
                     },
                     AudioManager.STREAM_MUSIC,
@@ -232,7 +239,7 @@ class DotifyMediaService : Service() {
                 // The native engine (ExoPlayer handleAudioFocus=true) manages focus
                 // itself during native playback — a second manual request here would
                 // double-handle focus loss. Keep it only for the WebView audio path.
-                if (!NativePlayerEngine.isActive()) {
+                if (!NativePlayerEngine.hasActiveQueue && !NativePlayerEngine.isActive()) {
                     requestAudioFocus()
                 }
                 if (wakeLock?.isHeld != true) {
@@ -356,7 +363,7 @@ class DotifyMediaService : Service() {
             ACTION_UPDATE_PLAYBACK_STATE -> {
                 // During native playback the engine is the source of truth for play/pause;
                 // JS pushes only drive the WebView (HTML5) path.
-                if (!NativePlayerEngine.isActive()) {
+                if (!NativePlayerEngine.hasActiveQueue && !NativePlayerEngine.isActive()) {
                     isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
                     currentPositionMs = intent.getLongExtra(EXTRA_POSITION, currentPositionMs)
                     syncStateAndNotification()

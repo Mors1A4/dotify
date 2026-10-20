@@ -1,9 +1,9 @@
 {
-  "version": "1.0.45",
-  "notes": "Fix mobile playback: restore YouTube bridge fallback, optimize Android candidate search, and remove desktop UA in ExoPlayer",
-  "publishedAt": 1792400350000,
-  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.45/dotify.exe",
-  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.45/dotify-setup.exe",
-  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.45/dotify.apk",
-  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.45"
+  "version": "1.0.46",
+  "notes": "Fix mobile playback: eliminate audio focus conflict auto-pause, prevent false idle state teardown, and enable background native resolution",
+  "publishedAt": 1792487597000,
+  "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.46/dotify.exe",
+  "windowsSetupUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.46/dotify-setup.exe",
+  "androidApkUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.46/dotify.apk",
+  "releasePageUrl": "https://github.com/Mors1A4/dotify-releases/releases/tag/v1.0.46"
 }
