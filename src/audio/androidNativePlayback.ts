@@ -129,7 +129,7 @@ class AndroidNativePlayback {
       case 'skip': {
         const idx = Number(payload.payloadIndex ?? -1);
         if (Number.isFinite(idx) && idx === this.currentIndex) this.currentIndex = -1;
-        this.callbacks.onError?.(String(payload.title ?? 'Track unavailable'));
+        this.callbacks.onError?.(String(payload.message || payload.title || 'Track unavailable'));
         break;
       }
       case 'error': {

@@ -18,6 +18,9 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
+private const val BROWSER_UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+
 /**
  * On-device YouTube stream URL resolver for native background playback.
  *
@@ -35,12 +38,12 @@ import kotlin.math.abs
  */
 object YtStreamResolver {
 
+    @Volatile
+    var lastResolveError: String = ""
+
     private const val TAG = "DotifyYtResolver"
     private const val CACHE_TTL_MS = 4L * 60L * 60L * 1000L
     private const val HTTP_TIMEOUT_MS = 9000
-
-    private const val BROWSER_UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
 
     data class ResolvedStream(
         val url: String,
@@ -207,7 +210,7 @@ object YtStreamResolver {
                     found = searchVideoId(cleanTitle, expectedDurationSec)
                 }
             }
-            if (found != null && found != candidateId) {
+            if (found != null) {
                 resolveViaExtractor(found, true, artist, title, expectedDurationSec)?.let {
                     cached(it, found, query)
                     return it
@@ -363,6 +366,7 @@ object YtStreamResolver {
             )
         } catch (e: Throwable) {
             e.printStackTrace()
+            lastResolveError = "Extractor($videoId): ${e.javaClass.simpleName}: ${e.message}"
             try { Log.w(TAG, "extractor resolve failed for $videoId: ${e.message}") } catch (_: Throwable) {}
             null
         }
@@ -669,6 +673,7 @@ object YtStreamResolver {
             bestId
         } catch (e: Throwable) {
             e.printStackTrace()
+            lastResolveError = "SearchExtractor: ${e.javaClass.simpleName}: ${e.message}"
             try { Log.w(TAG, "extractor search failed: ${e.message}") } catch (_: Throwable) {}
             null
         }
@@ -743,63 +748,113 @@ object YtStreamResolver {
 }
 
 /**
- * HttpURLConnection-backed Downloader for NewPipeExtractor. The extractor sets
- * its own client headers (User-Agent, X-YouTube-* etc.) per request — we only
- * execute them faithfully.
+ * HttpURLConnection-backed Downloader for NewPipeExtractor with persistent cookie management,
+ * consent-cookie injection, manual redirect preservation, and magic-byte GZIP handling.
  */
 class DotifyDownloader : Downloader() {
 
-    override fun execute(request: Request): Response {
-        var conn: HttpURLConnection? = null
-        try {
-            conn = URL(request.url()).openConnection() as HttpURLConnection
-            conn.requestMethod = request.httpMethod()
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
-            conn.instanceFollowRedirects = true
+    private val cookieJar = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-            val headers = request.headers()
-            if (headers != null) {
-                for ((key, values) in headers) {
-                    if (key == null) continue
-                    for (value in values) {
-                        try { conn.setRequestProperty(key, value) } catch (_: Throwable) {}
+    init {
+        cookieJar["CONSENT"] = "YES+cb.20210328-17-p0.en+FX+478"
+        cookieJar["SOCS"] = "CAESEwgDEgk0ODEzNzk5NDIaAmVuIAEaBgiA_LyaBg"
+    }
+
+    override fun execute(request: Request): Response {
+        var currentUrl = request.url()
+        for (redirectCount in 0..4) {
+            var conn: HttpURLConnection? = null
+            try {
+                conn = URL(currentUrl).openConnection() as HttpURLConnection
+                conn.requestMethod = request.httpMethod()
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+                conn.instanceFollowRedirects = false
+
+                val headers = request.headers()
+                var hasUserAgent = false
+                if (headers != null) {
+                    for ((key, values) in headers) {
+                        if (key == null) continue
+                        if (key.equals("User-Agent", ignoreCase = true)) hasUserAgent = true
+                        if (key.equals("Cookie", ignoreCase = true)) {
+                            for (v in values) {
+                                for (part in v.split(';')) {
+                                    val trimmed = part.trim()
+                                    val eq = trimmed.indexOf('=')
+                                    if (eq > 0) {
+                                        cookieJar[trimmed.substring(0, eq).trim()] = trimmed.substring(eq + 1).trim()
+                                    }
+                                }
+                            }
+                        } else {
+                            for (value in values) {
+                                try { conn.addRequestProperty(key, value) } catch (_: Throwable) {}
+                            }
+                        }
                     }
                 }
-            }
 
-            val data = request.dataToSend()
-            if (data != null && data.isNotEmpty()) {
-                conn.doOutput = true
-                val os = conn.outputStream
-                os.write(data)
-                os.flush()
-            }
+                if (!hasUserAgent) {
+                    conn.setRequestProperty("User-Agent", BROWSER_UA)
+                }
 
-            val code = conn.responseCode
-            val rawStream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val bytes = try {
-                rawStream?.use { it.readBytes() } ?: ByteArray(0)
-            } catch (_: Throwable) {
-                ByteArray(0)
-            }
-            val isActuallyGzip = bytes.size >= 2 &&
-                (bytes[0].toInt() and 0xFF) == 0x1F &&
-                (bytes[1].toInt() and 0xFF) == 0x8B
-            val body = if (isActuallyGzip) {
-                try {
-                    java.util.zip.GZIPInputStream(bytes.inputStream()).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                if (cookieJar.isNotEmpty()) {
+                    val cookieStr = cookieJar.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                    conn.setRequestProperty("Cookie", cookieStr)
+                }
+
+                val data = request.dataToSend()
+                if (data != null && data.isNotEmpty()) {
+                    conn.doOutput = true
+                    val os = conn.outputStream
+                    os.write(data)
+                    os.flush()
+                }
+
+                val code = conn.responseCode
+
+                conn.headerFields["Set-Cookie"]?.forEach { sc ->
+                    val cookiePart = sc.substringBefore(';').trim()
+                    val eq = cookiePart.indexOf('=')
+                    if (eq > 0) {
+                        cookieJar[cookiePart.substring(0, eq).trim()] = cookiePart.substring(eq + 1).trim()
+                    }
+                }
+
+                if (code in listOf(301, 302, 303, 307, 308)) {
+                    val loc = conn.getHeaderField("Location")
+                    if (!loc.isNullOrBlank()) {
+                        currentUrl = if (loc.startsWith("http")) loc else URL(URL(currentUrl), loc).toString()
+                        continue
+                    }
+                }
+
+                val rawStream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val bytes = try {
+                    rawStream?.use { it.readBytes() } ?: ByteArray(0)
                 } catch (_: Throwable) {
+                    ByteArray(0)
+                }
+                val isActuallyGzip = bytes.size >= 2 &&
+                    (bytes[0].toInt() and 0xFF) == 0x1F &&
+                    (bytes[1].toInt() and 0xFF) == 0x8B
+                val body = if (isActuallyGzip) {
+                    try {
+                        java.util.zip.GZIPInputStream(bytes.inputStream()).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    } catch (_: Throwable) {
+                        String(bytes, Charsets.UTF_8)
+                    }
+                } else {
                     String(bytes, Charsets.UTF_8)
                 }
-            } else {
-                String(bytes, Charsets.UTF_8)
+                val headerFields = conn.headerFields.filterKeys { it != null }
+                val latestUrl = conn.url.toString()
+                return Response(code, conn.responseMessage, headerFields, body, latestUrl)
+            } finally {
+                try { conn?.disconnect() } catch (_: Throwable) {}
             }
-            val headerFields = conn.headerFields.filterKeys { it != null }
-            val latestUrl = conn.url.toString()
-            return Response(code, conn.responseMessage, headerFields, body, latestUrl)
-        } finally {
-            try { conn?.disconnect() } catch (_: Throwable) {}
         }
+        throw java.io.IOException("Too many redirects: $currentUrl")
     }
 }

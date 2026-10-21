@@ -380,11 +380,16 @@ object NativePlayerEngine {
                             if (meta.streamUrl.startsWith("http") && !meta.streamUrl.contains("127.0.0.1") && !meta.streamUrl.contains("/api/stream/track")) {
                                 Pair(meta.streamUrl, mimeFromUrl(meta.streamUrl))
                             } else {
+                                val errMsg = if (YtStreamResolver.lastResolveError.isNotBlank()) {
+                                    YtStreamResolver.lastResolveError
+                                } else {
+                                    "Song stream not found"
+                                }
                                 val skipPayload = JSONObject()
                                     .put("payloadIndex", payloadIdx)
                                     .put("id", meta.id)
                                     .put("title", meta.title)
-                                    .put("message", "Song stream not found")
+                                    .put("message", errMsg)
                                 pushRaw("skip", skipPayload.toString())
                                 pushRaw("error", skipPayload.toString())
                                 continue

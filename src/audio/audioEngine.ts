@@ -1105,6 +1105,13 @@ export class AudioEngine {
       },
       onError: (message) => {
         console.warn('[AudioEngine] Native engine error:', message);
+        if (this.isUsingNativeEngine && this.currentTrack && !this.isDirectAudioTrack(this.currentTrack)) {
+          console.info('[AudioEngine] Native playback error (' + message + '), seamlessly falling back to YouTube IFrame Bridge for:', this.currentTrack.title);
+          this.isUsingNativeEngine = false;
+          YouTubeIframeBridge.setNativeOwner(false);
+          try { androidNativePlayback.stop(); } catch { /* noop */ }
+          this.playViaYouTubeBridge(this.currentTrack, this.playRequestId);
+        }
       },
     });
   }
