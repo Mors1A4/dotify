@@ -16,6 +16,13 @@ interface VibeDjStoreActions {
   stopVibeDj: () => void;
   shakeUpVibe: () => Promise<void>;
   popNextDjTrack: () => Promise<Track | null>;
+  playQueueTrack: (index: number) => Promise<void>;
+  setVectorMetric: (
+    metric: 'energy' | 'danceability' | 'mood' | 'acousticness',
+    value: number
+  ) => void;
+  steerAwayFromTrack: (track: Track) => void;
+  replayHistoryTrack: (track: Track) => Promise<void>;
   recordTrackEvent: (
     track: Track,
     event: 'completed' | 'skipped' | 'replayed' | 'liked',
@@ -48,6 +55,8 @@ const initialVector: VibeVector = {
 };
 
 const defaultTheme = vibeDjEngine.getThemeForVector(initialVector);
+
+let metricDebounceTimer: any = null;
 
 export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
   isActive: false,
@@ -112,8 +121,9 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
         statusMessage: undefined,
       });
 
-      // 4. Start playing the top match of the curated DJ stream
-      if (queue.length > 0) {
+      // 4. Start playing top match only if nothing is currently playing
+      const isAlreadyPlaying = Boolean(playerStore.currentTrack && playerStore.isPlaying);
+      if (queue.length > 0 && !isAlreadyPlaying) {
         const firstRecommendation = queue[0];
         const queueTracks = queue.map((q) => q.track);
 
@@ -270,12 +280,105 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
     }
   },
 
+  playQueueTrack: async (index: number) => {
+    const { djQueue, currentVector } = get();
+    if (index < 0 || index >= djQueue.length) return;
+
+    const target = djQueue[index];
+    const newQueue = djQueue.slice(index + 1);
+    set({ djQueue: newQueue });
+
+    const { usePlayerStore } = await import('./playerStore');
+    const playerStore = usePlayerStore.getState();
+    const theme = vibeDjEngine.getThemeForVector(currentVector);
+
+    playerStore.playTrack(target.track, djQueue.map((q) => q.track), index, {
+      origin: 'vibe_dj',
+      intent: 'exploratory',
+      playlistName: theme.label,
+      isDj: true,
+    });
+
+    if (newQueue.length < 4 && !get().isGenerating) {
+      get().refreshRecommendations();
+    }
+  },
+
+  setVectorMetric: (
+    metric: 'energy' | 'danceability' | 'mood' | 'acousticness',
+    value: number
+  ) => {
+    const clamped = Math.max(0.05, Math.min(0.95, value));
+    const { currentVector } = get();
+    const updatedVector: VibeVector = {
+      ...currentVector,
+      [metric]: clamped,
+    };
+    const theme = vibeDjEngine.getThemeForVector(updatedVector);
+
+    set({
+      currentVector: updatedVector,
+      vibeLabel: theme.label,
+      vibeTagline: theme.tagline,
+      themeColor: theme.themeColor,
+      themeGradient: theme.themeGradient,
+      accentColor: theme.accentColor,
+    });
+
+    if (metricDebounceTimer) clearTimeout(metricDebounceTimer);
+    metricDebounceTimer = setTimeout(() => {
+      get().refreshRecommendations();
+    }, 450);
+  },
+
+  steerAwayFromTrack: (track: Track) => {
+    const { currentVector, history } = get();
+    const updatedVector = vibeDjEngine.updateSessionVibeVector(
+      currentVector,
+      track,
+      'skipped',
+      0.1
+    );
+    const theme = vibeDjEngine.getThemeForVector(updatedVector);
+
+    const updatedHistory = history.map((h) =>
+      h.track.id === track.id ? { ...h, skipped: true, vibeReason: 'Steered away' } : h
+    );
+
+    set({
+      currentVector: updatedVector,
+      vibeLabel: theme.label,
+      vibeTagline: theme.tagline,
+      themeColor: theme.themeColor,
+      themeGradient: theme.themeGradient,
+      accentColor: theme.accentColor,
+      history: updatedHistory,
+    });
+
+    get().refreshRecommendations();
+  },
+
+  replayHistoryTrack: async (track: Track) => {
+    const { currentVector } = get();
+    const { usePlayerStore } = await import('./playerStore');
+    const playerStore = usePlayerStore.getState();
+    const theme = vibeDjEngine.getThemeForVector(currentVector);
+
+    playerStore.playTrack(track, undefined, undefined, {
+      origin: 'vibe_dj',
+      intent: 'favoured',
+      playlistName: theme.label,
+      isDj: true,
+    });
+  },
+
   refreshRecommendations: async () => {
     if (get().isGenerating) return;
     set({ isGenerating: true });
 
     try {
       const { currentVector, history, djQueue } = get();
+      const theme = vibeDjEngine.getThemeForVector(currentVector);
       const { queue, recommendedArtists } = await vibeDjEngine.generateNextDjQueue(
         currentVector,
         history,
@@ -289,6 +392,11 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
       set({
         djQueue: [...djQueue, ...newItems].slice(0, 10),
         recommendedArtists,
+        vibeLabel: theme.label,
+        vibeTagline: theme.tagline,
+        themeColor: theme.themeColor,
+        themeGradient: theme.themeGradient,
+        accentColor: theme.accentColor,
         isGenerating: false,
       });
     } catch (err) {
@@ -303,11 +411,40 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
       const results = await searchCharts(artist.name, 15);
       if (results && results.length > 0) {
         const { usePlayerStore } = await import('./playerStore');
-        usePlayerStore.getState().playTrack(results[0], results, 0, {
-          origin: 'artist',
+        const playerStore = usePlayerStore.getState();
+
+        // Nudge current vector towards this artist's genre while keeping DJ session active
+        const currentVector = get().currentVector;
+        const dominant = artist.macroGenre || vibeDjEngine.getDominantGenre(currentVector);
+        const updatedVector: VibeVector = {
+          ...currentVector,
+          genreWeights: { ...currentVector.genreWeights },
+        };
+        for (const g of Object.keys(updatedVector.genreWeights) as (keyof typeof updatedVector.genreWeights)[]) {
+          updatedVector.genreWeights[g] = g === dominant ? 0.75 : 0.25 / 7;
+        }
+        const theme = vibeDjEngine.getThemeForVector(updatedVector);
+
+        set({
+          isActive: true,
+          currentVector: updatedVector,
+          vibeLabel: `${artist.name} Flow`,
+          vibeTagline: `Deep dive into the soundscape of ${artist.name} in ${dominant}`,
+          themeColor: theme.themeColor,
+          themeGradient: theme.themeGradient,
+          accentColor: theme.accentColor,
+        });
+
+        playerStore.playTrack(results[0], results, 0, {
+          origin: 'vibe_dj',
           intent: 'favoured',
           artistName: artist.name,
+          playlistName: `${artist.name} Flow`,
+          isDj: true,
         });
+
+        // Replenish upcoming queue biased towards the new artist aesthetic
+        get().refreshRecommendations();
       }
     } catch (err) {
       console.warn('[VibeDjStore] Error playing recommended artist:', err);

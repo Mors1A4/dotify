@@ -1,5 +1,5 @@
 {
-  "version": "1.0.46",
+  "version": "1.0.49",
   "notes": "Fix mobile playback: eliminate audio focus conflict auto-pause, prevent false idle state teardown, and enable background native resolution",
   "publishedAt": 1792487597000,
   "windowsExeUrl": "https://github.com/Mors1A4/dotify-releases/releases/download/v1.0.46/dotify.exe",

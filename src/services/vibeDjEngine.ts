@@ -341,8 +341,10 @@ export class VibeDjEngine {
         }
       }
     } else {
-      // Positive reinforcement
-      const learningRate = outcome === 'replayed' || outcome === 'liked' ? 0.40 : 0.22;
+      // Positive reinforcement scaled by completion rate
+      const learningRate =
+        (outcome === 'replayed' || outcome === 'liked' ? 0.40 : 0.22) *
+        Math.max(0.4, completionRate);
 
       updated.energy = currentVector.energy + (trackVector.energy - currentVector.energy) * learningRate;
       updated.danceability = currentVector.danceability + (trackVector.danceability - currentVector.danceability) * learningRate;
@@ -514,31 +516,56 @@ export class VibeDjEngine {
       }
     }
 
-    // 6. Serendipity jitter (+/- 0.05)
-    const serendipity = (Math.random() - 0.5) * 0.10;
+    // 6. Track-specific acoustic signature derived from track id / duration / title
+    let trackHash = 0;
+    const str = `${candidate.id}:${candidate.title}:${candidate.artist}`;
+    for (let i = 0; i < str.length; i++) {
+      trackHash = (trackHash << 5) - trackHash + str.charCodeAt(i);
+      trackHash |= 0;
+    }
+    const normalizedHash = Math.abs(trackHash % 1000) / 1000; // 0.0 to 1.0
+
+    // Duration tempo heuristic: shorter tracks lean punchier, longer tracks lean deeper
+    const durSec = candidate.duration || 210;
+    const durationPacingModifier = durSec < 190 ? 0.04 : durSec > 320 ? -0.04 : 0.01;
+
+    // Rich, natural serendipity distribution (+/- 7%)
+    const serendipity = (normalizedHash - 0.5) * 0.14 + durationPacingModifier;
 
     // Composite Weighted Score (0 to 100)
     const composite =
-      vibeAlignment * 38 +
-      tasteAffinity * 25 +
-      noveltyBonus * 15 +
+      vibeAlignment * 42 +
+      tasteAffinity * 22 +
+      noveltyBonus * 12 +
       artistDiversity * 12 +
-      energySmoothing * 10 +
-      serendipity * 5;
+      energySmoothing * 8 +
+      serendipity * 100;
 
-    const vibeScore = Math.round(Math.max(10, Math.min(99, composite)));
+    const vibeScore = Math.round(Math.max(38, Math.min(99, composite)));
 
-    // Generate smart reason
+    // Generate intelligent, varied reason
     const dominant = this.getDominantGenre(sessionVector);
-    let vibeReason = `Curated for your ${dominant} flow`;
+    let vibeReason = `Curated for your ${dominant} soundscape`;
     if (followedArtistNames.has(candidatePrimaryArtist)) {
       vibeReason = `By ${candidate.artist} (one of your followed artists)`;
     } else if (likedTrackIds.has(candidate.id)) {
-      vibeReason = `Familiar favorite matching this vibe`;
-    } else if (vibeAlignment > 0.85) {
-      vibeReason = `Peak match for your current soundscape`;
+      vibeReason = `Beloved track from your collection matching this vibe`;
+    } else if (trackVector.energy > 0.78 && sessionVector.energy > 0.65) {
+      vibeReason = `High-energy momentum booster matching your tempo`;
+    } else if (trackVector.acousticness > 0.68 && sessionVector.acousticness > 0.45) {
+      vibeReason = `Organic acoustic warmth complementing your flow`;
+    } else if (trackVector.danceability > 0.78 && sessionVector.danceability > 0.65) {
+      vibeReason = `Kinetic rhythm and driving groove pick`;
+    } else if (trackVector.energy < 0.45 && sessionVector.energy < 0.5) {
+      vibeReason = `Restorative downtime texture for contemplative listening`;
+    } else if (vibeAlignment > 0.84) {
+      vibeReason = `Harmonically aligned with your active mood`;
+    } else if (isNovelty && normalizedHash > 0.65) {
+      vibeReason = `Fresh underground discovery tailored to your taste`;
+    } else if (isNovelty && normalizedHash > 0.35) {
+      vibeReason = `Hand-picked discovery matching this session`;
     } else if (isNovelty) {
-      vibeReason = `Fresh discovery aligned with your taste`;
+      vibeReason = `Crossover pick providing sonic contrast`;
     }
 
     return {
@@ -634,7 +661,14 @@ export class VibeDjEngine {
     try {
       const genreSearches = await searchCharts(dominant, 20);
       for (const t of genreSearches) {
-        if (!candidateMap.has(t.id)) candidateMap.set(t.id, t);
+        const enriched: Track = {
+          ...t,
+          sourceMetadata: {
+            ...t.sourceMetadata,
+            genre: t.sourceMetadata?.genre || dominant,
+          },
+        };
+        if (!candidateMap.has(enriched.id)) candidateMap.set(enriched.id, enriched);
       }
     } catch {}
 

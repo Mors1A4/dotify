@@ -519,7 +519,8 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
             djState.recordTrackEvent(rec.track, 'replayed', compRate, rec.durationPlayedMs);
           } else if (isSkipped) {
             djState.recordTrackEvent(rec.track, 'skipped', compRate, rec.durationPlayedMs);
-          } else if (compRate >= 0.70) {
+          } else {
+            // Completed or partially listened (>35%) - record with actual completion rate so it enters history
             djState.recordTrackEvent(rec.track, 'completed', compRate, rec.durationPlayedMs);
           }
         }

@@ -384,6 +384,7 @@ object NativePlayerEngine {
                                     .put("payloadIndex", payloadIdx)
                                     .put("id", meta.id)
                                     .put("title", meta.title)
+                                    .put("message", "Song stream not found")
                                 pushRaw("skip", skipPayload.toString())
                                 pushRaw("error", skipPayload.toString())
                                 continue
@@ -603,7 +604,7 @@ object NativePlayerEngine {
                     if (!hasActiveQueue) return@post
                     val pl = player
                     if (resolved == null || pl == null) {
-                        skipFailed(gen, payloadIdx, meta)
+                        skipFailed(gen, payloadIdx, meta, "Audio stream unavailable")
                         return@post
                     }
                     try {
@@ -613,21 +614,21 @@ object NativePlayerEngine {
                             pl.play()
                         }
                     } catch (_: Exception) {
-                        skipFailed(gen, payloadIdx, meta)
+                        skipFailed(gen, payloadIdx, meta, "Decoder error: ${error.errorCodeName} (${error.errorCode})")
                     }
                 }
             }.start()
         } else {
-            skipFailed(gen, payloadIdx, meta)
+            skipFailed(gen, payloadIdx, meta, "Decoder error: ${error.errorCodeName} (${error.errorCode})")
         }
     }
 
-    private fun skipFailed(gen: Int, payloadIdx: Int = -1, meta: TrackMeta? = null) {
+    private fun skipFailed(gen: Int, payloadIdx: Int = -1, meta: TrackMeta? = null, reason: String = "Playback failed") {
         if (generation.get() != gen) return
         val p = player ?: return
         try {
             val errPayload = JSONObject()
-                .put("message", "Playback failed")
+                .put("message", reason)
             if (payloadIdx >= 0) errPayload.put("payloadIndex", payloadIdx)
             if (meta != null) {
                 errPayload.put("id", meta.id)

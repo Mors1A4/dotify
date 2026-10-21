@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useVibeDjStore } from '../../store/vibeDjStore';
 import { usePlayerStore } from '../../store/playerStore';
 import {
@@ -19,6 +19,8 @@ import {
   Zap,
   ArrowRight,
   TrendingUp,
+  ThumbsDown,
+  RotateCcw,
 } from 'lucide-react';
 import { getTrackArtwork, DEFAULT_MUSIC_ARTWORK } from '../../services/artworkService';
 import { VibeDjArtistRecommendation, VibeDjTrackRecommendation } from '../../types/vibeDj';
@@ -42,6 +44,10 @@ export const VibeDjView: React.FC = () => {
     startVibeDj,
     shakeUpVibe,
     playRecommendedArtist,
+    playQueueTrack,
+    setVectorMetric,
+    steerAwayFromTrack,
+    replayHistoryTrack,
   } = useVibeDjStore();
 
   const {
@@ -49,7 +55,6 @@ export const VibeDjView: React.FC = () => {
     isPlaying,
     togglePlay,
     nextTrack,
-    playTrack,
     navigateToArtist,
   } = usePlayerStore();
 
@@ -215,70 +220,86 @@ export const VibeDjView: React.FC = () => {
             </div>
           </div>
 
-          {/* Vibe Metrics Radar Bar */}
+          {/* Vibe Metrics Radar Bar (Interactive Sliders) */}
           <div className="mt-8 pt-6 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="bg-black/25 backdrop-blur-md rounded-xl p-3 border border-white/5 space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+            {/* Energy Slider */}
+            <div className="bg-black/30 backdrop-blur-md rounded-2xl p-3.5 border border-white/10 space-y-2 hover:border-amber-400/40 transition-colors">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-white/80">
                 <span className="flex items-center gap-1.5">
-                  <Flame size={12} className="text-amber-400" />
+                  <Flame size={13} className="text-amber-400" />
                   <span>Energy</span>
                 </span>
-                <span className="text-white font-mono">{energyPercent}%</span>
+                <span className="text-amber-300 font-mono text-xs font-bold">{energyPercent}%</span>
               </div>
-              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-amber-400 rounded-full transition-all duration-700"
-                  style={{ width: `${energyPercent}%` }}
-                />
-              </div>
+              <input
+                type="range"
+                min="10"
+                max="95"
+                value={energyPercent}
+                onChange={(e) => setVectorMetric('energy', Number(e.target.value) / 100)}
+                className="w-full h-1.5 bg-white/15 rounded-lg appearance-none cursor-pointer accent-amber-400 hover:accent-amber-300 focus:outline-none"
+                title="Drag to adjust Energy intensity"
+              />
             </div>
 
-            <div className="bg-black/25 backdrop-blur-md rounded-xl p-3 border border-white/5 space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+            {/* Dance Slider */}
+            <div className="bg-black/30 backdrop-blur-md rounded-2xl p-3.5 border border-white/10 space-y-2 hover:border-rose-400/40 transition-colors">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-white/80">
                 <span className="flex items-center gap-1.5">
-                  <Zap size={12} className="text-rose-400" />
+                  <Zap size={13} className="text-rose-400" />
                   <span>Dance</span>
                 </span>
-                <span className="text-white font-mono">{dancePercent}%</span>
+                <span className="text-rose-300 font-mono text-xs font-bold">{dancePercent}%</span>
               </div>
-              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-rose-400 rounded-full transition-all duration-700"
-                  style={{ width: `${dancePercent}%` }}
-                />
-              </div>
+              <input
+                type="range"
+                min="10"
+                max="95"
+                value={dancePercent}
+                onChange={(e) => setVectorMetric('danceability', Number(e.target.value) / 100)}
+                className="w-full h-1.5 bg-white/15 rounded-lg appearance-none cursor-pointer accent-rose-400 hover:accent-rose-300 focus:outline-none"
+                title="Drag to adjust Danceability groove"
+              />
             </div>
 
-            <div className="bg-black/25 backdrop-blur-md rounded-xl p-3 border border-white/5 space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+            {/* Mood Slider */}
+            <div className="bg-black/30 backdrop-blur-md rounded-2xl p-3.5 border border-white/10 space-y-2 hover:border-blue-400/40 transition-colors">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-white/80">
                 <span className="flex items-center gap-1.5">
-                  <TrendingUp size={12} className="text-blue-400" />
+                  <TrendingUp size={13} className="text-blue-400" />
                   <span>Mood</span>
                 </span>
-                <span className="text-white font-mono">{moodPercent}%</span>
+                <span className="text-blue-300 font-mono text-xs font-bold">{moodPercent}%</span>
               </div>
-              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-400 rounded-full transition-all duration-700"
-                  style={{ width: `${moodPercent}%` }}
-                />
-              </div>
+              <input
+                type="range"
+                min="10"
+                max="95"
+                value={moodPercent}
+                onChange={(e) => setVectorMetric('mood', Number(e.target.value) / 100)}
+                className="w-full h-1.5 bg-white/15 rounded-lg appearance-none cursor-pointer accent-blue-400 hover:accent-blue-300 focus:outline-none"
+                title="Drag to adjust Mood valence"
+              />
             </div>
 
-            <div className="bg-black/25 backdrop-blur-md rounded-xl p-3 border border-white/5 space-y-1">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-white/70">
+            {/* Acoustic Slider */}
+            <div className="bg-black/30 backdrop-blur-md rounded-2xl p-3.5 border border-white/10 space-y-2 hover:border-emerald-400/40 transition-colors">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-white/80">
                 <span className="flex items-center gap-1.5">
-                  <Compass size={12} className="text-emerald-400" />
+                  <Compass size={13} className="text-emerald-400" />
                   <span>Acoustic</span>
                 </span>
-                <span className="text-white font-mono">{acousticPercent}%</span>
+                <span className="text-emerald-300 font-mono text-xs font-bold">{acousticPercent}%</span>
               </div>
-              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-emerald-400 rounded-full transition-all duration-700"
-                  style={{ width: `${acousticPercent}%` }}
-                />
-              </div>
+              <input
+                type="range"
+                min="10"
+                max="95"
+                value={acousticPercent}
+                onChange={(e) => setVectorMetric('acousticness', Number(e.target.value) / 100)}
+                className="w-full h-1.5 bg-white/15 rounded-lg appearance-none cursor-pointer accent-emerald-400 hover:accent-emerald-300 focus:outline-none"
+                title="Drag to adjust Acoustic warmth"
+              />
             </div>
           </div>
         </div>
@@ -366,18 +387,17 @@ export const VibeDjView: React.FC = () => {
               <div className="space-y-2">
                 {djQueue.map((item, index) => {
                   const art = getTrackArtwork(item.track);
+                  const matchBadgeColor =
+                    item.vibeScore >= 80
+                      ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25'
+                      : item.vibeScore >= 70
+                      ? 'text-sky-400 bg-sky-500/10 border-sky-500/25'
+                      : 'text-amber-400 bg-amber-500/10 border-amber-500/25';
+
                   return (
                     <div
                       key={`${item.track.id}_${index}`}
-                      onClick={() => {
-                        const queueTracks = djQueue.map((q) => q.track);
-                        playTrack(item.track, queueTracks, index, {
-                          origin: 'vibe_dj',
-                          intent: 'exploratory',
-                          playlistName: vibeLabel,
-                          isDj: true,
-                        });
-                      }}
+                      onClick={() => playQueueTrack(index)}
                       className="group flex items-center justify-between p-3 rounded-xl bg-surface border border-customBorder/50 hover:bg-elevated hover:border-accent/40 transition-all cursor-pointer shadow-xs"
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -399,7 +419,7 @@ export const VibeDjView: React.FC = () => {
                           <div className="text-[11px] text-secondary truncate">
                             {item.track.artist}
                           </div>
-                          <div className="text-[10px] text-secondary/60 truncate mt-0.5">
+                          <div className="text-[10px] text-secondary/70 truncate mt-0.5">
                             {item.vibeReason}
                           </div>
                         </div>
@@ -411,7 +431,7 @@ export const VibeDjView: React.FC = () => {
                             Discovery
                           </span>
                         )}
-                        <span className="text-[11px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/25">
+                        <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-md border ${matchBadgeColor}`}>
                           {item.vibeScore}% Match
                         </span>
                       </div>
@@ -443,18 +463,40 @@ export const VibeDjView: React.FC = () => {
                 history.map((h, idx) => (
                   <div
                     key={`${h.track.id}_hist_${idx}`}
-                    className="flex items-center justify-between text-xs py-1.5 border-b border-customBorder/30 last:border-b-0"
+                    className="group flex items-center justify-between text-xs py-1.5 px-2 rounded-xl hover:bg-elevated/60 transition-colors border-b border-customBorder/30 last:border-b-0"
                   >
-                    <div className="min-w-0 pr-2">
-                      <div className="font-semibold text-primary truncate">
-                        {h.track.title}
-                      </div>
-                      <div className="text-[11px] text-secondary truncate">
-                        {h.track.artist}
+                    <div className="min-w-0 pr-2 flex items-center gap-2">
+                      <button
+                        onClick={() => replayHistoryTrack(h.track)}
+                        title="Replay this track"
+                        className="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-white/10 text-secondary hover:text-white transition-opacity shrink-0 cursor-pointer"
+                      >
+                        <RotateCcw size={12} />
+                      </button>
+                      <div className="min-w-0">
+                        <div
+                          onClick={() => replayHistoryTrack(h.track)}
+                          className="font-semibold text-primary truncate hover:underline cursor-pointer"
+                        >
+                          {h.track.title}
+                        </div>
+                        <div className="text-[11px] text-secondary truncate">
+                          {h.track.artist}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                      {!h.skipped && (
+                        <button
+                          onClick={() => steerAwayFromTrack(h.track)}
+                          title="Steer DJ away from this sound"
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-rose-500/20 text-secondary hover:text-rose-400 transition-all cursor-pointer"
+                        >
+                          <ThumbsDown size={12} />
+                        </button>
+                      )}
+
                       {h.skipped ? (
                         <span
                           className="flex items-center gap-1 text-[10px] text-amber-400 font-medium"

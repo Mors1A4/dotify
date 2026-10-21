@@ -63,7 +63,7 @@ object YtStreamResolver {
     fun searchCandidates(query: String): List<Candidate> {
         val q = query.trim()
         if (q.isEmpty()) return emptyList()
-        return try {
+        val extractorList = try {
             ensureNewPipe()
             val handler = ServiceList.YouTube.searchQHFactory
                 .fromQuery(q, listOf("videos"), "")
@@ -82,6 +82,9 @@ object YtStreamResolver {
             try { Log.w(TAG, "searchCandidates via NewPipe failed: ${e.message}") } catch (_: Throwable) {}
             emptyList()
         }
+        if (extractorList.isNotEmpty()) return extractorList
+
+        return searchCandidatesViaWebScraper(q)
     }
 
     private class CacheEntry(
@@ -420,15 +423,19 @@ object YtStreamResolver {
 
         searchCache[q]?.takeIf { now() - it.createdAt < CACHE_TTL_MS }?.let { return it.videoId }
 
-        // NewPipeExtractor search first: it works on-device with the v0.26.x
-        // player clients, while the public Piped /search fleet has been behind
-        // YouTube's anti-bot wall since 2026.
+        // 1. NewPipeExtractor search on-device
         searchVideoIdViaExtractor(q, expectedDurationSec)?.let {
             searchCache[q] = SearchEntry(it, now())
             return it
         }
 
-        // Piped search fallback (opportunistic; fleet mostly unreachable).
+        // 2. Direct YouTube web search scraper fallback
+        searchVideoIdViaWebScraper(q, expectedDurationSec)?.let {
+            searchCache[q] = SearchEntry(it, now())
+            return it
+        }
+
+        // 3. Piped search fallback (opportunistic; fleet mostly unreachable).
         for (instance in PIPED_INSTANCES) {
             try {
                 val encoded = URLEncoder.encode(q, "UTF-8")
@@ -470,6 +477,167 @@ object YtStreamResolver {
     }
 
     /**
+     * Shared scoring function for candidate YouTube items against a query and expected duration.
+     */
+    fun scoreCandidate(
+        query: String,
+        expectedDurationSec: Long,
+        candidateTitle: String,
+        candidateUploader: String,
+        candidateDurationSec: Long
+    ): Int {
+        val expectedTokens = normalizeForCompare(query)
+        val titleTokens = normalizeForCompare(candidateTitle)
+        val uploaderTokens = if (candidateUploader.isNotBlank()) normalizeForCompare(candidateUploader) else ""
+        val combinedActual = if (uploaderTokens.isNotEmpty()) "$uploaderTokens $titleTokens" else titleTokens
+
+        val titleSim = tokenSimilarity(expectedTokens, combinedActual)
+        val exactTitleBonus = if (expectedTokens.contains(titleTokens) || (titleTokens.length > 3 && titleTokens.contains(expectedTokens))) 200_000 else 0
+        val titleScore = (500_000 * titleSim).toInt()
+
+        val hasNonLatin = containsNonLatin(query) || containsNonLatin(candidateTitle)
+        val nonLatinBonus = if (hasNonLatin) {
+            val qChars = query.filter { it.code > 0x0250 }.toSet()
+            val actualChars = (candidateTitle + " " + candidateUploader).filter { it.code > 0x0250 }.toSet()
+            if (qChars.isNotEmpty() && actualChars.isNotEmpty()) {
+                val overlap = qChars.intersect(actualChars).size.toDouble() / minOf(qChars.size, actualChars.size).toDouble()
+                (250_000 * overlap).toInt()
+            } else 0
+        } else 0
+
+        val durationScore: Int = if (expectedDurationSec <= 0L) {
+            50_000
+        } else {
+            val diff = abs(candidateDurationSec - expectedDurationSec)
+            when {
+                diff <= 5L -> 300_000 - (diff * 2_000).toInt()
+                diff <= 15L -> 250_000 - (diff * 2_000).toInt()
+                diff <= 45L -> 150_000 - (diff * 1_000).toInt()
+                diff <= 120L -> 50_000 - (diff * 200).toInt()
+                else -> -200_000
+            }
+        }
+
+        return titleScore + exactTitleBonus + nonLatinBonus + durationScore
+    }
+
+    fun searchCandidatesViaWebScraper(query: String): List<Candidate> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        return try {
+            val encoded = URLEncoder.encode(q, "UTF-8")
+            val url = URL("https://www.youtube.com/results?search_query=$encoded&hl=en")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("User-Agent", BROWSER_UA)
+                setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+                setRequestProperty("Cookie", "CONSENT=YES+cb.20210328-17-p0.en+FX+478; SOCS=CAESEwgDEgk0ODEzNzk5NDIaAmVuIAEaBgiA_LyaBg")
+            }
+            if (conn.responseCode !in 200..299) {
+                println("DEBUG CODE: ${conn.responseCode}")
+                return emptyList()
+            }
+            val rawStream = conn.inputStream
+            val bytes = rawStream?.use { it.readBytes() } ?: ByteArray(0)
+            val isGzip = bytes.size >= 2 && (bytes[0].toInt() and 0xFF) == 0x1F && (bytes[1].toInt() and 0xFF) == 0x8B
+            val html = if (isGzip) {
+                try {
+                    java.util.zip.GZIPInputStream(bytes.inputStream()).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                } catch (_: Throwable) {
+                    String(bytes, Charsets.UTF_8)
+                }
+            } else {
+                String(bytes, Charsets.UTF_8)
+            }
+            conn.disconnect()
+
+            val startIdx = html.indexOf("ytInitialData")
+            if (startIdx == -1) return emptyList()
+            val braceIdx = html.indexOf('{', startIdx)
+            if (braceIdx == -1) return emptyList()
+            val scriptEnd = html.indexOf("</script>", braceIdx)
+            if (scriptEnd == -1) return emptyList()
+
+            var rawJson = html.substring(braceIdx, scriptEnd).trim()
+            if (rawJson.endsWith(";")) {
+                rawJson = rawJson.substring(0, rawJson.length - 1).trim()
+            }
+            // Some pages have trailing JS assignments after the JSON like ";var meta = ..."
+            val semiVarIdx = rawJson.indexOf(";var ")
+            if (semiVarIdx != -1) {
+                rawJson = rawJson.substring(0, semiVarIdx).trim()
+            }
+
+            val root = JSONObject(rawJson)
+            val contents = root.optJSONObject("contents")
+                ?.optJSONObject("twoColumnSearchResultsRenderer")
+                ?.optJSONObject("primaryContents")
+                ?.optJSONObject("sectionListRenderer")
+                ?.optJSONArray("contents") ?: return emptyList()
+
+            val candidates = mutableListOf<Candidate>()
+            for (i in 0 until contents.length()) {
+                val section = contents.optJSONObject(i)?.optJSONObject("itemSectionRenderer")?.optJSONArray("contents") ?: continue
+                for (j in 0 until section.length()) {
+                    val vr = section.optJSONObject(j)?.optJSONObject("videoRenderer") ?: continue
+                    val vid = vr.optString("videoId", "")
+                    if (vid.length != 11) continue
+
+                    val runs = vr.optJSONObject("title")?.optJSONArray("runs")
+                    var title = ""
+                    if (runs != null) {
+                        for (k in 0 until runs.length()) {
+                            title += runs.optJSONObject(k)?.optString("text", "") ?: ""
+                        }
+                    } else {
+                        title = vr.optJSONObject("title")?.optString("simpleText", "") ?: ""
+                    }
+
+                    val durStr = vr.optJSONObject("lengthText")?.optString("simpleText", "") ?: ""
+                    var durSec = 0L
+                    if (durStr.isNotEmpty()) {
+                        val parts = durStr.split(":").mapNotNull { it.trim().toLongOrNull() }
+                        if (parts.size == 2) {
+                            durSec = parts[0] * 60 + parts[1]
+                        } else if (parts.size == 3) {
+                            durSec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                        }
+                    }
+
+                    val uploader = vr.optJSONObject("ownerText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text", "")
+                        ?: vr.optJSONObject("shortBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text", "")
+                        ?: ""
+
+                    candidates.add(Candidate(vid, title, durSec, uploader))
+                }
+            }
+            candidates
+        } catch (e: Throwable) {
+            println("DEBUG EXCEPTION: $e")
+            Log.w(TAG, "searchCandidatesViaWebScraper failed: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun searchVideoIdViaWebScraper(query: String, expectedDurationSec: Long): String? {
+        val candidates = searchCandidatesViaWebScraper(query)
+        if (candidates.isEmpty()) return null
+        var bestId: String? = null
+        var bestScore = Int.MIN_VALUE
+        for (c in candidates) {
+            if (c.duration <= 0L || c.duration > 1800L) continue
+            val score = scoreCandidate(query, expectedDurationSec, c.title, c.uploader, c.duration)
+            if (score > bestScore) {
+                bestScore = score
+                bestId = c.videoId
+            }
+        }
+        return bestId
+    }
+
+    /**
      * Searches YouTube on-device through the NewPipeExtractor video search and
      * scores items by duration match and title similarity. This is the primary
      * identification fallback when (a) the WebView/TS layer produced no videoId
@@ -482,7 +650,6 @@ object YtStreamResolver {
                 .fromQuery(query, listOf("videos"), "")
             val info = SearchInfo.getInfo(ServiceList.YouTube, handler)
 
-            val expectedTokens = normalizeForCompare(query)
             var bestId: String? = null
             var bestScore = Int.MIN_VALUE
             for (item in info.relatedItems) {
@@ -491,38 +658,8 @@ object YtStreamResolver {
                 val duration = try { item.duration } catch (_: Throwable) { -1L }
                 if (duration <= 0L || duration > 1800L) continue // skip live / 30-min+ items
 
-                val titleTokens = normalizeForCompare(item.name)
-                val uploaderTokens = try { normalizeForCompare(item.uploaderName ?: "") } catch (_: Throwable) { "" }
-                val combinedActual = if (uploaderTokens.isNotEmpty()) "$uploaderTokens $titleTokens" else titleTokens
-
-                val titleSim = tokenSimilarity(expectedTokens, combinedActual)
-                val exactTitleBonus = if (expectedTokens.contains(titleTokens) || (titleTokens.length > 3 && titleTokens.contains(expectedTokens))) 200_000 else 0
-                val titleScore = (500_000 * titleSim).toInt()
-
-                val hasNonLatin = containsNonLatin(query) || containsNonLatin(item.name)
-                val nonLatinBonus = if (hasNonLatin) {
-                    val qChars = query.filter { it.code > 0x0250 }.toSet()
-                    val actualChars = (item.name + " " + (item.uploaderName ?: "")).filter { it.code > 0x0250 }.toSet()
-                    if (qChars.isNotEmpty() && actualChars.isNotEmpty()) {
-                        val overlap = qChars.intersect(actualChars).size.toDouble() / minOf(qChars.size, actualChars.size).toDouble()
-                        (250_000 * overlap).toInt()
-                    } else 0
-                } else 0
-
-                val durationScore: Int = if (expectedDurationSec <= 0L) {
-                    50_000
-                } else {
-                    val diff = abs(duration - expectedDurationSec)
-                    when {
-                        diff <= 5L -> 300_000 - (diff * 2_000).toInt()
-                        diff <= 15L -> 250_000 - (diff * 2_000).toInt()
-                        diff <= 45L -> 150_000 - (diff * 1_000).toInt()
-                        diff <= 120L -> 50_000 - (diff * 200).toInt()
-                        else -> -200_000
-                    }
-                }
-
-                val score = titleScore + exactTitleBonus + nonLatinBonus + durationScore
+                val uploader = try { item.uploaderName ?: "" } catch (_: Throwable) { "" }
+                val score = scoreCandidate(query, expectedDurationSec, item.name ?: "", uploader, duration)
 
                 if (score > bestScore) {
                     bestScore = score
@@ -579,7 +716,22 @@ object YtStreamResolver {
                 setRequestProperty("Accept", "application/json")
             }
             if (conn.responseCode !in 200..299) return null
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val rawStream = conn.inputStream
+            val bytes = try {
+                rawStream?.use { it.readBytes() } ?: return null
+            } catch (_: Throwable) {
+                return null
+            }
+            val isGzip = bytes.size >= 2 && (bytes[0].toInt() and 0xFF) == 0x1F && (bytes[1].toInt() and 0xFF) == 0x8B
+            val body = if (isGzip) {
+                try {
+                    java.util.zip.GZIPInputStream(bytes.inputStream()).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                } catch (_: Throwable) {
+                    String(bytes, Charsets.UTF_8)
+                }
+            } else {
+                String(bytes, Charsets.UTF_8)
+            }
             return JSONObject(body)
         } catch (e: Throwable) {
             Log.w(TAG, "fetchJson failed ($url): ${e.message}")
@@ -625,18 +777,23 @@ class DotifyDownloader : Downloader() {
             }
 
             val code = conn.responseCode
-            val isGzip = "gzip".equals(conn.contentEncoding, ignoreCase = true) ||
-                conn.headerFields["Content-Encoding"]?.any { it.contains("gzip", ignoreCase = true) } == true
             val rawStream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = try {
-                if (rawStream != null) {
-                    val stream = if (isGzip) java.util.zip.GZIPInputStream(rawStream) else rawStream
-                    stream.bufferedReader().use { it.readText() }
-                } else {
-                    ""
-                }
+            val bytes = try {
+                rawStream?.use { it.readBytes() } ?: ByteArray(0)
             } catch (_: Throwable) {
-                ""
+                ByteArray(0)
+            }
+            val isActuallyGzip = bytes.size >= 2 &&
+                (bytes[0].toInt() and 0xFF) == 0x1F &&
+                (bytes[1].toInt() and 0xFF) == 0x8B
+            val body = if (isActuallyGzip) {
+                try {
+                    java.util.zip.GZIPInputStream(bytes.inputStream()).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                } catch (_: Throwable) {
+                    String(bytes, Charsets.UTF_8)
+                }
+            } else {
+                String(bytes, Charsets.UTF_8)
             }
             val headerFields = conn.headerFields.filterKeys { it != null }
             val latestUrl = conn.url.toString()
