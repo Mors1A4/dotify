@@ -32,6 +32,7 @@ export const QueueDrawer: React.FC = () => {
     navigateToArtist,
     autoplayEnabled,
     enableAutoplay,
+    openSourceModal,
   } = usePlayerStore();
 
   const isAudioActive = useAudioActive(5, 75);
@@ -182,6 +183,18 @@ export const QueueDrawer: React.FC = () => {
                   }}
                 />
               </div>
+
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openSourceModal(currentTrack);
+                }}
+                className="p-1 rounded-md text-secondary hover:text-accent hover:bg-highlight transition-colors shrink-0"
+                title="Audio Source & Watermark Fixer"
+                aria-label="Audio Source"
+              >
+                <Radio size={14} />
+              </button>
             </div>
           </div>
         )}

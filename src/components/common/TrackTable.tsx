@@ -1,7 +1,7 @@
 import React from 'react';
 import { Track } from '../../types/track';
 import { usePlayerStore } from '../../store/playerStore';
-import { Play, Heart, Clock, MoreVertical, Plus, ListMusic } from 'lucide-react';
+import { Play, Heart, Clock, MoreVertical, Plus, ListMusic, Radio } from 'lucide-react';
 import {
   getTrackArtwork,
   resolveTrackArtwork,
@@ -46,6 +46,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
     playlists,
     addTrackToPlaylist,
     openCreatePlaylistModal,
+    openSourceModal,
   } = usePlayerStore();
 
   const [activeMenuIndex, setActiveMenuIndex] = React.useState<number | null>(null);
@@ -248,6 +249,17 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                         >
                           <Plus size={12} />
                           <span>Add to Queue</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            openSourceModal(track);
+                            setActiveMenuIndex(null);
+                          }}
+                          className="px-3 py-1.5 text-left hover:bg-highlight flex items-center gap-2 cursor-pointer text-secondary hover:text-primary"
+                        >
+                          <Radio size={12} className="text-accent shrink-0" />
+                          <span>Fix Audio / Change Source</span>
                         </button>
 
                         <div className="border-t border-customBorder/50 my-1 pt-1">

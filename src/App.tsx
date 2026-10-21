@@ -13,6 +13,7 @@ import { AuthModal } from './components/auth/AuthModal';
 import { CreatePlaylistModal } from './components/modals/CreatePlaylistModal';
 import { UpdateModal } from './components/modals/UpdateModal';
 import { HelpUpgradeModal } from './components/modals/HelpUpgradeModal';
+import { AudioSourceModal } from './components/modals/AudioSourceModal';
 import { HomeView } from './components/views/HomeView';
 import { SearchView } from './components/views/SearchView';
 import { LibraryView } from './components/views/LibraryView';
@@ -193,6 +194,7 @@ export const App: React.FC = () => {
 
       {/* Help & AI Feature Upgrade Studio Modal */}
       <HelpUpgradeModal />
+      <AudioSourceModal />
     </div>
   );
 };

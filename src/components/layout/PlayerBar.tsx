@@ -54,6 +54,7 @@ export const PlayerBar: React.FC = () => {
     connectMode,
     activeDevice,
     toggleDevicePicker,
+    openSourceModal,
   } = usePlayerStore();
 
   const displayTrack = currentTrack || audioEngine.getCurrentTrack();
@@ -142,6 +143,15 @@ export const PlayerBar: React.FC = () => {
             </button>
 
             <SaveMp3Button track={displayTrack} size={17} />
+            <button
+              onClick={() => openSourceModal(displayTrack)}
+              data-testid="audio-source-btn"
+              aria-label="Audio Source & Watermark Fixer"
+              className="text-secondary hover:text-accent transition-colors p-1"
+              title="Audio Source / Report Watermark"
+            >
+              <Radio size={16} />
+            </button>
             <VibeDjBadge compact={false} />
           </>
         ) : (

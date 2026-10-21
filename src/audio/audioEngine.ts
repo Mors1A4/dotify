@@ -5,7 +5,12 @@ import { getApiUrl, getCustomApiUrl, isAndroidApp } from '../services/apiConfig'
 import { useMp3VaultStore } from '../services/mp3VaultService';
 import { YouTubeIframeBridge } from './youtubeIframeBridge';
 import { androidNativePlayback, NativeTrackPayload } from './androidNativePlayback';
-import { resolveYouTubeVideoId } from '../services/youtubeResolver';
+import {
+  resolveYouTubeVideoId,
+  markSourceAsBadAndResolveNext,
+  setExplicitSource,
+  getCachedVideoId,
+} from '../services/youtubeResolver';
 import { mobileDiagnostics } from '../services/mobileDiagnostics';
 
 function createAudioElement(): HTMLAudioElement {
@@ -40,6 +45,7 @@ export class AudioEngine {
   // YouTube IFrame Player Bridge for 100% self-contained mobile & fallback playback
   private ytBridge: YouTubeIframeBridge;
   private isUsingYouTubeBridge: boolean = false;
+  private currentResolvedVideoId: string | null = null;
 
   // Native Media3 ExoPlayer engine (Android) for background / screen-off
   // resilient streaming. Owning this Russell-free flag reroutes every
@@ -928,6 +934,7 @@ export class AudioEngine {
       this.activeAudio.pause();
       this.standbyAudio.pause();
       this.isUsingYouTubeBridge = true;
+      this.currentResolvedVideoId = videoId;
 
       await this.ytBridge.play(videoId, startSeconds);
       if (!shouldPlay) {
@@ -1231,6 +1238,7 @@ export class AudioEngine {
       const target = payloadTracks[startIndex];
 
       this.currentTrack = track;
+      this.currentResolvedVideoId = videoId;
       this.hasNotifiedApproachingEnd = false;
       this.prebufferedTrack = null;
       this.isPrebufferedReady = false;
@@ -1572,6 +1580,108 @@ export class AudioEngine {
 
   public getCurrentTrack(): Track | null {
     return this.currentTrack;
+  }
+
+  /**
+   * Returns the YouTube Video ID of the currently playing or active track, if applicable.
+   */
+  public getCurrentVideoId(): string | null {
+    if (this.currentResolvedVideoId) {
+      return this.currentResolvedVideoId;
+    }
+    const bridgeVid = this.ytBridge.getVideoId();
+    if (bridgeVid) {
+      return bridgeVid;
+    }
+    if (this.currentTrack && this.currentTrack.artist && this.currentTrack.title) {
+      return getCachedVideoId(this.currentTrack.artist, this.currentTrack.title);
+    }
+    return null;
+  }
+
+  /**
+   * Hot-swaps the current audio source to an alternative videoId seamlessly at current playback time.
+   */
+  public async switchSource(newVideoId: string): Promise<boolean> {
+    if (!this.currentTrack || !newVideoId || newVideoId.length !== 11) return false;
+    const currentPos = this.getCurrentTime();
+    const wasPlaying = this.isPlaying();
+
+    this.currentResolvedVideoId = newVideoId;
+    setExplicitSource(this.currentTrack.artist, this.currentTrack.title, newVideoId);
+
+    if (this.isUsingYouTubeBridge) {
+      await this.ytBridge.play(newVideoId, currentPos);
+      if (!wasPlaying) {
+        this.ytBridge.pause();
+      }
+      return true;
+    }
+
+    if (this.isUsingNativeEngine) {
+      await this.playViaNativeEngine(this.currentTrack, ++this.playRequestId, currentPos, wasPlaying);
+      return true;
+    }
+
+    // If somehow neither was active yet (e.g. paused or ready to play):
+    if (this.isDirectAudioTrack(this.currentTrack)) {
+      return false;
+    }
+    await this.playViaYouTubeBridge(this.currentTrack, ++this.playRequestId, currentPos, wasPlaying);
+    return true;
+  }
+
+  /**
+   * Marks the currently playing stream source as bad (e.g. audio watermark, promo voiceover)
+   * and immediately resolves and switches to the next best clean candidate.
+   */
+  public async markCurrentSourceAsBad(
+    reason = 'audio_watermark'
+  ): Promise<{ success: boolean; newVideoId: string | null; message: string }> {
+    const track = this.currentTrack;
+    if (!track) {
+      return { success: false, newVideoId: null, message: 'No track is currently playing' };
+    }
+
+    const videoId = this.getCurrentVideoId();
+    if (!videoId) {
+      return {
+        success: false,
+        newVideoId: null,
+        message: 'Current track is not streamed from an external video source',
+      };
+    }
+
+    try {
+      const { newVideoId } = await markSourceAsBadAndResolveNext(
+        track.artist,
+        track.title,
+        videoId,
+        track.duration,
+        reason
+      );
+
+      if (newVideoId) {
+        await this.switchSource(newVideoId);
+        return {
+          success: true,
+          newVideoId,
+          message: 'Source marked as bad (audio watermark). Switched to clean source!',
+        };
+      } else {
+        return {
+          success: false,
+          newVideoId: null,
+          message: 'Source marked as bad, but no clean alternative candidates were found.',
+        };
+      }
+    } catch (err: any) {
+      return {
+        success: false,
+        newVideoId: null,
+        message: err?.message || 'Failed to switch audio source',
+      };
+    }
   }
 
   public getAnalyser(): AnalyserNode | null {

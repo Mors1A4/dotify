@@ -243,6 +243,8 @@ export interface PlayerStoreState {
   isCreatePlaylistModalOpen: boolean;
   createPlaylistModalTab: 'custom' | 'spotify';
   createPlaylistInitialTracks: Track[];
+  isSourceModalOpen: boolean;
+  sourceModalTrack: Track | null;
 
   // Spotify Connect State
   connectMode: ConnectMode;
@@ -312,6 +314,10 @@ export interface PlayerStoreState {
   toggleSidebarCollapse: () => void;
   openCreatePlaylistModal: (tab?: 'custom' | 'spotify', initialTracks?: Track[]) => void;
   closeCreatePlaylistModal: () => void;
+  openSourceModal: (track?: Track) => void;
+  closeSourceModal: () => void;
+  markCurrentSourceBad: (reason?: string) => Promise<{ success: boolean; newVideoId: string | null; message: string }>;
+  switchAudioSource: (track: Track, newVideoId: string) => Promise<boolean>;
 
   // Library & Playlist actions
   toggleLike: (track: Track) => void;
@@ -915,6 +921,8 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     isCreatePlaylistModalOpen: false,
     createPlaylistModalTab: 'custom',
     createPlaylistInitialTracks: [],
+    isSourceModalOpen: false,
+    sourceModalTrack: null,
 
     // Spotify Connect State
     connectMode: 'standalone',
@@ -2200,6 +2208,37 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         isCreatePlaylistModalOpen: false,
         createPlaylistInitialTracks: [],
       }),
+
+    openSourceModal: (track?: Track) => {
+      const target = track || get().currentTrack || audioEngine.getCurrentTrack();
+      set({
+        isSourceModalOpen: true,
+        sourceModalTrack: target || null,
+      });
+    },
+
+    closeSourceModal: () => {
+      set({
+        isSourceModalOpen: false,
+        sourceModalTrack: null,
+      });
+    },
+
+    markCurrentSourceBad: async (reason = 'audio_watermark') => {
+      const res = await audioEngine.markCurrentSourceAsBad(reason);
+      return res;
+    },
+
+    switchAudioSource: async (track: Track, newVideoId: string) => {
+      const current = get().currentTrack;
+      if (current && (current.id === track.id || (current.artist === track.artist && current.title === track.title))) {
+        return audioEngine.switchSource(newVideoId);
+      } else {
+        const { setExplicitSource } = await import('../services/youtubeResolver');
+        setExplicitSource(track.artist, track.title, newVideoId);
+        return true;
+      }
+    },
 
     toggleLike: (track: Track) => {
       const { likedTracks } = get();

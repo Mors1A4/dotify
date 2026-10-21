@@ -4,11 +4,15 @@
  * Unified across Windows, Android, and Web with identical candidate ranking and multi-tier caching.
  */
 
+import { badSourceService } from './badSourceService';
+
 export interface YouTubeCandidate {
   videoId: string;
   title: string;
   duration: number; // in seconds
   score?: number;
+  isBad?: boolean;
+  badReason?: string;
 }
 
 const CACHE_PREFIX = 'dotify_yt_vid_';
@@ -275,7 +279,19 @@ export function rankCandidates(
       if (!normTitle.includes('slowed') && (cTitle.includes('slowed') || cTitle.includes('reverb'))) score -= 40;
       if (cTitle.includes('1 hour') || cTitle.includes('10 hours') || cTitle.includes('loop')) score -= 70;
 
-      return { ...c, score };
+      // 4. Bad source / audio watermark exclusion
+      const isBad = badSourceService.isBad(c.videoId);
+      const badEntry = isBad ? badSourceService.getBadEntry(c.videoId) : undefined;
+      if (isBad) {
+        score -= 999999;
+      }
+
+      return {
+        ...c,
+        score,
+        isBad,
+        badReason: badEntry?.reason,
+      };
     })
     .sort((a, b) => (b.score || 0) - (a.score || 0));
 }
@@ -290,11 +306,18 @@ let isPrewarming = false;
 export function isCandidateCached(artist: string, title: string): boolean {
   const key = normalizeKey(artist, title);
   if (!key) return false;
-  if (MEMORY_CACHE.has(key)) return true;
+  if (MEMORY_CACHE.has(key)) {
+    const vid = MEMORY_CACHE.get(key)!;
+    if (!badSourceService.isBad(vid)) return true;
+    MEMORY_CACHE.delete(key);
+  }
   try {
     if (typeof localStorage !== 'undefined') {
       const cached = localStorage.getItem(CACHE_PREFIX + key);
-      return Boolean(cached && cached.length === 11);
+      if (cached && cached.length === 11) {
+        if (!badSourceService.isBad(cached)) return true;
+        localStorage.removeItem(CACHE_PREFIX + key);
+      }
     }
   } catch {}
   return false;
@@ -347,7 +370,11 @@ export async function resolveYouTubeVideoId(
 
   // 1. Check in-memory cache (<1ms)
   if (MEMORY_CACHE.has(key)) {
-    return MEMORY_CACHE.get(key)!;
+    const cached = MEMORY_CACHE.get(key)!;
+    if (!badSourceService.isBad(cached)) {
+      return cached;
+    }
+    MEMORY_CACHE.delete(key);
   }
 
   // 2. Check localStorage cache (<2ms)
@@ -355,8 +382,11 @@ export async function resolveYouTubeVideoId(
     if (typeof localStorage !== 'undefined') {
       const cached = localStorage.getItem(CACHE_PREFIX + key);
       if (cached && cached.length === 11) {
-        MEMORY_CACHE.set(key, cached);
-        return cached;
+        if (!badSourceService.isBad(cached)) {
+          MEMORY_CACHE.set(key, cached);
+          return cached;
+        }
+        localStorage.removeItem(CACHE_PREFIX + key);
       }
     }
   } catch {}
@@ -377,8 +407,9 @@ export async function resolveYouTubeVideoId(
       let candidates = await searchYouTube(primaryQuery);
       let ranked = candidates.length > 0 ? rankCandidates(candidates, cleanArtist, cleanTitle, targetDuration) : [];
 
-      // If no candidates found, or if top candidate has weak match (score < 40), expand search
-      if (ranked.length === 0 || (ranked[0].score ?? 0) < 40) {
+      // If no candidates found, or if top clean candidate has weak match (score < 40), expand search
+      const topClean = ranked.find((c) => !badSourceService.isBad(c.videoId));
+      if (!topClean || (topClean.score ?? 0) < 40) {
         const fallbacks: string[] = [];
         if (cleanArtist) {
           fallbacks.push(`${cleanArtist} ${cleanTitle} official audio`);
@@ -401,18 +432,20 @@ export async function resolveYouTubeVideoId(
             });
             candidates = Array.from(candidateMap.values());
             ranked = rankCandidates(candidates, cleanArtist, cleanTitle, targetDuration);
-            if (ranked.length > 0 && (ranked[0].score ?? 0) >= 40) {
+            const currentTopClean = ranked.find((c) => !badSourceService.isBad(c.videoId));
+            if (currentTopClean && (currentTopClean.score ?? 0) >= 40) {
               break;
             }
           }
         }
       }
 
-      if (ranked.length === 0) {
+      const cleanRanked = ranked.filter((c) => !badSourceService.isBad(c.videoId));
+      if (cleanRanked.length === 0) {
         return null;
       }
 
-      const best = ranked[0];
+      const best = cleanRanked[0];
       if (!best || !best.videoId) {
         return null;
       }
@@ -433,5 +466,138 @@ export async function resolveYouTubeVideoId(
 
   IN_FLIGHT_RESOLUTIONS.set(key, resolutionPromise);
   return resolutionPromise;
+}
+
+/**
+ * Retrieves the currently cached video ID for an artist/title (if not bad).
+ */
+export function getCachedVideoId(artist: string, title: string): string | null {
+  const key = normalizeKey(artist, title);
+  if (!key) return null;
+  if (MEMORY_CACHE.has(key)) {
+    const vid = MEMORY_CACHE.get(key)!;
+    if (!badSourceService.isBad(vid)) return vid;
+    MEMORY_CACHE.delete(key);
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const cached = localStorage.getItem(CACHE_PREFIX + key);
+      if (cached && cached.length === 11) {
+        if (!badSourceService.isBad(cached)) {
+          MEMORY_CACHE.set(key, cached);
+          return cached;
+        }
+        localStorage.removeItem(CACHE_PREFIX + key);
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Explicitly sets a user-selected video ID for a track in cache.
+ */
+export function setExplicitSource(artist: string, title: string, videoId: string): void {
+  const key = normalizeKey(artist, title);
+  if (!key || !videoId || videoId.length !== 11) return;
+  // If the user explicitly selects this candidate, unmark it from bad sources
+  badSourceService.unmarkBad(videoId);
+  MEMORY_CACHE.set(key, videoId);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(CACHE_PREFIX + key, videoId);
+    }
+  } catch {}
+}
+
+/**
+ * Fetches all YouTube candidate videos for a track without committing a resolution,
+ * returning candidates ranked and annotated with their bad status.
+ */
+export async function getCandidatesForTrack(
+  artist: string,
+  title: string,
+  expectedDuration?: number
+): Promise<YouTubeCandidate[]> {
+  const cleanArtist = artist.trim();
+  const cleanTitle = title.trim();
+  const targetDuration = expectedDuration && isFinite(expectedDuration) ? Math.round(expectedDuration) : 0;
+  const primaryQuery = cleanArtist ? `${cleanArtist} - ${cleanTitle}` : cleanTitle;
+
+  const candidateMap = new Map<string, YouTubeCandidate>();
+  const initial = await searchYouTube(primaryQuery);
+  initial.forEach((c) => candidateMap.set(c.videoId, c));
+
+  const fallbacks: string[] = [];
+  if (cleanArtist) {
+    fallbacks.push(`${cleanArtist} ${cleanTitle} official audio`);
+    fallbacks.push(`${cleanTitle} ${cleanArtist}`);
+  }
+  if (cleanTitle !== primaryQuery) {
+    fallbacks.push(cleanTitle);
+  }
+
+  for (const query of fallbacks) {
+    try {
+      const extra = await searchYouTube(query);
+      if (extra.length > 0) {
+        extra.forEach((c) => {
+          if (!candidateMap.has(c.videoId)) {
+            candidateMap.set(c.videoId, c);
+          }
+        });
+      }
+    } catch {}
+  }
+
+  const all = Array.from(candidateMap.values());
+  return rankCandidates(all, cleanArtist, cleanTitle, targetDuration);
+}
+
+/**
+ * Marks a candidate source as bad (e.g. audio watermark) and resolves the next best candidate.
+ */
+export async function markSourceAsBadAndResolveNext(
+  artist: string,
+  title: string,
+  videoId: string,
+  expectedDuration?: number,
+  reason = 'audio_watermark',
+  videoTitle?: string
+): Promise<{ newVideoId: string | null; newCandidate?: YouTubeCandidate }> {
+  // 1. Mark as bad in badSourceService
+  badSourceService.markBad({
+    videoId,
+    artist,
+    title,
+    videoTitle,
+    reason,
+  });
+
+  // 2. Clear caches for this track
+  const key = normalizeKey(artist, title);
+  if (key) {
+    MEMORY_CACHE.delete(key);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(CACHE_PREFIX + key);
+      }
+    } catch {}
+  }
+
+  // 3. Resolve next clean video ID
+  const newVideoId = await resolveYouTubeVideoId(artist, title, expectedDuration);
+
+  // 4. Return candidate metadata
+  let newCandidate: YouTubeCandidate | undefined;
+  if (newVideoId) {
+    newCandidate = {
+      videoId: newVideoId,
+      title: `${title} (${artist})`,
+      duration: expectedDuration || 0,
+    };
+  }
+
+  return { newVideoId, newCandidate };
 }
 

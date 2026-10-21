@@ -19,6 +19,7 @@ import {
   Volume2,
   ListMusic,
   Trash2,
+  Radio,
 } from 'lucide-react';
 import { DeviceIcon } from '../connect/DeviceIcon';
 import { VisualizerIcon } from '../common/VisualizerIcon';
@@ -56,6 +57,7 @@ export const MobileNowPlayingSheet: React.FC = () => {
     playTrack,
     removeFromQueue,
     clearQueue,
+    openSourceModal,
   } = usePlayerStore();
 
   const displayTrack = currentTrack || audioEngine.getCurrentTrack();
@@ -131,16 +133,27 @@ export const MobileNowPlayingSheet: React.FC = () => {
           {displayTrack.album || displayTrack.artist || 'Now Playing'}
         </span>
 
-        <button
-          onClick={() => {
-            if (navigator.share) {
-              navigator.share({ title: displayTrack.title, text: `Listening to ${displayTrack.title} on dotify` }).catch(() => {});
-            }
-          }}
-          className="p-2 -mr-2 rounded-full text-secondary hover:text-primary transition-colors"
-        >
-          <Share2 size={20} />
-        </button>
+        <div className="flex items-center gap-1 -mr-2">
+          <button
+            onClick={() => openSourceModal(displayTrack)}
+            data-testid="mobile-source-btn"
+            aria-label="Audio Source & Watermark Fixer"
+            className="p-2 rounded-full text-secondary hover:text-accent transition-colors"
+            title="Audio Source / Report Watermark"
+          >
+            <Radio size={20} />
+          </button>
+          <button
+            onClick={() => {
+              if (navigator.share) {
+                navigator.share({ title: displayTrack.title, text: `Listening to ${displayTrack.title} on dotify` }).catch(() => {});
+              }
+            }}
+            className="p-2 rounded-full text-secondary hover:text-primary transition-colors"
+          >
+            <Share2 size={20} />
+          </button>
+        </div>
       </div>
 
       {/* Main Viewport: Large Art, Visualizer, or EQ */}
