@@ -1,7 +1,7 @@
 {
   "name": "notify",
   "private": true,
-  "version": "1.0.50",
+  "version": "1.0.51",
   "type": "module",
   "scripts": {
     "dev": "concurrently --restart-tries 3 --restart-after 1000 -n \"VITE,API\" -c \"cyan,magenta\" \"vite --host\" \"node server/index.js\"",
@@ -21,7 +21,9 @@
     "release": "node scripts/release.mjs",
     "release:desktop": "node scripts/release.mjs --desktop-only",
     "release:android": "node scripts/release.mjs --android-only",
-    "release:fast": "node scripts/release.mjs --skip-build"
+    "release:fast": "node scripts/release.mjs --skip-build",
+    "logs:mobile": "node scripts/debug-mobile.mjs",
+    "logs:mobile:tail": "node scripts/debug-mobile.mjs --tail"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

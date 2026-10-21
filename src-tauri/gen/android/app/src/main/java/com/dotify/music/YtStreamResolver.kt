@@ -144,6 +144,8 @@ object YtStreamResolver {
             }
         }
 
+        val attemptedIds = mutableSetOf<String>()
+
         // 2. Extractor on known id — preferred path. Plausibility only STEERS
         //    here: a stale cache/ranking winner is demoted in favour of the
         //    fresh search below, but if the two CONCUR (search returns the
@@ -152,6 +154,7 @@ object YtStreamResolver {
         //    exactly right, and treating the gate as a veto would fail to
         //    find sources for playable songs.
         if (candidateId != null) {
+            attemptedIds.add(candidateId)
             val viaExtractor =
                 resolveViaExtractor(candidateId, forceRefresh, artist, title, expectedDurationSec)
             if (viaExtractor != null && isPlausibleMatch(viaExtractor, artist, title, expectedDurationSec)) {
@@ -176,6 +179,7 @@ object YtStreamResolver {
                     cached(viaExtractor, candidateId, query)
                     return viaExtractor
                 }
+                attemptedIds.add(searchBest)
                 resolveViaExtractor(searchBest, true, artist, title, expectedDurationSec)?.let { alt ->
                     cached(alt, searchBest, query)
                     return alt
@@ -192,32 +196,45 @@ object YtStreamResolver {
             resolveViaPiped(candidateId)?.let { cached(it, candidateId, query); return it }
         }
 
-        // 4. On-device search for artist+title, then extraction for the found
-        //    id. Runs whenever the extractor did not already deliver a playable
-        //    URL for the known id (no id given, or extraction of it failed).
-        //    The search result is accepted directly — it is ranked from the
-        //    golden store metadata, the same class of choice the TS resolver
-        //    made pre-native.
+        // 4. On-device multi-candidate search with auto-fallback across top candidates.
+        //    If candidate #1 fails with ParsingException (e.g. protected music video),
+        //    candidates #2 and #3 (e.g. topic audio, lyric upload) are seamlessly tried.
         if (query.isNotEmpty()) {
-            var found = searchVideoId(query, expectedDurationSec)
-            if (found == null && title.isNotBlank()) {
-                val cleanTitle = title.trim()
-                val cleanArtist = artist.trim()
-                if (cleanArtist.isNotEmpty() && "$cleanTitle $cleanArtist" != query) {
-                    found = searchVideoId("$cleanTitle $cleanArtist", expectedDurationSec)
-                }
-                if (found == null && cleanTitle != query) {
-                    found = searchVideoId(cleanTitle, expectedDurationSec)
-                }
-            }
-            if (found != null) {
+            val candidates = searchRankedCandidateIds(query, expectedDurationSec, attemptedIds)
+            for (found in candidates.take(3)) {
+                attemptedIds.add(found)
                 resolveViaExtractor(found, true, artist, title, expectedDurationSec)?.let {
                     cached(it, found, query)
                     return it
                 }
                 resolveViaPiped(found)?.let { cached(it, found, query); return it }
             }
+
+            // Fallback search with clean title only if combined query yielded no working streams
+            val cleanTitle = title.trim()
+            if (cleanTitle.isNotEmpty() && cleanTitle != query) {
+                val titleCandidates = searchRankedCandidateIds(cleanTitle, expectedDurationSec, attemptedIds)
+                for (found in titleCandidates.take(2)) {
+                    attemptedIds.add(found)
+                    resolveViaExtractor(found, true, artist, title, expectedDurationSec)?.let {
+                        cached(it, found, query)
+                        return it
+                    }
+                }
+            }
         }
+
+        // Log failure to CloudDiagnostics for developer visibility without guesswork
+        CloudDiagnostics.log(
+            category = "RESOLVE_FAILED",
+            message = lastResolveError.ifBlank { "Could not resolve audio stream for '$query'" },
+            level = "warn",
+            trackTitle = title,
+            trackArtist = artist,
+            videoId = candidateId ?: "",
+            resolveError = lastResolveError,
+            details = mapOf("query" to query, "attemptedCount" to attemptedIds.size)
+        )
 
         return null
     }
@@ -427,16 +444,11 @@ object YtStreamResolver {
 
         searchCache[q]?.takeIf { now() - it.createdAt < CACHE_TTL_MS }?.let { return it.videoId }
 
-        // 1. NewPipeExtractor search on-device
-        searchVideoIdViaExtractor(q, expectedDurationSec)?.let {
-            searchCache[q] = SearchEntry(it, now())
-            return it
-        }
-
-        // 2. Direct YouTube web search scraper fallback
-        searchVideoIdViaWebScraper(q, expectedDurationSec)?.let {
-            searchCache[q] = SearchEntry(it, now())
-            return it
+        val ranked = searchRankedCandidateIds(q, expectedDurationSec)
+        val best = ranked.firstOrNull()
+        if (best != null) {
+            searchCache[q] = SearchEntry(best, now())
+            return best
         }
 
         // 3. Piped search fallback (opportunistic; fleet mostly unreachable).
@@ -623,6 +635,44 @@ object YtStreamResolver {
             Log.w(TAG, "searchCandidatesViaWebScraper failed: ${e.message}")
             emptyList()
         }
+    }
+
+    fun searchRankedCandidateIds(query: String, expectedDurationSec: Long, exclude: Set<String> = emptySet()): List<String> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+
+        val list = mutableListOf<Pair<String, Int>>()
+
+        // 1. Web scraper candidates (fast, accurate, direct from YouTube search HTML)
+        val scraperCandidates = searchCandidatesViaWebScraper(q)
+        for (c in scraperCandidates) {
+            if (c.videoId in exclude || c.duration <= 0L || c.duration > 1800L) continue
+            val score = scoreCandidate(q, expectedDurationSec, c.title, c.uploader, c.duration)
+            list.add(Pair(c.videoId, score))
+        }
+
+        // 2. Extractor search fallback if scraper found fewer than 2 candidates
+        if (list.size < 2) {
+            try {
+                ensureNewPipe()
+                val handler = ServiceList.YouTube.searchQHFactory.fromQuery(q, listOf("videos"), "")
+                val info = SearchInfo.getInfo(ServiceList.YouTube, handler)
+                for (item in info.relatedItems) {
+                    if (item !is StreamInfoItem) continue
+                    val id = try { extractVideoId(item.url) } catch (_: Throwable) { null } ?: continue
+                    if (id in exclude || list.any { it.first == id }) continue
+                    val dur = try { item.duration } catch (_: Throwable) { -1L }
+                    if (dur <= 0L || dur > 1800L) continue
+                    val uploader = try { item.uploaderName ?: "" } catch (_: Throwable) { "" }
+                    val score = scoreCandidate(q, expectedDurationSec, item.name ?: "", uploader, dur)
+                    list.add(Pair(id, score))
+                }
+            } catch (e: Throwable) {
+                lastResolveError = "SearchExtractor: ${e.javaClass.simpleName}: ${e.message}"
+            }
+        }
+
+        return list.sortedByDescending { it.second }.map { it.first }
     }
 
     private fun searchVideoIdViaWebScraper(query: String, expectedDurationSec: Long): String? {

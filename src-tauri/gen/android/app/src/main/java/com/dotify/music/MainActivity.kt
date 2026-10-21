@@ -938,7 +938,15 @@ class MainActivity : TauriActivity() {
   }
 
   companion object {
-    private var activeInstance: MainActivity? = null
+    internal var activeInstance: MainActivity? = null
+
+    fun getAppVersion(): String = try {
+      activeInstance?.let {
+        it.packageManager.getPackageInfo(it.packageName, 0).versionName
+      } ?: "1.0.51"
+    } catch (_: Throwable) {
+      "1.0.51"
+    }
 
     fun dispatchMediaAction(action: String, data: Long? = null) {
       activeInstance?.let { activity ->
@@ -973,8 +981,10 @@ class MainActivity : TauriActivity() {
             val msg = root.optString("message", "Playback error")
             val title = root.optString("title", "")
             val display = if (title.isNotBlank()) "Track issue ($title): $msg" else msg
-            activity.runOnUiThread {
-              android.widget.Toast.makeText(activity, display, android.widget.Toast.LENGTH_SHORT).show()
+            if (!msg.contains("Extractor") && !msg.contains("ParsingException") && !msg.contains("SearchExtractor")) {
+              activity.runOnUiThread {
+                android.widget.Toast.makeText(activity, display, android.widget.Toast.LENGTH_SHORT).show()
+              }
             }
           } catch (_: Exception) {}
         }

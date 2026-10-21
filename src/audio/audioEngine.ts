@@ -6,6 +6,7 @@ import { useMp3VaultStore } from '../services/mp3VaultService';
 import { YouTubeIframeBridge } from './youtubeIframeBridge';
 import { androidNativePlayback, NativeTrackPayload } from './androidNativePlayback';
 import { resolveYouTubeVideoId } from '../services/youtubeResolver';
+import { mobileDiagnostics } from '../services/mobileDiagnostics';
 
 function createAudioElement(): HTMLAudioElement {
   if (typeof Audio !== 'undefined') {
@@ -941,6 +942,15 @@ export class AudioEngine {
     } catch (err: any) {
       console.warn('[AudioEngine] YouTube IFrame playback failed:', err);
       this.isUsingYouTubeBridge = false;
+      mobileDiagnostics.report({
+        level: 'error',
+        category: 'IFRAME_ERROR',
+        message: err?.message || 'YouTube IFrame playback failed',
+        trackId: track.id,
+        trackTitle: track.title,
+        trackArtist: track.artist,
+        stack: err?.stack,
+      });
       return false;
     }
   }
@@ -1103,10 +1113,26 @@ export class AudioEngine {
           try { cb(); } catch { /* listener error */ }
         });
       },
-      onError: (message) => {
-        console.warn('[AudioEngine] Native engine error:', message);
+      onError: (message, payload) => {
+        console.warn('[AudioEngine] Native engine error:', message, payload);
+
+        // Discard error if it clearly belongs to a different queued track, keeping active song playing
+        if (payload?.id && this.currentTrack?.id && payload.id !== this.currentTrack.id) {
+          console.info(`[AudioEngine] Ignored native error for queued track (${payload.title || payload.id}), active track (${this.currentTrack.title}) continues.`);
+          return;
+        }
+
         if (this.isUsingNativeEngine && this.currentTrack && !this.isDirectAudioTrack(this.currentTrack)) {
           console.info('[AudioEngine] Native playback error (' + message + '), seamlessly falling back to YouTube IFrame Bridge for:', this.currentTrack.title);
+          mobileDiagnostics.report({
+            level: 'warn',
+            category: 'RESOLVE_FAILED',
+            message: `Native playback failed (${message}), falling back to YouTube IFrame Bridge`,
+            trackId: this.currentTrack.id,
+            trackTitle: this.currentTrack.title,
+            trackArtist: this.currentTrack.artist,
+            resolveError: message,
+          });
           this.isUsingNativeEngine = false;
           YouTubeIframeBridge.setNativeOwner(false);
           try { androidNativePlayback.stop(); } catch { /* noop */ }

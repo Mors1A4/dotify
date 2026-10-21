@@ -1,4 +1,5 @@
 import type { Track } from '../types/track';
+import { mobileDiagnostics } from '../services/mobileDiagnostics';
 
 /**
  * Bridge to the native (Media3 ExoPlayer) audio engine on Android
@@ -49,7 +50,7 @@ export interface NativeCallbacks {
   onState?: (state: NativeEngineState, positionMs: number) => void;
   onTransition?: (track: NativeTrackPayload | null, payloadIndex: number) => void;
   onEnded?: () => void;
-  onError?: (message: string) => void;
+  onError?: (message: string, payload?: any) => void;
 }
 
 export type NativeRepeatMode = 'none' | 'one' | 'all';
@@ -128,12 +129,43 @@ class AndroidNativePlayback {
       }
       case 'skip': {
         const idx = Number(payload.payloadIndex ?? -1);
-        if (Number.isFinite(idx) && idx === this.currentIndex) this.currentIndex = -1;
-        this.callbacks.onError?.(String(payload.message || payload.title || 'Track unavailable'));
+        const isCurrent = Number.isFinite(idx) && idx === this.currentIndex;
+        if (isCurrent) this.currentIndex = -1;
+
+        mobileDiagnostics.report({
+          level: isCurrent ? 'error' : 'warn',
+          category: 'RESOLVE_FAILED',
+          message: String(payload.message || 'Track resolution skipped'),
+          trackId: payload.id,
+          trackTitle: payload.title,
+          resolveError: payload.message,
+          details: { payloadIndex: idx, currentIndex: this.currentIndex, isCurrent },
+        });
+
+        // Only fire onError for the active track — never interrupt the currently playing song for a queued track
+        if (isCurrent || this.currentIndex === -1) {
+          this.callbacks.onError?.(String(payload.message || payload.title || 'Track unavailable'), payload);
+        }
         break;
       }
       case 'error': {
-        this.callbacks.onError?.(String(payload.message ?? 'Native playback error'));
+        const idx = Number(payload.payloadIndex ?? -1);
+        const isCurrent = !Number.isFinite(idx) || idx === this.currentIndex || this.currentIndex === -1;
+
+        mobileDiagnostics.report({
+          level: 'error',
+          category: 'EXOPLAYER_ERROR',
+          message: String(payload.message ?? 'Native playback error'),
+          trackId: payload.id,
+          trackTitle: payload.title,
+          resolveError: payload.message,
+          details: { payloadIndex: idx, currentIndex: this.currentIndex, isCurrent },
+        });
+
+        // Only fire onError for the active track
+        if (isCurrent) {
+          this.callbacks.onError?.(String(payload.message ?? 'Native playback error'), payload);
+        }
         break;
       }
     }

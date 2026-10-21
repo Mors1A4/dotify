@@ -390,8 +390,25 @@ object NativePlayerEngine {
                                     .put("id", meta.id)
                                     .put("title", meta.title)
                                     .put("message", errMsg)
+
+                                CloudDiagnostics.log(
+                                    category = "RESOLVE_FAILED",
+                                    message = errMsg,
+                                    level = if (firstAppend) "error" else "warn",
+                                    trackTitle = meta.title,
+                                    trackArtist = meta.artist,
+                                    trackId = meta.id,
+                                    videoId = meta.videoId,
+                                    resolveError = errMsg,
+                                    details = mapOf("payloadIndex" to payloadIdx, "firstAppend" to firstAppend)
+                                )
+
                                 pushRaw("skip", skipPayload.toString())
-                                pushRaw("error", skipPayload.toString())
+                                // CRITICAL INVARIANT: Only push fatal "error" if this is the active initial track!
+                                // Never push "error" for background queued tracks, as that interrupts the playing song!
+                                if (firstAppend) {
+                                    pushRaw("error", skipPayload.toString())
+                                }
                                 continue
                             }
                         } else {
@@ -574,6 +591,22 @@ object NativePlayerEngine {
             notifyStateInternal()
             return
         }
+
+        CloudDiagnostics.log(
+            category = "EXOPLAYER_ERROR",
+            message = "${error.errorCodeName} (${error.errorCode}): ${error.message}",
+            level = "error",
+            trackTitle = meta.title,
+            trackArtist = meta.artist,
+            trackId = meta.id,
+            videoId = meta.videoId,
+            details = mapOf(
+                "errorCode" to error.errorCode,
+                "errorCodeName" to error.errorCodeName,
+                "playlistIdx" to playlistIdx,
+                "payloadIdx" to payloadIdx
+            )
+        )
 
         // Direct stream fallback: if we have a valid preview/direct stream URL, play it immediately once
         if (fallbackAttempted.add(payloadIdx) &&
