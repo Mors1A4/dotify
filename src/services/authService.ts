@@ -15,6 +15,7 @@ import { CustomPlaylist } from '../types/playlist';
 import { FollowedArtist } from '../types/artist';
 import { safeStorage } from '../utils/storage';
 import { isTauriEnvironment, getApiBaseUrl } from './apiConfig';
+import { mergePlaylists, mergeTracks } from '../utils/playlistMerge';
 
 export interface UserLibraryData {
   likedTracks: Track[];
@@ -500,8 +501,8 @@ export class AuthService {
 
   // Cloud & Local Multi-User Library Synchronization (Liked Songs, Playlists, History & Followed Artists)
   public async loadUserLibrary(userId: string): Promise<UserLibraryData | null> {
-    let localLiked = safeStorage.getItem<Track[]>(`dotify_${userId}_liked`, safeStorage.getItem<Track[]>('likedTracks', []));
-    let localPlaylists = safeStorage.getItem<CustomPlaylist[]>(`dotify_${userId}_playlists`, safeStorage.getItem<CustomPlaylist[]>('playlists', []));
+    let localLiked = safeStorage.getItem<Track[]>(`dotify_${userId}_liked`, safeStorage.getItem<Track[]>('liked', safeStorage.getItem<Track[]>('likedTracks', [])));
+    let localPlaylists = safeStorage.getItem<CustomPlaylist[]>(`dotify_${userId}_playlists`, safeStorage.getItem<CustomPlaylist[]>('user_playlists', safeStorage.getItem<CustomPlaylist[]>('playlists', [])));
     let localHistory = safeStorage.getItem<Track[]>(`dotify_${userId}_history`, safeStorage.getItem<Track[]>('history', []));
     let localFollowedArtists = safeStorage.getItem<FollowedArtist[]>(`dotify_${userId}_followed_artists`, safeStorage.getItem<FollowedArtist[]>('followed_artists', []));
     let latestTime = safeStorage.getItem<number>(`dotify_${userId}_updated`, 0);
@@ -519,21 +520,19 @@ export class AuthService {
         const data = await res.json();
         if (data.ok && data.library) {
           const remote = data.library as UserLibraryData;
-          if ((remote.lastUpdated || 0) >= latestTime) {
-            if (Array.isArray(remote.likedTracks) && remote.likedTracks.length > 0) {
-              localLiked = remote.likedTracks;
-            }
-            if (Array.isArray(remote.playlists) && remote.playlists.length > 0) {
-              localPlaylists = remote.playlists;
-            }
-            if (Array.isArray(remote.history) && remote.history.length > 0) {
-              localHistory = remote.history;
-            }
-            if (Array.isArray(remote.followedArtists) && remote.followedArtists.length > 0) {
-              localFollowedArtists = remote.followedArtists;
-            }
-            latestTime = remote.lastUpdated || Date.now();
+          if (Array.isArray(remote.likedTracks) && remote.likedTracks.length > 0) {
+            localLiked = mergeTracks(localLiked, remote.likedTracks);
           }
+          if (Array.isArray(remote.playlists) && remote.playlists.length > 0) {
+            localPlaylists = mergePlaylists(localPlaylists, remote.playlists);
+          }
+          if (Array.isArray(remote.history) && remote.history.length > 0) {
+            localHistory = remote.history;
+          }
+          if (Array.isArray(remote.followedArtists) && remote.followedArtists.length > 0) {
+            localFollowedArtists = remote.followedArtists;
+          }
+          latestTime = Math.max(latestTime, remote.lastUpdated || Date.now());
         }
       }
     } catch {}
@@ -548,21 +547,19 @@ export class AuthService {
 
       if (snapshot && snapshot.exists && snapshot.exists()) {
         const cloudData = snapshot.data() as UserLibraryData;
-        if ((cloudData.lastUpdated || 0) >= latestTime) {
-          if (Array.isArray(cloudData.likedTracks) && cloudData.likedTracks.length > 0) {
-            localLiked = cloudData.likedTracks;
-          }
-          if (Array.isArray(cloudData.playlists) && cloudData.playlists.length > 0) {
-            localPlaylists = cloudData.playlists;
-          }
-          if (Array.isArray(cloudData.history) && cloudData.history.length > 0) {
-            localHistory = cloudData.history;
-          }
-          if (Array.isArray(cloudData.followedArtists) && cloudData.followedArtists.length > 0) {
-            localFollowedArtists = cloudData.followedArtists;
-          }
-          latestTime = cloudData.lastUpdated || Date.now();
+        if (Array.isArray(cloudData.likedTracks) && cloudData.likedTracks.length > 0) {
+          localLiked = mergeTracks(localLiked, cloudData.likedTracks);
         }
+        if (Array.isArray(cloudData.playlists) && cloudData.playlists.length > 0) {
+          localPlaylists = mergePlaylists(localPlaylists, cloudData.playlists);
+        }
+        if (Array.isArray(cloudData.history) && cloudData.history.length > 0) {
+          localHistory = cloudData.history;
+        }
+        if (Array.isArray(cloudData.followedArtists) && cloudData.followedArtists.length > 0) {
+          localFollowedArtists = cloudData.followedArtists;
+        }
+        latestTime = Math.max(latestTime, cloudData.lastUpdated || Date.now());
       }
     } catch (err) {
       console.debug('[AuthService] Firestore sync skipped or offline, using local store:', err);
@@ -574,8 +571,10 @@ export class AuthService {
     safeStorage.setItem(`dotify_${userId}_followed_artists`, localFollowedArtists);
     safeStorage.setItem(`dotify_${userId}_updated`, latestTime);
 
-    // Keep active default keys synced so on cold boot before auth, library is immediately visible!
+    // Keep active default keys synced across both key naming conventions!
+    safeStorage.setItem('liked', localLiked);
     safeStorage.setItem('likedTracks', localLiked);
+    safeStorage.setItem('user_playlists', localPlaylists);
     safeStorage.setItem('playlists', localPlaylists);
     safeStorage.setItem('history', localHistory);
     safeStorage.setItem('followed_artists', localFollowedArtists);
@@ -598,12 +597,19 @@ export class AuthService {
   ): Promise<void> {
     const lastUpdated = Date.now();
 
-    // 1. Save scoped to user locally
+    // 1. Save scoped to user locally & mirror active default keys
     safeStorage.setItem(`dotify_${userId}_liked`, likedTracks);
     safeStorage.setItem(`dotify_${userId}_playlists`, playlists);
     safeStorage.setItem(`dotify_${userId}_history`, history);
     safeStorage.setItem(`dotify_${userId}_followed_artists`, followedArtists);
     safeStorage.setItem(`dotify_${userId}_updated`, lastUpdated);
+
+    safeStorage.setItem('liked', likedTracks);
+    safeStorage.setItem('likedTracks', likedTracks);
+    safeStorage.setItem('user_playlists', playlists);
+    safeStorage.setItem('playlists', playlists);
+    safeStorage.setItem('history', history);
+    safeStorage.setItem('followed_artists', followedArtists);
 
     // 2. Sync to backend server & Firestore
     const sanitizedFollowed = (followedArtists || []).map((a) => ({

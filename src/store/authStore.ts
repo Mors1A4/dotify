@@ -99,12 +99,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           );
         });
       } else {
-        // Reset to guest library
-        const guestLiked = safeStorage.getItem('likedTracks', []);
-        const guestPlaylists = safeStorage.getItem('playlists', []);
+        // Fallback to guest / local library with key mirrors
+        const guestLiked = safeStorage.getItem('liked', safeStorage.getItem('likedTracks', []));
+        const guestPlaylists = safeStorage.getItem('user_playlists', safeStorage.getItem('playlists', []));
         const guestHistory = safeStorage.getItem('history', []);
         const guestFollowed = safeStorage.getItem('followed_artists', []);
-        usePlayerStore.getState().setUserLibrary(guestLiked, guestPlaylists, guestHistory, null, guestFollowed);
+
+        const currentPlaylists = usePlayerStore.getState().playlists;
+        const resolvedPlaylists = guestPlaylists.length > 0
+          ? guestPlaylists
+          : (currentPlaylists.length > 0 ? currentPlaylists : []);
+
+        const currentLiked = usePlayerStore.getState().likedTracks;
+        const resolvedLiked = guestLiked.length > 0
+          ? guestLiked
+          : (currentLiked.length > 0 ? currentLiked : []);
+
+        usePlayerStore.getState().setUserLibrary(resolvedLiked, resolvedPlaylists, guestHistory, null, guestFollowed);
       }
     });
 

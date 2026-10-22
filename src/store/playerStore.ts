@@ -2321,6 +2321,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         } catch {}
       }
       safeStorage.setItem(STORAGE_LIKED, updated);
+      safeStorage.setItem('likedTracks', updated);
       set({ likedTracks: updated });
       scheduleCloudLibrarySync();
     },
@@ -2396,6 +2397,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       };
       const updated = [...playlists, newPlaylist];
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
       return id;
@@ -2408,6 +2410,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         p.id === playlistId ? { ...p, name: cleanName, updatedAt: Date.now() } : p
       );
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
     },
@@ -2427,14 +2430,17 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         };
       });
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
     },
 
     deletePlaylist: (playlistId: string) => {
       const { playlists, selectedPlaylistId, activeView } = get();
+      recordPlaylistDeletion(playlistId);
       const updated = playlists.filter((p) => p.id !== playlistId);
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       const updates: any = { playlists: updated };
       if (selectedPlaylistId === playlistId) {
         updates.selectedPlaylistId = null;
@@ -2457,6 +2463,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return { ...p, tracks, updatedAt: Date.now() };
       });
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
     },
@@ -2469,6 +2476,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return p;
       });
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
     },
@@ -2490,6 +2498,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return p;
       });
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
     },
@@ -2502,6 +2511,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return p;
       });
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
     },
@@ -2536,6 +2546,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       };
       const updated = [...playlists, newPlaylist];
       safeStorage.setItem(STORAGE_PLAYLISTS, updated);
+      safeStorage.setItem('playlists', updated);
       set({ playlists: updated });
       scheduleCloudLibrarySync();
       return id;
@@ -2548,13 +2559,25 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       maybeUserId?: string | null,
       followedArtists?: FollowedArtist[]
     ) => {
-      const cleanLiked = liked.filter(isCleanTrack);
-      const cleanPlaylists = deduplicatePlaylists(playlists);
+      const current = get();
+      // Protect against cold-start or empty cloud responses wiping out local library
+      const resolvedPlaylists = (Array.isArray(playlists) && playlists.length > 0)
+        ? mergePlaylists(current.playlists, playlists)
+        : (current.playlists.length > 0 ? current.playlists : deduplicatePlaylists(playlists || []));
+
+      const resolvedLiked = (Array.isArray(liked) && liked.length > 0)
+        ? mergeTracks(current.likedTracks, liked).filter(isCleanTrack)
+        : (current.likedTracks.length > 0 ? current.likedTracks : (liked || []).filter(isCleanTrack));
+
+      const cleanLiked = resolvedLiked;
+      const cleanPlaylists = deduplicatePlaylists(resolvedPlaylists);
       const history = Array.isArray(historyOrUserId) ? historyOrUserId.filter(isCleanTrack) : undefined;
       const actualUserId = typeof historyOrUserId === 'string' ? historyOrUserId : maybeUserId || null;
 
       safeStorage.setItem(STORAGE_LIKED, cleanLiked);
+      safeStorage.setItem('likedTracks', cleanLiked);
       safeStorage.setItem(STORAGE_PLAYLISTS, cleanPlaylists);
+      safeStorage.setItem('playlists', cleanPlaylists);
       if (history) {
         safeStorage.setItem(STORAGE_HISTORY, history);
       }

@@ -107,15 +107,81 @@ app.post('/api/user/:userId/library', (req, res) => {
   const { userId } = req.params;
   const filePath = path.join(userLibraryDir, `${encodeURIComponent(userId)}.json`);
   try {
+    let existing = null;
+    if (fs.existsSync(filePath)) {
+      try {
+        existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      } catch {}
+    }
+
+    const playlistMap = new Map();
+    if (existing && Array.isArray(existing.playlists)) {
+      for (const pl of existing.playlists) {
+        if (pl && pl.id) playlistMap.set(pl.id, pl);
+      }
+    }
+    if (Array.isArray(req.body.playlists)) {
+      for (const pl of req.body.playlists) {
+        if (!pl || !pl.id) continue;
+        const cur = playlistMap.get(pl.id);
+        if (!cur) {
+          playlistMap.set(pl.id, pl);
+        } else {
+          const incomingTime = pl.updatedAt || pl.createdAt || 0;
+          const curTime = cur.updatedAt || cur.createdAt || 0;
+          const base = incomingTime >= curTime ? pl : cur;
+          const other = incomingTime >= curTime ? cur : pl;
+
+          // Merge tracks
+          const trackSeen = new Set();
+          const mergedTracks = [];
+          for (const t of (base.tracks || [])) {
+            if (t && t.id && !trackSeen.has(t.id)) {
+              trackSeen.add(t.id);
+              mergedTracks.push(t);
+            }
+          }
+          for (const t of (other.tracks || [])) {
+            if (t && t.id && !trackSeen.has(t.id)) {
+              trackSeen.add(t.id);
+              mergedTracks.push(t);
+            }
+          }
+
+          playlistMap.set(pl.id, {
+            ...base,
+            tracks: mergedTracks,
+            updatedAt: Math.max(incomingTime, curTime),
+          });
+        }
+      }
+    }
+
+    const mergedPlaylists = Array.from(playlistMap.values());
+
+    // Merge liked tracks
+    const likedSeen = new Set();
+    const mergedLiked = [];
+    const addLiked = (t) => {
+      if (!t) return;
+      const id = String(t.id || `${t.artist}-${t.title}`).toLowerCase();
+      if (!likedSeen.has(id)) {
+        likedSeen.add(id);
+        mergedLiked.push(t);
+      }
+    };
+    if (Array.isArray(req.body.likedTracks)) req.body.likedTracks.forEach(addLiked);
+    if (existing && Array.isArray(existing.likedTracks)) existing.likedTracks.forEach(addLiked);
+
     const payload = {
-      likedTracks: req.body.likedTracks || [],
-      playlists: req.body.playlists || [],
-      history: req.body.history || [],
-      followedArtists: req.body.followedArtists || [],
-      lastUpdated: req.body.lastUpdated || Date.now(),
+      likedTracks: mergedLiked.slice(0, 500),
+      playlists: mergedPlaylists.slice(0, 100),
+      history: (req.body.history && req.body.history.length > 0 ? req.body.history : (existing?.history || [])).slice(0, 100),
+      followedArtists: req.body.followedArtists || existing?.followedArtists || [],
+      lastUpdated: Math.max(req.body.lastUpdated || Date.now(), existing?.lastUpdated || 0),
     };
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
-    res.json({ ok: true, lastUpdated: payload.lastUpdated });
+    res.json({ ok: true, lastUpdated: payload.lastUpdated, library: payload });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

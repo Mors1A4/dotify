@@ -618,6 +618,7 @@ export class DailyVibeManager {
       });
 
       if (changed) {
+        safeStorage.setItem('user_playlists', updated);
         safeStorage.setItem('playlists', updated);
         usePlayerStore.setState({ playlists: updated });
       }
