@@ -47,6 +47,7 @@ export const TrackTable: React.FC<TrackTableProps> = ({
     addTrackToPlaylist,
     openCreatePlaylistModal,
     openSourceModal,
+    toggleMobileSheet,
   } = usePlayerStore();
 
   const [activeMenuIndex, setActiveMenuIndex] = React.useState<number | null>(null);
@@ -63,6 +64,13 @@ export const TrackTable: React.FC<TrackTableProps> = ({
   }, [tracks]);
 
   const handlePlay = (track: Track) => {
+    // On mobile, tapping the currently playing track brings it up full screen
+    const isCurrent = currentTrack?.id === track.id;
+    if (isCurrent && typeof window !== 'undefined' && window.innerWidth < 768) {
+      toggleMobileSheet(true);
+      return;
+    }
+
     if (onPlayTrack) {
       onPlayTrack(track, tracks);
     } else {
@@ -159,10 +167,14 @@ export const TrackTable: React.FC<TrackTableProps> = ({
                     <span
                       data-testid="track-artist-link"
                       onClick={(e) => {
+                        // On mobile, let tap bubble to the track row so tapping anywhere on the song plays or opens it
+                        if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                          return;
+                        }
                         e.stopPropagation();
                         navigateToArtist(track.artist);
                       }}
-                      className="hover:underline hover:text-primary cursor-pointer transition-colors"
+                      className="md:hover:underline md:hover:text-primary md:cursor-pointer transition-colors"
                     >
                       {track.artist}
                     </span>

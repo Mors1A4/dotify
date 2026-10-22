@@ -9,7 +9,9 @@ import { fetchDownloadDir } from '../../services/downloadFolderService';
 export const AuthButton: React.FC = () => {
   const { user, isLoading, isSyncing, signOut, openAuthModal } = useAuthStore();
   const { openHelpModal, requests: upgradeRequests } = useUpgradeStore();
-  const hasProcessingUpgrade = upgradeRequests.some((r) => r.status === 'processing');
+  const hasProcessingUpgrade = upgradeRequests.some(
+    (r) => r.status === 'processing' && Date.now() - (r.updatedAt || r.createdAt || 0) < 3600000
+  );
 
   const [isOpen, setIsOpen] = useState(false);
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);

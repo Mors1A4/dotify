@@ -23,6 +23,7 @@ import { authService } from '../services/authService';
 import { upgradeArtworkUrl } from '../utils/artwork';
 import { useMp3VaultStore } from '../services/mp3VaultService';
 import { communityListeningService } from '../services/communityListeningService';
+import { mergePlaylists, mergeTracks, recordPlaylistDeletion } from '../utils/playlistMerge';
 
 export class RemoteProgressInterpolator {
   private anchorPositionSec: number = 0;
@@ -393,8 +394,8 @@ export const deduplicatePlaylists = (playlists: CustomPlaylist[]): CustomPlaylis
   return result;
 };
 
-const initialLiked = safeStorage.getItem<Track[]>(STORAGE_LIKED, []).filter(isCleanTrack);
-const rawInitialPlaylists = safeStorage.getItem<CustomPlaylist[]>(STORAGE_PLAYLISTS, []);
+const initialLiked = safeStorage.getItem<Track[]>(STORAGE_LIKED, safeStorage.getItem<Track[]>('likedTracks', [])).filter(isCleanTrack);
+const rawInitialPlaylists = safeStorage.getItem<CustomPlaylist[]>(STORAGE_PLAYLISTS, safeStorage.getItem<CustomPlaylist[]>('playlists', []));
 const initialPlaylists: CustomPlaylist[] = deduplicatePlaylists(
   Array.isArray(rawInitialPlaylists)
     ? rawInitialPlaylists.map((pl) => ({
@@ -419,9 +420,21 @@ export function scheduleCloudLibrarySync() {
   if (cloudLibrarySyncTimer) clearTimeout(cloudLibrarySyncTimer);
   cloudLibrarySyncTimer = setTimeout(() => {
     try {
+      const state = usePlayerStore.getState();
+
+      // Broadcast immediately across LAN WebSocket and Firestore Relay to connected devices (e.g. Phone <-> PC)
+      try {
+        connectClient.broadcastLibrarySync({
+          playlists: state.playlists,
+          likedTracks: state.likedTracks,
+          lastUpdated: Date.now(),
+        });
+      } catch (bcErr) {
+        console.debug('[PlayerStore] LAN/Relay library broadcast skipped:', bcErr);
+      }
+
       const user = authService.getCurrentUser();
       if (user && user.uid) {
-        const state = usePlayerStore.getState();
         authService.saveUserLibrary(
           user.uid,
           state.likedTracks,
@@ -609,6 +622,45 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     } catch (err: any) {
       console.warn('[PlayerStore] Handoff transfer execution failed:', err.message);
       connectClient.ackHandoff(fromId, false, snapshot.positionMs, undefined, err.message);
+    }
+  });
+
+  // Real-time peer-to-peer library sync: when songs or playlists are added on PC, Phone updates instantly, and vice-versa!
+  connectClient.onLibrarySync((data) => {
+    if (!data) return;
+    try {
+      const currentState = typeof get === 'function' ? get() : null;
+      if (!currentState) return;
+
+      const incomingPlaylists = Array.isArray(data.playlists) ? data.playlists : [];
+      const incomingLiked = Array.isArray(data.likedTracks) ? data.likedTracks : [];
+
+      if (incomingPlaylists.length === 0 && incomingLiked.length === 0) return;
+
+      const mergedPlaylists = mergePlaylists(currentState.playlists, incomingPlaylists);
+      const mergedLiked = mergeTracks(currentState.likedTracks, incomingLiked);
+
+      const playlistsChanged = JSON.stringify(mergedPlaylists) !== JSON.stringify(currentState.playlists);
+      const likedChanged = mergedLiked.length !== currentState.likedTracks.length;
+
+      if (playlistsChanged || likedChanged) {
+        console.log('[PlayerStore] Realtime LAN/Relay LIBRARY_SYNC applied:', {
+          playlists: mergedPlaylists.length,
+          liked: mergedLiked.length,
+        });
+
+        safeStorage.setItem(STORAGE_PLAYLISTS, mergedPlaylists);
+        safeStorage.setItem('playlists', mergedPlaylists);
+        safeStorage.setItem(STORAGE_LIKED, mergedLiked);
+        safeStorage.setItem('likedTracks', mergedLiked);
+
+        set({
+          playlists: mergedPlaylists,
+          likedTracks: mergedLiked,
+        });
+      }
+    } catch (err: any) {
+      console.warn('[PlayerStore] Error handling incoming LIBRARY_SYNC:', err.message);
     }
   });
 

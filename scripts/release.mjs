@@ -428,7 +428,8 @@ async function publishToFirestore(manifest, mandatory, opts = {}) {
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Firestore sync failed (${res.status}): ${errText}`);
+    console.warn(`[WARN] Firestore sync failed (${res.status}): ${errText}`);
+    console.warn(`[INFO] Release v${manifest.version} remains fully published and accessible via GitHub Releases & latest.json.`);
   }
 }
 

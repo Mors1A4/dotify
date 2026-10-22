@@ -27,6 +27,7 @@ import {
   Check,
   Code2,
   Rocket,
+  Trash2,
 } from 'lucide-react';
 
 /**
@@ -180,6 +181,7 @@ export const HelpUpgradeModal: React.FC = () => {
     sendChatMessage,
     retryRequest,
     applyUpgrade,
+    deleteRequest,
   } = useUpgradeStore();
 
   const [mode, setMode] = useState<'create' | 'thread'>('create');
@@ -565,7 +567,21 @@ export const HelpUpgradeModal: React.FC = () => {
                             </span>
                           )}
                         </span>
-                        {renderStatusBadge(req.status)}
+                        <div className="flex items-center gap-1">
+                          {renderStatusBadge(req.status)}
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteRequest(req.id);
+                            }}
+                            className="p-1 rounded hover:bg-rose-500/20 text-muted hover:text-rose-400 transition-colors cursor-pointer"
+                            title="Delete request"
+                          >
+                            <Trash2 size={10} />
+                          </span>
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -781,18 +797,35 @@ export const HelpUpgradeModal: React.FC = () => {
                       </h3>
                     </div>
 
-                    {/* Retry / Re-run button */}
-                    {(activeRequest.status === 'completed' || activeRequest.status === 'failed') && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {/* Retry / Re-run button */}
+                      {(activeRequest.status === 'completed' || activeRequest.status === 'failed') && (
+                        <button
+                          type="button"
+                          onClick={() => retryRequest(activeRequest.id)}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated hover:bg-highlight text-xs font-semibold text-secondary hover:text-primary transition-colors cursor-pointer border border-customBorder/60"
+                          title="Re-run OpenCode on this request"
+                        >
+                          <RotateCw size={12} />
+                          <span>Re-run</span>
+                        </button>
+                      )}
+
+                      {/* Delete / Dismiss request button */}
                       <button
                         type="button"
-                        onClick={() => retryRequest(activeRequest.id)}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated hover:bg-highlight text-xs font-semibold text-secondary hover:text-primary transition-colors cursor-pointer border border-customBorder/60"
-                        title="Re-run OpenCode on this request"
+                        onClick={() => {
+                          if (window.confirm('Delete this request from history?')) {
+                            deleteRequest(activeRequest.id);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-elevated hover:bg-rose-500/15 hover:text-rose-400 text-xs font-semibold text-secondary hover:border-rose-500/30 transition-colors cursor-pointer border border-customBorder/60"
+                        title="Delete this request"
                       >
-                        <RotateCw size={12} />
-                        <span>Re-run</span>
+                        <Trash2 size={12} />
+                        <span>Delete</span>
                       </button>
-                    )}
+                    </div>
                   </div>
 
                   {/* Metadata Chips: Branch, Local Directory, Inbox */}

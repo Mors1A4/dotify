@@ -100,6 +100,7 @@ export class ConnectClient {
   private remoteCommandListeners: Set<(command: RemoteCommand, fromId?: string) => void> = new Set();
   private handoffTransferListeners: Set<(state: PlaybackSnapshot, fromId: string, timestamp: number) => void> = new Set();
   private handoffAckListeners: Set<(ack: { success: boolean; resumedPositionMs: number; latencyMs?: number; fromId: string; error?: string }) => void> = new Set();
+  private librarySyncListeners: Set<(payload: any, fromId?: string) => void> = new Set();
 
   constructor(options: ConnectClientOptions = {}) {
     this.channelName = options.channelName || 'dotify_connect';
@@ -368,6 +369,28 @@ export class ConnectClient {
         });
       });
       this.firestoreUnsubscribers.push(unsubCmds);
+
+      // 5. Listen to shared library sync
+      const libDoc = fs.doc(fs.db, 'connect_sessions', sessionId, 'library', 'current');
+      const unsubLib = fs.onSnapshot(libDoc, (snap: any) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data && data.senderDeviceId !== this.localDevice.deviceId) {
+          if (Date.now() - (data.timestamp || 0) < 300000) {
+            this.handleIncomingMessage({
+              type: 'LIBRARY_SYNC',
+              messageId: data.messageId,
+              playlists: data.playlists,
+              likedTracks: data.likedTracks,
+              lastUpdated: data.lastUpdated,
+              senderDeviceId: data.senderDeviceId,
+              fromDeviceId: data.senderDeviceId,
+              timestamp: data.timestamp || Date.now(),
+            });
+          }
+        }
+      });
+      this.firestoreUnsubscribers.push(unsubLib);
     } catch (err) {
       console.debug('[ConnectClient] Firestore relay setup deferred:', err);
     }
@@ -405,6 +428,16 @@ export class ConnectClient {
           messageId: msg.messageId,
           ...this.localDevice,
           lastSeen: Date.now(),
+        })), { merge: true });
+      } else if (msg.type === 'LIBRARY_SYNC') {
+        const libDoc = fs.doc(fs.db, 'connect_sessions', sessionId, 'library', 'current');
+        await fs.setDoc(libDoc, JSON.parse(JSON.stringify({
+          messageId: msg.messageId,
+          playlists: msg.playlists || [],
+          likedTracks: (msg.likedTracks || []).slice(0, 300),
+          lastUpdated: msg.lastUpdated || Date.now(),
+          senderDeviceId: this.localDevice.deviceId,
+          timestamp: Date.now(),
         })), { merge: true });
       }
     } catch (err) {
@@ -715,6 +748,18 @@ export class ConnectClient {
         break;
       }
 
+      case 'LIBRARY_SYNC': {
+        const fromId = msg.senderDeviceId || msg.fromDeviceId || '';
+        for (const listener of this.librarySyncListeners) {
+          try {
+            listener(msg, fromId);
+          } catch (e) {
+            console.warn('[ConnectClient] Error in library sync listener:', e);
+          }
+        }
+        break;
+      }
+
       default:
         break;
     }
@@ -773,6 +818,20 @@ export class ConnectClient {
       type: 'PLAYBACK_STATE',
       state,
       activeDeviceId: this.localDevice.deviceId,
+    });
+  }
+
+  public broadcastLibrarySync(payload: {
+    playlists?: any[];
+    likedTracks?: any[];
+    history?: any[];
+    followedArtists?: any[];
+    lastUpdated?: number;
+  }) {
+    this.sendMessage({
+      type: 'LIBRARY_SYNC',
+      ...payload,
+      lastUpdated: payload.lastUpdated || Date.now(),
     });
   }
 
@@ -932,6 +991,11 @@ export class ConnectClient {
   public onHandoffAck(cb: (ack: { success: boolean; resumedPositionMs: number; latencyMs?: number; fromId: string; error?: string }) => void): () => void {
     this.handoffAckListeners.add(cb);
     return () => this.handoffAckListeners.delete(cb);
+  }
+
+  public onLibrarySync(cb: (payload: any, fromId?: string) => void): () => void {
+    this.librarySyncListeners.add(cb);
+    return () => this.librarySyncListeners.delete(cb);
   }
 
   public destroy() {

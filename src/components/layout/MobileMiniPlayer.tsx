@@ -19,7 +19,6 @@ export const MobileMiniPlayer: React.FC = () => {
     toggleLike,
     isLiked,
     toggleMobileSheet,
-    navigateToArtist,
     connectMode,
     activeDevice,
     toggleDevicePicker,
@@ -64,13 +63,7 @@ export const MobileMiniPlayer: React.FC = () => {
               <span>Listening on {activeDevice?.deviceName || 'Remote Device'}</span>
             </p>
           ) : (
-            <p
-              onClick={(e) => {
-                e.stopPropagation();
-                navigateToArtist(displayTrack.artist);
-              }}
-              className="text-[11px] text-secondary truncate hover:underline hover:text-primary cursor-pointer transition-colors"
-            >
+            <p className="text-[11px] text-secondary truncate">
               {displayTrack.artist}
             </p>
           )}

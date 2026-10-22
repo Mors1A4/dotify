@@ -24,6 +24,7 @@ interface UpgradeStoreState {
   sendChatMessage: (requestId: string, text: string, attachments?: UpgradeAttachment[]) => Promise<void>;
   retryRequest: (requestId: string) => Promise<void>;
   applyUpgrade: (requestId: string) => Promise<{ ok: boolean; version?: string; error?: string }>;
+  deleteRequest: (requestId: string) => Promise<void>;
 }
 
 export const useUpgradeStore = create<UpgradeStoreState>((set, get) => {
@@ -74,6 +75,13 @@ export const useUpgradeStore = create<UpgradeStoreState>((set, get) => {
 
     applyUpgrade: async (requestId) => {
       return await upgradeService.applyUpgrade(requestId);
+    },
+
+    deleteRequest: async (requestId) => {
+      await upgradeService.deleteRequest(requestId);
+      if (get().activeRequestId === requestId) {
+        set({ activeRequestId: null });
+      }
     },
   };
 });

@@ -1,4 +1,5 @@
 import { Track } from './track';
+import { CustomPlaylist } from './playlist';
 
 export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'tv' | 'speaker' | 'cast' | 'web';
 export type ConnectRole = 'active_host' | 'remote_controller' | 'standalone';
@@ -135,5 +136,17 @@ export type ConnectMessage =
   | { type: 'PAIR'; targetDeviceId: string; fromDeviceId?: string; timestamp?: number; messageId?: string }
   | { type: 'PAIRED'; targetDevice: ConnectedDevice; role: ConnectRole; hostDeviceId?: string; controllerDeviceId?: string; messageId?: string }
   | { type: 'UNPAIR'; targetDeviceId?: string; fromDeviceId?: string; messageId?: string }
+  | {
+      type: 'LIBRARY_SYNC';
+      playlists?: CustomPlaylist[];
+      likedTracks?: Track[];
+      history?: Track[];
+      followedArtists?: any[];
+      lastUpdated?: number;
+      senderDeviceId?: string;
+      fromDeviceId?: string;
+      messageId?: string;
+      timestamp?: number;
+    }
   | { type: 'PING'; timestamp?: number; messageId?: string }
   | { type: 'PONG'; timestamp?: number; messageId?: string };

@@ -11,6 +11,7 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  deleteDoc,
   onSnapshot,
   query,
 } from 'firebase/firestore';
@@ -859,6 +860,15 @@ export async function drainUpgradeQueue() {
     snapshot.forEach((docSnap) => {
       const data = docSnap.data();
       if (data && data.id) {
+        // Auto-fail stale processing requests older than 60m
+        if (data.status === 'processing' && Date.now() - (data.updatedAt || data.createdAt || 0) > 3600000) {
+          updateRequestState(data.id, {
+            status: 'failed',
+            error: 'Operation timed out after 60 minutes.',
+            updatedAt: Date.now(),
+          }).catch(() => {});
+          data.status = 'failed';
+        }
         saveLocalRequestCopy(data);
         if (data.status === 'queued') {
           queued.push(data);
@@ -1090,6 +1100,22 @@ export function startUpgradeWorker(app) {
         const { id } = req.params;
         const result = await applyAndReleaseForkUpgrade(id);
         res.json(result);
+      } catch (err) {
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
+
+    app.delete('/api/upgrades/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const filePath = path.join(LOCAL_STORE_DIR, `${id}.json`);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+        try {
+          await deleteDoc(doc(db, UPGRADE_COLLECTION, id));
+        } catch {}
+        res.json({ ok: true, id });
       } catch (err) {
         res.status(500).json({ ok: false, error: err.message });
       }

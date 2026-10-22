@@ -17,6 +17,40 @@ const UPGRADE_COLLECTION = 'upgrade_requests';
 const ATTACHMENT_COLLECTION = 'upgrade_request_attachments';
 const SYSTEM_COLLECTION = 'upgrade_system';
 const STORAGE_LOCAL_UPGRADES = 'dotify_cached_upgrades';
+const STORAGE_DELETED_UPGRADE_IDS = 'dotify_deleted_upgrade_ids';
+const DEFAULT_DELETED_UPGRADE_IDS = ['req_1790852018349_1rrtc'];
+const PROCESSING_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
+
+function getDeletedUpgradeIds(): Set<string> {
+  const saved = safeStorage.getItem<string[]>(STORAGE_DELETED_UPGRADE_IDS, DEFAULT_DELETED_UPGRADE_IDS);
+  const set = new Set<string>(DEFAULT_DELETED_UPGRADE_IDS);
+  if (Array.isArray(saved)) {
+    for (const id of saved) {
+      if (typeof id === 'string') set.add(id);
+    }
+  }
+  return set;
+}
+
+function sanitizeRequests(reqs: UpgradeRequest[]): UpgradeRequest[] {
+  if (!Array.isArray(reqs)) return [];
+  const deletedSet = getDeletedUpgradeIds();
+  const now = Date.now();
+
+  return reqs
+    .filter((r) => r && r.id && !deletedSet.has(r.id))
+    .map((r) => {
+      // Auto-fail processing requests older than 60 minutes
+      if (r.status === 'processing' && now - (r.updatedAt || r.createdAt || 0) > PROCESSING_TIMEOUT_MS) {
+        return {
+          ...r,
+          status: 'failed',
+          error: r.error || 'Operation timed out after 60 minutes.',
+        };
+      }
+      return r;
+    });
+}
 
 export async function compressImageFile(
   file: File,
@@ -125,7 +159,7 @@ export class UpgradeService {
   private currentHostStatus: HostStatus = { status: 'offline' };
 
   private constructor() {
-    this.cachedRequests = safeStorage.getItem<UpgradeRequest[]>(STORAGE_LOCAL_UPGRADES, []);
+    this.cachedRequests = sanitizeRequests(safeStorage.getItem<UpgradeRequest[]>(STORAGE_LOCAL_UPGRADES, []));
     this.setupListeners();
   }
 
@@ -153,9 +187,10 @@ export class UpgradeService {
             }
           });
 
-          list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-          this.cachedRequests = list;
-          safeStorage.setItem(STORAGE_LOCAL_UPGRADES, list);
+          const sanitized = sanitizeRequests(list);
+          sanitized.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          this.cachedRequests = sanitized;
+          safeStorage.setItem(STORAGE_LOCAL_UPGRADES, sanitized);
           this.notifyRequestSubscribers();
         },
         (err) => {
@@ -504,6 +539,36 @@ export class UpgradeService {
     } catch (err: any) {
       console.error('[UpgradeService] applyUpgrade failed:', err);
       return { ok: false, error: err.message };
+    }
+  }
+
+  public async deleteRequest(requestId: string): Promise<void> {
+    if (!requestId) return;
+
+    // 1. Record in local tombstone so it immediately disappears on this device
+    const deletedSet = getDeletedUpgradeIds();
+    deletedSet.add(requestId);
+    safeStorage.setItem(STORAGE_DELETED_UPGRADE_IDS, Array.from(deletedSet));
+
+    // 2. Remove from in-memory cache and local storage
+    this.cachedRequests = this.cachedRequests.filter((r) => r.id !== requestId);
+    safeStorage.setItem(STORAGE_LOCAL_UPGRADES, this.cachedRequests);
+    this.notifyRequestSubscribers();
+
+    // 3. Delete from local PC server data directory if reachable
+    try {
+      const baseUrl = getApiBaseUrl() || 'http://localhost:3001';
+      fetch(`${baseUrl}/api/upgrades/${encodeURIComponent(requestId)}`, {
+        method: 'DELETE',
+      }).catch(() => {});
+    } catch {}
+
+    // 4. Try Firestore delete or tombstone if permissions allow
+    try {
+      const { deleteDoc } = await import('firebase/firestore');
+      await deleteDoc(doc(db, UPGRADE_COLLECTION, requestId));
+    } catch (err: any) {
+      console.debug('[UpgradeService] Cloud deleteDoc deferred:', err.message);
     }
   }
 }
