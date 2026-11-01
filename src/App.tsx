@@ -8,6 +8,7 @@ import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { MobileMiniPlayer } from './components/layout/MobileMiniPlayer';
 import { MobileNowPlayingSheet } from './components/player/MobileNowPlayingSheet';
 import { VisualizerModal } from './components/player/VisualizerModal';
+import { LyricsModal } from './components/lyrics/LyricsModal';
 import { DevicePickerModal } from './components/connect/DevicePickerModal';
 import { AuthModal } from './components/auth/AuthModal';
 import { CreatePlaylistModal } from './components/modals/CreatePlaylistModal';
@@ -179,6 +180,7 @@ export const App: React.FC = () => {
 
       {/* Full-Screen / Modal Audio Spectrum Visualizer */}
       <VisualizerModal />
+      <LyricsModal />
 
       {/* Spotify Connect & Smart Speaker Device Picker Modal */}
       <DevicePickerModal />

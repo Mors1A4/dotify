@@ -16,6 +16,7 @@ import {
   ListMusic,
   Sliders,
   Radio,
+  Mic2,
 } from 'lucide-react';
 import { ActiveDeviceBadge } from '../connect/ActiveDeviceBadge';
 import { DeviceIcon } from '../connect/DeviceIcon';
@@ -50,6 +51,8 @@ export const PlayerBar: React.FC = () => {
     toggleRightDrawer,
     isVisualizerOpen,
     toggleVisualizer,
+    isLyricsModalOpen,
+    toggleLyricsModal,
     navigateToArtist,
     connectMode,
     activeDevice,
@@ -266,8 +269,22 @@ export const PlayerBar: React.FC = () => {
         </div>
       </div>
 
-      {/* Right: Extra controls (Visualizer, Queue, Equalizer, Volume) */}
+      {/* Right: Extra controls (Lyrics, Visualizer, Queue, Equalizer, Volume) */}
       <div className="flex items-center justify-end gap-3 pl-4">
+        <button
+          onClick={() => toggleLyricsModal()}
+          data-testid="open-lyrics-btn"
+          className={`p-1.5 rounded transition-colors cursor-pointer ${
+            isLyricsModalOpen
+              ? 'text-accent bg-elevated'
+              : 'text-secondary hover:text-primary'
+          }`}
+          title="Tracked & AI-Aligned Lyrics"
+          aria-label="Tracked Lyrics"
+        >
+          <Mic2 size={18} />
+        </button>
+
         <button
           onClick={() => toggleVisualizer()}
           className={`p-1.5 rounded transition-colors cursor-pointer ${

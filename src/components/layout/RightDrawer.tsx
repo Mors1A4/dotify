@@ -2,7 +2,8 @@ import React from 'react';
 import { usePlayerStore } from '../../store/playerStore';
 import { QueueDrawer } from '../player/QueueDrawer';
 import { EqualizerDrawer } from '../player/EqualizerDrawer';
-import { X, ListMusic, Sliders } from 'lucide-react';
+import { LyricsViewer } from '../lyrics/LyricsViewer';
+import { X, ListMusic, Sliders, Mic2 } from 'lucide-react';
 
 export const RightDrawer: React.FC = () => {
   const { isRightDrawerOpen, rightDrawerTab, toggleRightDrawer } = usePlayerStore();
@@ -20,7 +21,7 @@ export const RightDrawer: React.FC = () => {
         <div className="flex items-center gap-1 bg-base/40 p-1 rounded-lg border border-customBorder/60">
           <button
             onClick={() => toggleRightDrawer('queue')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
               rightDrawerTab === 'queue'
                 ? 'bg-elevated text-accent shadow-sm'
                 : 'text-secondary hover:text-primary'
@@ -32,7 +33,7 @@ export const RightDrawer: React.FC = () => {
 
           <button
             onClick={() => toggleRightDrawer('equalizer')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
               rightDrawerTab === 'equalizer'
                 ? 'bg-elevated text-accent shadow-sm'
                 : 'text-secondary hover:text-primary'
@@ -40,6 +41,19 @@ export const RightDrawer: React.FC = () => {
           >
             <Sliders size={14} />
             <span>Equalizer</span>
+          </button>
+
+          <button
+            onClick={() => toggleRightDrawer('lyrics')}
+            data-testid="right-drawer-lyrics-tab"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
+              rightDrawerTab === 'lyrics'
+                ? 'bg-elevated text-accent shadow-sm'
+                : 'text-secondary hover:text-primary'
+            }`}
+          >
+            <Mic2 size={14} />
+            <span>Lyrics</span>
           </button>
         </div>
 
@@ -55,9 +69,16 @@ export const RightDrawer: React.FC = () => {
 
       {/* Body */}
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-        {rightDrawerTab === 'queue' ? <QueueDrawer /> : <EqualizerDrawer />}
+        {rightDrawerTab === 'queue' ? (
+          <QueueDrawer />
+        ) : rightDrawerTab === 'equalizer' ? (
+          <EqualizerDrawer />
+        ) : (
+          <LyricsViewer compact={true} />
+        )}
       </div>
     </aside>
   );
 };
+
 

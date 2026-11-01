@@ -236,9 +236,10 @@ export interface PlayerStoreState {
 
   // Drawers & Overlays
   isRightDrawerOpen: boolean;
-  rightDrawerTab: 'queue' | 'equalizer';
+  rightDrawerTab: 'queue' | 'equalizer' | 'lyrics';
   isMobileSheetOpen: boolean;
   isVisualizerOpen: boolean;
+  isLyricsModalOpen: boolean;
   isSidebarCollapsed: boolean;
   isDevicePickerOpen: boolean;
   isCreatePlaylistModalOpen: boolean;
@@ -309,9 +310,10 @@ export interface PlayerStoreState {
   navigateForward: () => void;
   setSearchQuery: (q: string) => void;
   setSourceFilter: (filter: 'all' | 'charts' | 'audius' | 'archive' | 'radio' | 'p2p') => void;
-  toggleRightDrawer: (tab?: 'queue' | 'equalizer') => void;
+  toggleRightDrawer: (tab?: 'queue' | 'equalizer' | 'lyrics') => void;
   toggleMobileSheet: (open?: boolean) => void;
   toggleVisualizer: (open?: boolean) => void;
+  toggleLyricsModal: (open?: boolean) => void;
   toggleSidebarCollapse: () => void;
   openCreatePlaylistModal: (tab?: 'custom' | 'spotify', initialTracks?: Track[]) => void;
   closeCreatePlaylistModal: () => void;
@@ -968,6 +970,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     rightDrawerTab: 'queue',
     isMobileSheetOpen: false,
     isVisualizerOpen: false,
+    isLyricsModalOpen: false,
     isSidebarCollapsed: false,
     isDevicePickerOpen: false,
     isCreatePlaylistModalOpen: false,
@@ -2244,6 +2247,9 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
 
     toggleVisualizer: (open) =>
       set((state) => ({ isVisualizerOpen: open !== undefined ? open : !state.isVisualizerOpen })),
+
+    toggleLyricsModal: (open) =>
+      set((state) => ({ isLyricsModalOpen: open !== undefined ? open : !state.isLyricsModalOpen })),
 
     toggleSidebarCollapse: () =>
       set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),

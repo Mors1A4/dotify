@@ -4,6 +4,7 @@ import { audioEngine } from '../../audio/audioEngine';
 import { useSmoothSeekbar } from '../../hooks/useSmoothSeekbar';
 import { VisualizerCanvas } from './VisualizerCanvas';
 import { EqualizerDrawer } from './EqualizerDrawer';
+import { LyricsViewer } from '../lyrics/LyricsViewer';
 import {
   ChevronDown,
   Play,
@@ -20,6 +21,7 @@ import {
   ListMusic,
   Trash2,
   Radio,
+  Mic2,
 } from 'lucide-react';
 import { DeviceIcon } from '../connect/DeviceIcon';
 import { VisualizerIcon } from '../common/VisualizerIcon';
@@ -62,7 +64,7 @@ export const MobileNowPlayingSheet: React.FC = () => {
 
   const displayTrack = currentTrack || audioEngine.getCurrentTrack();
 
-  const [sheetTab, setSheetTab] = useState<'art' | 'visualizer' | 'equalizer'>('art');
+  const [sheetTab, setSheetTab] = useState<'art' | 'lyrics' | 'visualizer' | 'equalizer'>('art');
   const touchStartY = React.useRef<number | null>(null);
 
   const {
@@ -178,6 +180,12 @@ export const MobileNowPlayingSheet: React.FC = () => {
           </div>
         )}
 
+        {sheetTab === 'lyrics' && (
+          <div className="w-full max-w-sm h-80 rounded-2xl overflow-hidden shadow-2xl border border-customBorder/60 bg-surface/40 backdrop-blur-md">
+            <LyricsViewer compact={true} className="h-full" />
+          </div>
+        )}
+
         {sheetTab === 'visualizer' && (
           <div className="w-full max-w-xs aspect-square rounded-2xl overflow-hidden shadow-2xl border border-customBorder relative group">
             <VisualizerCanvas className="w-full h-full" />
@@ -199,6 +207,16 @@ export const MobileNowPlayingSheet: React.FC = () => {
             }`}
           >
             Artwork
+          </button>
+          <button
+            onClick={() => setSheetTab('lyrics')}
+            data-testid="mobile-lyrics-tab-btn"
+            className={`px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-all ${
+              sheetTab === 'lyrics' ? 'bg-accent text-accent-content' : 'bg-elevated text-secondary'
+            }`}
+          >
+            <Mic2 size={13} />
+            <span>Lyrics</span>
           </button>
           <button
             onClick={() => setSheetTab('visualizer')}
