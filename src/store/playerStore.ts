@@ -1646,7 +1646,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     },
 
     nextTrack: async () => {
-      await finalizeCurrentPlayRecord();
+      void finalizeCurrentPlayRecord();
       if (get().connectMode === 'remote_controller') {
         const isCast = Boolean(get().activeDevice?.deviceId?.startsWith('cast:'));
         if (isCast) {
@@ -1689,9 +1689,8 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       }
       // If Vibe DJ is active, let Vibe DJ select the next track sequentially
       try {
-        const { useVibeDjStore } = await import('./vibeDjStore');
-        const djState = useVibeDjStore.getState();
-        if (djState.isActive) {
+        const djState = cachedVibeDjStore ? cachedVibeDjStore.getState() : null;
+        if (djState?.isActive) {
           const nextDjTrack = await djState.popNextDjTrack();
           if (nextDjTrack) {
             get().playTrack(nextDjTrack, undefined, undefined, {
@@ -1751,7 +1750,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
     },
 
     previousTrack: async () => {
-      await finalizeCurrentPlayRecord();
+      void finalizeCurrentPlayRecord();
       if (get().connectMode === 'remote_controller') {
         const isCast = Boolean(get().activeDevice?.deviceId?.startsWith('cast:'));
         if (isCast) {
@@ -1782,6 +1781,29 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         return;
       }
       const { queue, currentTrack, currentTrackIndex, history } = get();
+      if (queue.length > 0) {
+        let currentIndex = currentTrackIndex;
+        if (
+          typeof currentIndex !== 'number' ||
+          currentIndex < 0 ||
+          currentIndex >= queue.length ||
+          (currentTrack && queue[currentIndex]?.id !== currentTrack.id)
+        ) {
+          const refIdx = currentTrack ? queue.indexOf(currentTrack) : -1;
+          currentIndex = refIdx !== -1 ? refIdx : currentTrack ? queue.findIndex((t) => t.id === currentTrack.id) : 0;
+        }
+
+        if (currentIndex > 0) {
+          const prevIndex = currentIndex - 1;
+          const prev = queue[prevIndex];
+          if (prev) {
+            get().playTrack(prev, undefined, prevIndex, currentQueueContext || undefined);
+            broadcastCurrentState();
+            return;
+          }
+        }
+      }
+
       if (history.length > 0) {
         const prev = history[0];
         set({ history: history.slice(1) });
@@ -1791,21 +1813,6 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       }
 
       if (queue.length === 0) return;
-      let currentIndex = currentTrackIndex;
-      if (
-        typeof currentIndex !== 'number' ||
-        currentIndex < 0 ||
-        currentIndex >= queue.length ||
-        (currentTrack && queue[currentIndex]?.id !== currentTrack.id)
-      ) {
-        const refIdx = currentTrack ? queue.indexOf(currentTrack) : -1;
-        currentIndex = refIdx !== -1 ? refIdx : currentTrack ? queue.findIndex((t) => t.id === currentTrack.id) : 0;
-      }
-      const prevIndex = Math.max(0, currentIndex - 1);
-      const prev = queue[prevIndex];
-      if (prev) {
-        get().playTrack(prev, undefined, prevIndex, currentQueueContext || undefined);
-      }
       broadcastCurrentState();
     },
 

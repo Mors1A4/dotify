@@ -11,6 +11,7 @@ import {
   setExplicitSource,
   getCachedVideoId,
 } from '../services/youtubeResolver';
+import { badSourceService } from '../services/badSourceService';
 import { mobileDiagnostics } from '../services/mobileDiagnostics';
 
 function createAudioElement(): HTMLAudioElement {
@@ -108,12 +109,21 @@ export class AudioEngine {
         if (!isPlaying && this.isSwitchingTrack) {
           return;
         }
+        if (isPlaying && !isBuffering) {
+          this.clearYouTubeWatchdog();
+        }
         this.notifyState(isPlaying, isBuffering);
       }
     });
     this.ytBridge.setOnEnded(() => {
       if (this.isUsingYouTubeBridge) {
+        this.clearYouTubeWatchdog();
         this.handleTrackEnded();
+      }
+    });
+    this.ytBridge.setOnError((errorCode) => {
+      if (this.isUsingYouTubeBridge) {
+        this.handleYouTubeError(errorCode);
       }
     });
 
@@ -256,6 +266,9 @@ export class AudioEngine {
       if (this.isUsingYouTubeBridge) {
         if (this.ytBridge.isPlaying()) {
           const cur = this.ytBridge.getCurrentTime();
+          if (cur > 0.05) {
+            this.clearYouTubeWatchdog();
+          }
           const dur = this.getDuration();
           for (const cb of this.timeUpdateCallbacks) {
             cb(cur, dur);
@@ -306,6 +319,7 @@ export class AudioEngine {
   }
 
   private stopProgressLoop(): void {
+    this.clearYouTubeWatchdog();
     if (this.rafId !== null && typeof cancelAnimationFrame !== 'undefined') {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -485,6 +499,91 @@ export class AudioEngine {
   private isSwitchingTrack: boolean = false;
   private standbyFadeTimer: ReturnType<typeof setTimeout> | null = null;
   private standbyFadePromise: Promise<void> | null = null;
+  private isHandlingYouTubeError: boolean = false;
+  private youtubePlaybackWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private clearYouTubeWatchdog(): void {
+    if (this.youtubePlaybackWatchdogTimer) {
+      clearTimeout(this.youtubePlaybackWatchdogTimer);
+      this.youtubePlaybackWatchdogTimer = null;
+    }
+  }
+
+  private startYouTubeWatchdog(reqId: number, videoId: string): void {
+    this.clearYouTubeWatchdog();
+    this.youtubePlaybackWatchdogTimer = setTimeout(() => {
+      // If after 6.5s, the player has not moved past 0.05s or is still stalled on this video
+      if (
+        reqId === this.playRequestId &&
+        this.isUsingYouTubeBridge &&
+        this.currentResolvedVideoId === videoId
+      ) {
+        const curTime = this.ytBridge.getCurrentTime();
+        if (curTime <= 0.05 && !this.ytBridge.isPlaying()) {
+          console.warn(
+            `[AudioEngine] YouTube playback watchdog triggered (stalled at 0s) for video ${videoId}`
+          );
+          this.handleYouTubeError(150, 'watchdog_stalled_at_0s');
+        }
+      }
+    }, 6500);
+  }
+
+  private async handleYouTubeError(errorCode: number, customReason?: string): Promise<void> {
+    this.clearYouTubeWatchdog();
+    if (!this.isUsingYouTubeBridge || !this.currentTrack) {
+      return;
+    }
+
+    if (this.isHandlingYouTubeError) {
+      return;
+    }
+    this.isHandlingYouTubeError = true;
+
+    const track = this.currentTrack;
+    const failedVideoId = this.currentResolvedVideoId || this.ytBridge.getVideoId();
+    const reason = customReason || `iframe_error_${errorCode}`;
+    const activeReqId = this.playRequestId;
+
+    console.warn(
+      `[AudioEngine] YouTube playback error ${errorCode} (${reason}) on "${track.title}" by "${track.artist}" [videoId: ${failedVideoId}]`
+    );
+
+    try {
+      if (failedVideoId && track.artist && track.title) {
+        const { newVideoId } = await markSourceAsBadAndResolveNext(
+          track.artist,
+          track.title,
+          failedVideoId,
+          track.duration,
+          reason,
+          `${track.title} - ${track.artist}`
+        );
+
+        if (activeReqId !== this.playRequestId) {
+          return;
+        }
+
+        if (newVideoId && newVideoId !== failedVideoId) {
+          console.info(`[AudioEngine] Auto-recovering to next clean candidate: ${newVideoId}`);
+          this.currentResolvedVideoId = newVideoId;
+          this.notifyState(true, true);
+          await this.ytBridge.play(newVideoId, 0);
+          this.startYouTubeWatchdog(activeReqId, newVideoId);
+          return;
+        }
+      }
+
+      console.warn(`[AudioEngine] All candidate sources exhausted for "${track.title}". Advancing to next track.`);
+      this.isUsingYouTubeBridge = false;
+      this.handleTrackEnded();
+    } catch (err: any) {
+      console.error('[AudioEngine] Error during YouTube auto-fallback:', err);
+      this.handleTrackEnded();
+    } finally {
+      this.isHandlingYouTubeError = false;
+    }
+  }
 
   private async attemptBackgroundFullStreamUpgrade(track: Track, reqId: number): Promise<void> {
     if (!track.artist || !track.title) return;
@@ -761,6 +860,7 @@ export class AudioEngine {
     // Android: hand playback to the native engine for screen-off-proof audio.
     if (this.isNativeRoutable(track)) {
       const nativeOk = await this.playViaNativeEngine(track, reqId);
+      if (reqId !== this.playRequestId) return;
       if (nativeOk) return;
     }
 
@@ -776,7 +876,13 @@ export class AudioEngine {
       this.emitSyntheticTimeUpdate(0, initialDuration);
 
       const ok = await this.playViaYouTubeBridge(track, reqId);
+      if (reqId !== this.playRequestId) return;
       if (ok) return;
+
+      // If YouTube bridge failed for this non-direct track, do not fall through to web audio!
+      this.isSwitchingTrack = false;
+      this.notifyState(false, false);
+      return;
     }
 
     this.initWebAudio();
@@ -937,17 +1043,30 @@ export class AudioEngine {
       this.currentResolvedVideoId = videoId;
 
       await this.ytBridge.play(videoId, startSeconds);
+      if (reqId !== this.playRequestId) {
+        return false;
+      }
+
+      this.startYouTubeWatchdog(reqId, videoId);
+
       if (!shouldPlay) {
         this.ytBridge.pause();
-      }
-      this.isSwitchingTrack = false;
-      this.notifyState(shouldPlay, false);
-      if (shouldPlay) {
+        this.isSwitchingTrack = false;
+        this.notifyState(false, false);
+      } else {
+        this.isSwitchingTrack = false;
+        if (this.ytBridge.isPlaying()) {
+          this.clearYouTubeWatchdog();
+          this.notifyState(true, false);
+        } else {
+          this.notifyState(true, true);
+        }
         this.startProgressLoop();
       }
       return true;
     } catch (err: any) {
       console.warn('[AudioEngine] YouTube IFrame playback failed:', err);
+      this.clearYouTubeWatchdog();
       this.isUsingYouTubeBridge = false;
       mobileDiagnostics.report({
         level: 'error',

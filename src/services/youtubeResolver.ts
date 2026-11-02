@@ -237,6 +237,23 @@ export function rankCandidates(
         }
       }
 
+      // Exact title match bonus:
+      // Strip common decorations & artist to verify clean title match (e.g. "Better" vs "Eat Me Better")
+      let cleanedCTitle = cTitle;
+      if (normArtist) {
+        cleanedCTitle = cleanedCTitle.replace(normArtist, '');
+      }
+      cleanedCTitle = cleanedCTitle
+        .replace(/[\(\[](?:[^\)\]]*(?:official|video|audio|lyric|hd|4k|remaster|visualizer|feat|ft)[^\)\]]*)[\)\]]/gi, '')
+        .replace(/\b(?:official|music|video|audio|lyrics?|visualizer|feat\.?|ft\.?)\b/gi, '')
+        .replace(/['"“”‘’\-–—:|]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (cleanedCTitle === normTitle || cleanedCTitle.replace(/\s+/g, '') === normTitle.replace(/\s+/g, '')) {
+        score += 30; // High confidence exact title match
+      }
+
       // Check artist presence
       let hasArtistMatch = false;
       if (normArtist && cTitle.includes(normArtist)) {
