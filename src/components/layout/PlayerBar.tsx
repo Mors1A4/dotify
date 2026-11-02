@@ -97,17 +97,17 @@ export const PlayerBar: React.FC = () => {
   return (
     <footer
       data-testid="player-bar"
-      className="hidden md:grid grid-cols-3 items-center h-20 bg-playerBg border-t border-customBorder px-4 z-30 select-none"
+      className="hidden md:flex items-center justify-between h-20 bg-playerBg border-t border-customBorder px-3 lg:px-4 z-30 select-none overflow-hidden"
     >
       {/* Left: Track info */}
-      <div className="flex items-center gap-3.5 min-w-0 pr-4">
+      <div className="flex items-center gap-2.5 lg:gap-3.5 min-w-0 w-[30%] max-w-[340px] pr-2 shrink-0">
         {displayTrack ? (
           <>
             <img
               ref={artworkRef}
               src={getTrackArtwork(displayTrack)}
               alt={displayTrack.title}
-              className="w-14 h-14 rounded-md object-cover shadow-md flex-shrink-0 will-change-transform"
+              className="w-12 h-12 lg:w-14 lg:h-14 rounded-md object-cover shadow-md shrink-0 will-change-transform"
               onError={(e) => {
                 const target = e.currentTarget;
                 if (target.src !== DEFAULT_MUSIC_ARTWORK) {
@@ -118,15 +118,15 @@ export const PlayerBar: React.FC = () => {
                 }
               }}
             />
-            <div ref={trackMetaRef} className="flex flex-col min-w-0 will-change-transform">
+            <div ref={trackMetaRef} className="flex flex-col min-w-0 flex-1 overflow-hidden will-change-transform">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-primary truncate hover:underline cursor-pointer">
+                <span className="text-xs lg:text-sm font-semibold text-primary truncate hover:underline cursor-pointer">
                   {displayTrack.title}
                 </span>
               </div>
               <span
                 onClick={() => navigateToArtist(displayTrack.artist)}
-                className="text-xs text-secondary truncate hover:underline hover:text-primary cursor-pointer transition-colors"
+                className="text-[11px] lg:text-xs text-secondary truncate hover:underline hover:text-primary cursor-pointer transition-colors"
               >
                 {displayTrack.artist}
               </span>
@@ -136,7 +136,7 @@ export const PlayerBar: React.FC = () => {
               onClick={() => toggleLike(displayTrack)}
               data-testid="like-btn"
               aria-label="Like"
-              className="ml-2 text-secondary hover:text-accent transition-colors p-1"
+              className="ml-1 text-secondary hover:text-accent transition-colors p-1 shrink-0"
               title={isLiked(displayTrack.id) ? 'Unlike' : 'Like'}
             >
               <Heart
@@ -145,21 +145,23 @@ export const PlayerBar: React.FC = () => {
               />
             </button>
 
-            <SaveMp3Button track={displayTrack} size={17} />
+            <span className="hidden xl:inline-flex shrink-0">
+              <SaveMp3Button track={displayTrack} size={17} />
+            </span>
             <button
               onClick={() => openSourceModal(displayTrack)}
               data-testid="audio-source-btn"
               aria-label="Audio Source & Watermark Fixer"
-              className="text-secondary hover:text-accent transition-colors p-1"
+              className="hidden 2xl:inline-flex text-secondary hover:text-accent transition-colors p-1 shrink-0"
               title="Audio Source / Report Watermark"
             >
               <Radio size={16} />
             </button>
-            <VibeDjBadge compact={false} />
+            <VibeDjBadge compact={false} size={26} className="shrink-0" />
           </>
         ) : (
           <div className="flex items-center gap-3 text-muted text-xs">
-            <div className="w-14 h-14 rounded-md bg-elevated/40 flex items-center justify-center">
+            <div className="w-12 h-12 lg:w-14 lg:h-14 rounded-md bg-elevated/40 flex items-center justify-center shrink-0">
               <Radio size={20} className="opacity-30" />
             </div>
             <span>No track playing</span>
@@ -168,9 +170,9 @@ export const PlayerBar: React.FC = () => {
       </div>
 
       {/* Center: Transport & Smooth 60fps Seekbar */}
-      <div className="flex flex-col items-center justify-center max-w-xl w-full mx-auto">
+      <div className="flex flex-col items-center justify-center flex-1 max-w-xl min-w-[180px] px-2 mx-auto">
         {/* Buttons */}
-        <div className="flex items-center gap-4 mb-1.5">
+        <div className="flex items-center gap-2.5 sm:gap-3 md:gap-4 mb-1 shrink-0">
           <button
             onClick={toggleShuffle}
             data-testid="shuffle-btn"
@@ -227,16 +229,16 @@ export const PlayerBar: React.FC = () => {
         </div>
 
         {/* Seekbar Container */}
-        <div className="flex items-center gap-2 w-full">
+        <div className="flex items-center gap-1.5 md:gap-2 w-full">
           <span
             ref={currentTimeRef}
             data-testid="current-time"
-            className="text-[11px] font-mono text-muted w-10 text-right tabular-nums"
+            className="text-[10px] md:text-[11px] font-mono text-muted w-8 md:w-10 text-right tabular-nums shrink-0"
           >
             0:00
           </span>
 
-          <div className="relative flex-1 flex items-center">
+          <div className="relative flex-1 min-w-[50px] flex items-center">
             <input
               ref={seekbarRef}
               type="range"
@@ -262,7 +264,7 @@ export const PlayerBar: React.FC = () => {
           <span
             ref={totalDurationRef}
             data-testid="total-duration"
-            className="text-[11px] font-mono text-muted w-10 text-left tabular-nums"
+            className="text-[10px] md:text-[11px] font-mono text-muted w-8 md:w-10 text-left tabular-nums shrink-0"
           >
             0:00
           </span>
@@ -270,11 +272,11 @@ export const PlayerBar: React.FC = () => {
       </div>
 
       {/* Right: Extra controls (Lyrics, Visualizer, Queue, Equalizer, Volume) */}
-      <div className="flex items-center justify-end gap-3 pl-4">
+      <div className="flex items-center justify-end gap-1.5 md:gap-2 lg:gap-3 min-w-0 w-[30%] max-w-[340px] pl-2 shrink-0">
         <button
           onClick={() => toggleLyricsModal()}
           data-testid="open-lyrics-btn"
-          className={`p-1.5 rounded transition-colors cursor-pointer ${
+          className={`p-1.5 rounded transition-colors cursor-pointer shrink-0 ${
             isLyricsModalOpen
               ? 'text-accent bg-elevated'
               : 'text-secondary hover:text-primary'
@@ -282,12 +284,12 @@ export const PlayerBar: React.FC = () => {
           title="Tracked & AI-Aligned Lyrics"
           aria-label="Tracked Lyrics"
         >
-          <Mic2 size={18} />
+          <Mic2 size={17} />
         </button>
 
         <button
           onClick={() => toggleVisualizer()}
-          className={`p-1.5 rounded transition-colors cursor-pointer ${
+          className={`hidden lg:flex p-1.5 rounded transition-colors cursor-pointer shrink-0 ${
             isVisualizerOpen
               ? 'text-accent bg-elevated'
               : 'text-secondary hover:text-primary'
@@ -295,62 +297,62 @@ export const PlayerBar: React.FC = () => {
           title="Audio Spectrum & Nebula Visualizer"
           aria-label="Audio Visualizer"
         >
-          <VisualizerIcon size={18} />
+          <VisualizerIcon size={17} />
         </button>
 
         <button
           onClick={() => toggleRightDrawer('queue')}
           data-testid="toggle-queue"
           aria-label="Queue"
-          className={`p-1.5 rounded transition-colors ${
+          className={`p-1.5 rounded transition-colors shrink-0 ${
             isRightDrawerOpen && rightDrawerTab === 'queue'
               ? 'text-accent bg-elevated'
               : 'text-secondary hover:text-primary'
           }`}
           title="Play Queue"
         >
-          <ListMusic size={18} />
+          <ListMusic size={17} />
         </button>
 
         <button
           onClick={() => toggleRightDrawer('equalizer')}
           data-testid="open-equalizer-btn"
           aria-label="Equalizer"
-          className={`p-1.5 rounded transition-colors ${
+          className={`hidden xl:flex p-1.5 rounded transition-colors shrink-0 ${
             isRightDrawerOpen && rightDrawerTab === 'equalizer'
               ? 'text-accent bg-elevated'
               : 'text-secondary hover:text-primary'
           }`}
           title="10-Band Equalizer"
         >
-          <Sliders size={18} />
+          <Sliders size={17} />
         </button>
 
         {/* Connect to a Device (Spotify Connect) */}
-        <div className="flex items-center gap-2">
-          <ActiveDeviceBadge compact={false} />
-          <button
-            onClick={() => toggleDevicePicker()}
-            data-testid="device-picker-btn"
-            aria-label="Connect to a device"
-            className={`p-1.5 rounded transition-colors ${
-              connectMode === 'remote_controller'
-                ? 'text-accent hover:text-accent/80'
-                : 'text-secondary hover:text-primary'
-            }`}
-            title={connectMode === 'remote_controller' ? `Listening on ${activeDevice?.deviceName || 'remote device'}` : 'Connect to a device'}
-          >
-            <DeviceIcon type={activeDevice?.deviceType || 'desktop'} size={18} />
-          </button>
+        <div className="flex items-center shrink-0">
+          {connectMode === 'remote_controller' && activeDevice && !activeDevice.isCurrentDevice ? (
+            <ActiveDeviceBadge compact={false} />
+          ) : (
+            <button
+              onClick={() => toggleDevicePicker()}
+              data-testid="device-picker-btn"
+              aria-label="Connect to a device"
+              className="p-1.5 rounded transition-colors text-secondary hover:text-primary shrink-0 cursor-pointer"
+              title="Connect to a device"
+            >
+              <DeviceIcon type={activeDevice?.deviceType || 'desktop'} size={17} />
+            </button>
+          )}
         </div>
 
         {/* Volume */}
-        <div className="flex items-center gap-2 w-28 ml-2">
+        <div className="flex items-center gap-1.5 md:gap-2 shrink-0 w-20 md:w-24 lg:w-28 ml-1 md:ml-2">
           <button
             onClick={handleToggleMute}
-            className="text-secondary hover:text-primary transition-colors"
+            className="text-secondary hover:text-primary transition-colors shrink-0 p-0.5"
+            title={isMuted || volume === 0 ? 'Unmute' : 'Mute'}
           >
-            {volume === 0 || isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+            {volume === 0 || isMuted ? <VolumeX size={17} /> : <Volume2 size={17} />}
           </button>
           <input
             type="range"
@@ -366,7 +368,7 @@ export const PlayerBar: React.FC = () => {
               setIsMuted(false);
               setVolume(parseFloat(e.target.value));
             }}
-            className="w-full h-1 rounded-none appearance-none cursor-pointer hover:h-1.5 transition-all"
+            className="w-full min-w-[40px] h-1 rounded-none appearance-none cursor-pointer hover:h-1.5 transition-all"
           />
         </div>
       </div>
