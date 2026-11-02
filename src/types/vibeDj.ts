@@ -55,6 +55,7 @@ export interface VibeDjState {
   themeColor: 'purple' | 'emerald' | 'rose' | 'blue' | 'amber';
   themeGradient: string;
   accentColor: string;
+  anchorVector: VibeVector;
   currentVector: VibeVector;
   djQueue: VibeDjTrackRecommendation[];
   history: VibeDjHistoryItem[];

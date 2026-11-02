@@ -137,20 +137,28 @@ function getGitHubToken() {
   if (process.env.GITHUB_TOKEN && process.env.GITHUB_TOKEN.trim()) {
     return process.env.GITHUB_TOKEN.trim();
   }
-  try {
-    const res = spawnSync('powershell.exe', ['-NoProfile', '-Command', 'echo "protocol=https`nhost=github.com`n`n" | git credential fill'], {
-      encoding: 'utf8',
-      cwd: ROOT_DIR,
-      timeout: 6000,
-    });
-    if (res.stdout) {
-      const match = res.stdout.match(/^password=(.+)$/m);
-      if (match && match[1]) {
-        return match[1].trim();
+  const inputs = [
+    'protocol=https\nhost=github.com\nusername=x-access-token\n\n',
+    'protocol=https\nhost=github.com\nusername=Mors1A4\n\n',
+    'protocol=https\nhost=github.com\n\n',
+  ];
+  for (const input of inputs) {
+    try {
+      const res = spawnSync('git', ['credential', 'fill'], {
+        input,
+        encoding: 'utf8',
+        cwd: ROOT_DIR,
+        timeout: 4000,
+      });
+      if (res.stdout) {
+        const match = res.stdout.match(/^password=(.+)$/m);
+        if (match && match[1]) {
+          return match[1].trim();
+        }
       }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
   }
   return '';
 }

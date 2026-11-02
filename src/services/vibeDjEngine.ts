@@ -14,7 +14,7 @@ import { geminiVibeService } from './geminiVibeService';
 import { getTrackArtwork, resolveTrackArtwork, isUglyPlaceholder } from './artworkService';
 import { extractPrimaryArtist } from './artistService';
 import { isUserFavouredPlay } from './listeningClassifier';
-import { TrackPlayRecord, ArtistAffinityRecord } from '../types/telemetry';
+import { TrackPlayRecord, ArtistAffinityRecord, GenreAffinityRecord } from '../types/telemetry';
 import { FollowedArtist } from '../types/artist';
 
 const ALL_MACRO_GENRES: MacroGenre[] = [
@@ -94,6 +94,134 @@ const GENRE_THEMES: Record<MacroGenre, VibeThemeMeta> = {
     accentColor: '#818cf8',
   },
 };
+
+const SPAM_TITLE_REGEX =
+  /\b(karaoke|tribute to|made famous by|8d audio|ringtone|white noise|sleep sounds|hz frequency|study alpha waves|binaural beats|baby sleep)\b/i;
+
+export interface TelemetrySnapshot {
+  recentPlays: TrackPlayRecord[];
+  artistAffinities: Map<string, ArtistAffinityRecord>;
+  genreAffinities: Map<string, GenreAffinityRecord>;
+  likedTrackIds: Set<string>;
+  followedArtists: Set<string>;
+  sessionId: string;
+  shakeCount: number;
+  sessionTracksPlayed: number;
+}
+
+interface ScoredCandidate {
+  track: Track;
+  vector: VibeVector;
+  dominantGenre: MacroGenre;
+  intrinsicScore: number;
+  familiarityTier: 'anchor' | 'deep_cut' | 'discovery';
+  vibeSimilarity: number;
+  artistKey: string;
+}
+
+/**
+ * 1. Session-Salted Deterministic Hash -> [-1.0, +1.0]
+ * Fixes static Murmur hash bias by salting with sessionId and shakeCount.
+ */
+export function computeSessionSaltedHash(sessionId: string, shakeCount: number, trackId: string): number {
+  const input = `${sessionId}:${shakeCount}:${trackId}`;
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) / 4294967295) * 2 - 1;
+}
+
+/**
+ * 2. Track Exposure Cooldown & Chronic Skip Gate
+ */
+export function computeTrackCooldownAndGate(
+  track: Track,
+  playsForTrack: TrackPlayRecord[],
+  sessionHistory: VibeDjHistoryItem[],
+  isLiked: boolean,
+  nowMs: number = Date.now()
+): { allowed: boolean; cooldownMultiplier: number; familiarityLevel: number; historicalScore: number } {
+  // Hard block if already played in the active DJ session
+  if (sessionHistory.some((h) => h.track.id === track.id)) {
+    return { allowed: false, cooldownMultiplier: 0, familiarityLevel: 1, historicalScore: 0 };
+  }
+
+  // Hard block low-quality SEO / karaoke / meditation spam unless user liked it
+  if (!isLiked && SPAM_TITLE_REGEX.test(`${track.title} ${track.artist}`)) {
+    return { allowed: false, cooldownMultiplier: 0, familiarityLevel: 0, historicalScore: 0 };
+  }
+
+  if (playsForTrack.length === 0) {
+    return {
+      allowed: true,
+      cooldownMultiplier: 1.0,
+      familiarityLevel: isLiked ? 0.8 : 0.15,
+      historicalScore: isLiked ? 0.85 : 0.5,
+    };
+  }
+
+  const lastPlayMs = Math.max(...playsForTrack.map((p) => p.startTime));
+  const hoursSinceLastPlay = Math.max(0, (nowMs - lastPlayMs) / 3_600_000);
+
+  // Hard lockout: Do not replay anything heard in the last 6 hours
+  if (hoursSinceLastPlay < 6) {
+    return { allowed: false, cooldownMultiplier: 0, familiarityLevel: 1, historicalScore: 0 };
+  }
+
+  // Chronic skip ban: Played >= 2 times with >= 65% skip rate and not liked
+  const totalPlays = playsForTrack.length;
+  const skipCount = playsForTrack.filter((p) => p.skipped).length;
+  const skipRate = skipCount / totalPlays;
+  if (!isLiked && totalPlays >= 2 && skipRate >= 0.65) {
+    return { allowed: false, cooldownMultiplier: 0, familiarityLevel: 0.7, historicalScore: 0.1 };
+  }
+
+  // Exponential recency & frequency decay
+  const fourteenDaysAgo = nowMs - 14 * 24 * 3_600_000;
+  const playsLast14d = playsForTrack.filter((p) => p.startTime >= fourteenDaysAgo).length;
+  const halfLifeHours = 18 * (1 + 0.35 * playsLast14d);
+  const cooldownMultiplier = Math.max(0.08, 1.0 - 0.85 * Math.exp(-hoursSinceLastPlay / halfLifeHours));
+
+  // Historical completion quality
+  const avgCompletion =
+    playsForTrack.reduce((acc, p) => acc + p.completionRate * (p.intent === 'favoured' ? 1.2 : 0.9), 0) /
+    totalPlays;
+  const historicalScore = Math.max(0, Math.min(1, avgCompletion - 0.35 * skipRate));
+  const familiarityLevel = Math.min(0.98, 0.45 + 0.12 * totalPlays);
+
+  return { allowed: true, cooldownMultiplier, familiarityLevel, historicalScore };
+}
+
+/**
+ * 3. Gaussian Acoustic + Cosine Genre Vibe Similarity
+ */
+export function computeVibeSimilarity(sessionVec: VibeVector, trackVec: VibeVector): number {
+  const dE = sessionVec.energy - trackVec.energy;
+  const dA = sessionVec.acousticness - trackVec.acousticness;
+  const dD = sessionVec.danceability - trackVec.danceability;
+  const dM = sessionVec.mood - trackVec.mood;
+  const dT = sessionVec.tempoNormalized - trackVec.tempoNormalized;
+
+  const distSq = 0.30 * dE * dE + 0.22 * dA * dA + 0.20 * dD * dD + 0.18 * dM * dM + 0.10 * dT * dT;
+  const acousticSim = Math.exp(-4.5 * distSq);
+
+  let dot = 0;
+  let normS = 0;
+  let normT = 0;
+  const genres = Object.keys(sessionVec.genreWeights) as MacroGenre[];
+  for (const g of genres) {
+    const ws = sessionVec.genreWeights[g] ?? 0;
+    const wt = trackVec.genreWeights[g] ?? 0;
+    dot += ws * wt;
+    normS += ws * ws;
+    normT += wt * wt;
+  }
+  const genreCosine = normS > 0 && normT > 0 ? dot / (Math.sqrt(normS) * Math.sqrt(normT)) : 0;
+
+  return 0.60 * acousticSim + 0.40 * genreCosine;
+}
 
 export class VibeDjEngine {
   private static instance: VibeDjEngine;
@@ -308,66 +436,102 @@ export class VibeDjEngine {
   }
 
   /**
-   * Updates the live session vibe vector based on real-time user reaction.
-   * - Completion / Replay / Like: Positive reinforcement towards track characteristics.
-   * - Skip (<30%): Immediate course-correction away from track characteristics.
+   * Updates the live session vibe vector based on real-time user reaction using Dual-Horizon Adaptation.
+   * - anchorVector: Anchor vector tethering the session's overall identity.
+   * - isFatigueSkip: If true (user already likes or frequently listens to the song), treats as fatigue cooldown WITHOUT penalizing the genre or acoustic vector.
+   * - Elastic tether: pulls live vector back towards anchor by lambda = 0.15 on each completion.
    */
   public updateSessionVibeVector(
     currentVector: VibeVector,
     track: Track,
     outcome: 'completed' | 'skipped' | 'replayed' | 'liked',
-    completionRate: number = 1.0
-  ): VibeVector {
+    completionRate: number = 1.0,
+    anchorVector?: VibeVector,
+    isFatigueSkip = false
+  ): VibeVector & { currentVector: VibeVector; anchorVector: VibeVector } {
     const trackVector = this.computeTrackVibeVector(track);
-    const updated = { ...currentVector, genreWeights: { ...currentVector.genreWeights } };
+    const anchor = anchorVector || currentVector;
+    const updatedAnchor = { ...anchor, genreWeights: { ...anchor.genreWeights } };
+    const updatedLive = { ...currentVector, genreWeights: { ...currentVector.genreWeights } };
 
     if (outcome === 'skipped') {
-      // Negative course-correction (repel from skipped vibe)
-      const penaltyFactor = 0.35 * Math.max(0.5, 1.0 - completionRate);
+      if (!isFatigueSkip) {
+        // True vibe mismatch skip: Course-correction away from track characteristics
+        const penaltyFactor = 0.35 * Math.max(0.5, 1.0 - completionRate);
 
-      // If skipped a slow track, bump up energy; if skipped a loud track, tone it down
-      const energyDelta = trackVector.energy - currentVector.energy;
-      updated.energy = Math.max(0.1, Math.min(1.0, currentVector.energy - energyDelta * penaltyFactor));
+        const energyDelta = trackVector.energy - currentVector.energy;
+        updatedLive.energy = Math.max(0.1, Math.min(1.0, currentVector.energy - energyDelta * penaltyFactor));
 
-      const acousticDelta = trackVector.acousticness - currentVector.acousticness;
-      updated.acousticness = Math.max(0.0, Math.min(1.0, currentVector.acousticness - acousticDelta * penaltyFactor));
+        const acousticDelta = trackVector.acousticness - currentVector.acousticness;
+        updatedLive.acousticness = Math.max(0.0, Math.min(1.0, currentVector.acousticness - acousticDelta * penaltyFactor));
 
-      // Diminish the skipped track's genre weight
-      for (const g of ALL_MACRO_GENRES) {
-        if (trackVector.genreWeights[g] > 0.5) {
-          updated.genreWeights[g] = Math.max(0.02, updated.genreWeights[g] - 0.20);
-        } else {
-          updated.genreWeights[g] = Math.min(0.6, updated.genreWeights[g] + 0.04);
+        // Diminish the skipped track's genre weight
+        for (const g of ALL_MACRO_GENRES) {
+          if (trackVector.genreWeights[g] > 0.5) {
+            updatedLive.genreWeights[g] = Math.max(0.02, updatedLive.genreWeights[g] - 0.20);
+          } else {
+            updatedLive.genreWeights[g] = Math.min(0.6, updatedLive.genreWeights[g] + 0.04);
+          }
         }
       }
+      // If fatigue skip: Do NOT penalize genre or acoustic vector!
     } else {
-      // Positive reinforcement scaled by completion rate
-      const learningRate =
-        (outcome === 'replayed' || outcome === 'liked' ? 0.40 : 0.22) *
-        Math.max(0.4, completionRate);
+      // Positive reinforcement
+      const isFavoured = outcome === 'replayed' || outcome === 'liked';
+      const learningRateLive = (isFavoured ? 0.35 : 0.20) * Math.max(0.4, completionRate);
+      const learningRateAnchor = (isFavoured ? 0.18 : 0.06) * Math.max(0.4, completionRate);
 
-      updated.energy = currentVector.energy + (trackVector.energy - currentVector.energy) * learningRate;
-      updated.danceability = currentVector.danceability + (trackVector.danceability - currentVector.danceability) * learningRate;
-      updated.mood = currentVector.mood + (trackVector.mood - currentVector.mood) * learningRate;
-      updated.acousticness = currentVector.acousticness + (trackVector.acousticness - currentVector.acousticness) * learningRate;
-      updated.tempoNormalized = currentVector.tempoNormalized + (trackVector.tempoNormalized - currentVector.tempoNormalized) * learningRate;
+      // 1. Move live vector towards track
+      const rawLiveE = currentVector.energy + (trackVector.energy - currentVector.energy) * learningRateLive;
+      const rawLiveD = currentVector.danceability + (trackVector.danceability - currentVector.danceability) * learningRateLive;
+      const rawLiveM = currentVector.mood + (trackVector.mood - currentVector.mood) * learningRateLive;
+      const rawLiveA = currentVector.acousticness + (trackVector.acousticness - currentVector.acousticness) * learningRateLive;
+      const rawLiveT = currentVector.tempoNormalized + (trackVector.tempoNormalized - currentVector.tempoNormalized) * learningRateLive;
+
+      // 2. Tether live vector back towards anchor (lambda = 0.15) to prevent unbounded drift
+      const lambda = 0.15;
+      updatedLive.energy = (1 - lambda) * rawLiveE + lambda * anchor.energy;
+      updatedLive.danceability = (1 - lambda) * rawLiveD + lambda * anchor.danceability;
+      updatedLive.mood = (1 - lambda) * rawLiveM + lambda * anchor.mood;
+      updatedLive.acousticness = (1 - lambda) * rawLiveA + lambda * anchor.acousticness;
+      updatedLive.tempoNormalized = (1 - lambda) * rawLiveT + lambda * anchor.tempoNormalized;
 
       for (const g of ALL_MACRO_GENRES) {
-        updated.genreWeights[g] =
-          currentVector.genreWeights[g] +
-          (trackVector.genreWeights[g] - currentVector.genreWeights[g]) * learningRate;
+        const rawLiveG = currentVector.genreWeights[g] + (trackVector.genreWeights[g] - currentVector.genreWeights[g]) * learningRateLive;
+        updatedLive.genreWeights[g] = (1 - lambda) * rawLiveG + lambda * (anchor.genreWeights[g] || 0);
+      }
+
+      // 3. Slow anchor progression
+      updatedAnchor.energy = anchor.energy + (trackVector.energy - anchor.energy) * learningRateAnchor;
+      updatedAnchor.danceability = anchor.danceability + (trackVector.danceability - anchor.danceability) * learningRateAnchor;
+      updatedAnchor.mood = anchor.mood + (trackVector.mood - anchor.mood) * learningRateAnchor;
+      updatedAnchor.acousticness = anchor.acousticness + (trackVector.acousticness - anchor.acousticness) * learningRateAnchor;
+      updatedAnchor.tempoNormalized = anchor.tempoNormalized + (trackVector.tempoNormalized - anchor.tempoNormalized) * learningRateAnchor;
+
+      for (const g of ALL_MACRO_GENRES) {
+        updatedAnchor.genreWeights[g] = anchor.genreWeights[g] + (trackVector.genreWeights[g] - anchor.genreWeights[g]) * learningRateAnchor;
       }
     }
 
-    // Normalize genre weights to sum to 1.0
-    const totalGenreSum = Object.values(updated.genreWeights).reduce((a, b) => a + b, 0);
-    if (totalGenreSum > 0) {
+    // Normalize genre weights
+    const totalLiveSum = Object.values(updatedLive.genreWeights).reduce((a, b) => a + b, 0);
+    if (totalLiveSum > 0) {
       for (const g of ALL_MACRO_GENRES) {
-        updated.genreWeights[g] = updated.genreWeights[g] / totalGenreSum;
+        updatedLive.genreWeights[g] /= totalLiveSum;
+      }
+    }
+    const totalAnchorSum = Object.values(updatedAnchor.genreWeights).reduce((a, b) => a + b, 0);
+    if (totalAnchorSum > 0) {
+      for (const g of ALL_MACRO_GENRES) {
+        updatedAnchor.genreWeights[g] /= totalAnchorSum;
       }
     }
 
-    return updated;
+    // Attach dual-horizon outputs
+    (updatedLive as any).currentVector = updatedLive;
+    (updatedLive as any).anchorVector = updatedAnchor;
+
+    return updatedLive as VibeVector & { currentVector: VibeVector; anchorVector: VibeVector };
   }
 
   /**
@@ -586,26 +750,42 @@ export class VibeDjEngine {
   }
 
   /**
-   * Generates a deep, high-quality ranked recommendation pool for Vibe DJ.
+   * Generates a deep, high-quality ranked recommendation pool for Vibe DJ v2.0.
+   * Leverages:
+   * 1. Three-Ring Candidate Retrieval (Comfort Core, Taste-Graph Expansion, Vetted Discovery)
+   * 2. Hard Pre-Scoring Quality Gate (6h lockout, chronic skip ban, SEO spam filter)
+   * 3. Continuous Telemetry & Exponential Exposure Fatigue (half-life tau decay)
+   * 4. Sequential Chain Decoder with 5-track Sinusoidal Wave Pacing and tight Stepwise Continuity
    */
   public async generateNextDjQueue(
     sessionVector: VibeVector,
     history: VibeDjHistoryItem[],
-    count: number = 8
+    count: number = 8,
+    options?: {
+      sessionId?: string;
+      shakeCount?: number;
+      sessionTracksPlayed?: number;
+      lastPlayedTrack?: Track | null;
+    }
   ): Promise<{
     queue: VibeDjTrackRecommendation[];
     recommendedArtists: VibeDjArtistRecommendation[];
   }> {
-    const recentArtists = history.map((h) => extractPrimaryArtist(h.track.artist).toLowerCase().trim());
-    const playedTrackIds = new Set(history.map((h) => h.track.id));
-    const lastTrack = history.length > 0 ? history[history.length - 1].track : null;
+    const nowMs = Date.now();
+    const sessionId = options?.sessionId || `session_${nowMs}`;
+    const shakeCount = options?.shakeCount || 0;
+    const sessionTracksPlayed = options?.sessionTracksPlayed ?? history.length;
+    const lastTrack = options?.lastPlayedTrack || (history.length > 0 ? history[0].track : null);
+    const dominant = this.getDominantGenre(sessionVector);
 
-    // 1. Gather telemetry, likes, followed artists
+    // 1. Gather on-device telemetry, likes, followed artists, and affinities
     let plays: TrackPlayRecord[] = [];
-    let artistAffinities: ArtistAffinityRecord[] = [];
+    let rawArtistAffinities: ArtistAffinityRecord[] = [];
+    let rawGenreAffinities: GenreAffinityRecord[] = [];
     try {
       plays = await telemetryDb.getAllPlays();
-      artistAffinities = await telemetryDb.getAllArtistAffinities();
+      rawArtistAffinities = await telemetryDb.getAllArtistAffinities();
+      rawGenreAffinities = await telemetryDb.getAllGenreAffinities();
     } catch {}
 
     const { likedTracks, followedArtists, playlists } =
@@ -618,22 +798,133 @@ export class VibeDjEngine {
       (followedArtists || []).map((a) => a.name.toLowerCase().trim())
     );
 
-    for (const p of plays) {
-      playedTrackIds.add(p.trackId);
+    const artistAffinityMap = new Map<string, ArtistAffinityRecord>();
+    for (const a of rawArtistAffinities) {
+      artistAffinityMap.set(a.artist.toLowerCase().trim(), a);
+    }
+    const genreAffinityMap = new Map<string, GenreAffinityRecord>();
+    for (const g of rawGenreAffinities) {
+      genreAffinityMap.set(g.genre.toLowerCase().trim(), g);
     }
 
-    // 2. Build candidate pool from multiple sources
+    const telemetry: TelemetrySnapshot = {
+      recentPlays: plays,
+      artistAffinities: artistAffinityMap,
+      genreAffinities: genreAffinityMap,
+      likedTrackIds,
+      followedArtists: followedArtistNames,
+      sessionId,
+      shakeCount,
+      sessionTracksPlayed,
+    };
+
+    // 2. Build Three-Ring Candidate Pool
     const candidateMap = new Map<string, Track>();
 
-    // A. Top Charts & Genre Exploration
+    // ── RING 1: Comfort Core (~30%) ──
+    // A. Unplayed / rested tracks from high-affinity artists
+    const highAffinityArtists = rawArtistAffinities
+      .filter((a) => a.affinityScore >= 40)
+      .sort((a, b) => b.affinityScore - a.affinityScore)
+      .slice(0, 6);
+
+    for (const ha of highAffinityArtists) {
+      try {
+        const artistTracks = await searchCharts(ha.artist, 10);
+        for (const t of artistTracks) {
+          if (!candidateMap.has(t.id)) candidateMap.set(t.id, t);
+        }
+      } catch {}
+    }
+
+    // B. Rested library favorites (Liked Songs and custom playlists not played in last 72 hours)
+    const seventyTwoHoursAgo = nowMs - 72 * 3600 * 1000;
+    const libraryTracks = [...(likedTracks || []), ...(playlists || []).flatMap((pl) => pl.tracks || [])];
+    const recentPlayTimes = new Map<string, number>();
+    for (const p of plays) {
+      const cur = recentPlayTimes.get(p.trackId) || 0;
+      if (p.startTime > cur) recentPlayTimes.set(p.trackId, p.startTime);
+    }
+
+    for (const t of libraryTracks) {
+      const lastPlayTime = recentPlayTimes.get(t.id) || 0;
+      if (lastPlayTime < seventyTwoHoursAgo && !candidateMap.has(t.id)) {
+        candidateMap.set(t.id, t);
+      }
+    }
+
+    // ── RING 2: Taste-Graph Expansion (~45%) ──
+    // A. Granular Sub-Genre Queries matching current MacroGenre
+    const matchingSubGenres = rawGenreAffinities
+      .filter((g) => {
+        const macro = genreProfiler.classifyGenre(g.genre);
+        return macro === dominant;
+      })
+      .sort((a, b) => b.affinityScore - a.affinityScore)
+      .slice(0, 3)
+      .map((g) => g.genre);
+
+    // Fallback sub-genres if user has few recorded sub-genres
+    const defaultSubGenres: Record<MacroGenre, string[]> = {
+      'Electronic & Dance': ['Synthwave', 'Deep House', 'Melodic Techno'],
+      'Hip-Hop & Urban': ['Boom Bap', 'Neo Soul', 'Lofi Hip Hop'],
+      'Rock & Alternative': ['Indie Rock', 'Shoegaze', 'Post-Punk'],
+      'Pop & Anthems': ['Indie Pop', 'Nu-Disco', 'Electropop'],
+      'Chill & Lo-Fi': ['Chillhop', 'Ambient Lo-Fi', 'Downtempo'],
+      'Acoustic & Folk': ['Indie Folk', 'Fingerstyle Guitar', 'Chamber Folk'],
+      'Jazz & Soul': ['Neo-Soul', 'Jazz Hop', 'Cool Jazz'],
+      'Classical & Cinematic': ['Neo-Classical', 'Ambient Orchestral', 'Minimalist Piano'],
+    };
+
+    const targetSubQueries = matchingSubGenres.length > 0 ? matchingSubGenres : defaultSubGenres[dominant] || [dominant];
+    for (const sub of targetSubQueries) {
+      try {
+        const subTracks = await searchCharts(sub, 12);
+        for (const t of subTracks) {
+          if (!candidateMap.has(t.id)) {
+            candidateMap.set(t.id, {
+              ...t,
+              sourceMetadata: { ...t.sourceMetadata, genre: t.sourceMetadata?.genre || sub },
+            });
+          }
+        }
+      } catch {}
+    }
+
+    // B. Session Artist Adjacency (top 3 completed artists from session history)
+    const topSessionArtists = Array.from(
+      new Set(
+        history
+          .filter((h) => !h.skipped && (h.completionRate ?? 1.0) >= 0.70)
+          .map((h) => extractPrimaryArtist(h.track.artist).trim())
+      )
+    ).slice(0, 3);
+
+    for (const aName of topSessionArtists) {
+      try {
+        const mixTracks = await searchCharts(`${aName} mix`, 8);
+        for (const t of mixTracks) {
+          if (!candidateMap.has(t.id)) candidateMap.set(t.id, t);
+        }
+      } catch {}
+    }
+
+    // ── RING 3: Vetted Discovery (~25%) ──
+    // A. High-retention community tracks
     try {
-      const charts = await fetchTopCharts();
-      for (const t of charts) {
-        if (!candidateMap.has(t.id)) candidateMap.set(t.id, t);
+      const { communityListeningService } = await import('./communityListeningService');
+      const commTrends = await communityListeningService.getTrendingArtists();
+      for (const trend of commTrends) {
+        for (const t of trend.recentTracks || []) {
+          const macro = genreProfiler.classifyGenre(t.sourceMetadata?.genre, t.artist, t.title);
+          if (macro === dominant && !candidateMap.has(t.id)) {
+            candidateMap.set(t.id, t);
+          }
+        }
       }
     } catch {}
 
-    // B. Made For You & Discovery Shelves
+    // B. Recommendation Engine Discovery Shelves
     try {
       const shelfTracks = recommendationEngine.generateMadeForYou(
         plays,
@@ -646,88 +937,270 @@ export class VibeDjEngine {
       }
     } catch {}
 
-    // C. User Liked Tracks & Custom Playlists
-    for (const t of likedTracks || []) {
-      if (!candidateMap.has(t.id)) candidateMap.set(t.id, t);
-    }
-    for (const pl of playlists || []) {
-      for (const t of pl.tracks || []) {
+    // C. Top Charts / Target Genre Fallback
+    try {
+      const charts = await fetchTopCharts();
+      for (const t of charts) {
         if (!candidateMap.has(t.id)) candidateMap.set(t.id, t);
       }
-    }
-
-    // D. Target Genre Search for Deep Pool
-    const dominant = this.getDominantGenre(sessionVector);
-    try {
-      const genreSearches = await searchCharts(dominant, 20);
-      for (const t of genreSearches) {
-        const enriched: Track = {
-          ...t,
-          sourceMetadata: {
-            ...t.sourceMetadata,
-            genre: t.sourceMetadata?.genre || dominant,
-          },
-        };
-        if (!candidateMap.has(enriched.id)) candidateMap.set(enriched.id, enriched);
+      if (candidateMap.size < 40) {
+        const deepSearch = await searchCharts(dominant, 15);
+        for (const t of deepSearch) {
+          if (!candidateMap.has(t.id)) candidateMap.set(t.id, t);
+        }
       }
     } catch {}
 
     const candidates = Array.from(candidateMap.values());
 
-    // 3. Score every candidate
-    const scoredList: VibeDjTrackRecommendation[] = [];
-    for (const cand of candidates) {
-      const scored = this.scoreCandidate(
-        cand,
-        sessionVector,
-        recentArtists,
-        playedTrackIds,
-        likedTrackIds,
-        followedArtistNames,
-        lastTrack
-      );
-      scoredList.push(scored);
-    }
+    // 3. Step A & B: Hard Quality Gate, Intrinsic Scoring, and Sequential Chain Decoder
+    const selectedQueue = this.buildSequentialChainQueue(
+      candidates,
+      sessionVector,
+      lastTrack,
+      history,
+      telemetry,
+      count
+    );
 
-    // 4. Sort descending by vibeScore
-    scoredList.sort((a, b) => b.vibeScore - a.vibeScore);
-
-    // 5. Apply Anti-Clumping selection (Max 1 song per artist in top queue)
-    const selectedQueue: VibeDjTrackRecommendation[] = [];
-    const queueArtists = new Set<string>();
-
-    for (const item of scoredList) {
-      const artist = extractPrimaryArtist(item.track.artist).toLowerCase().trim();
-      if (!queueArtists.has(artist)) {
-        queueArtists.add(artist);
-        selectedQueue.push(item);
-      }
-      if (selectedQueue.length >= count) break;
-    }
-
-    // Fallback if needed
-    if (selectedQueue.length < count) {
-      for (const item of scoredList) {
-        if (!selectedQueue.some((q) => q.track.id === item.track.id)) {
-          selectedQueue.push(item);
-        }
-        if (selectedQueue.length >= count) break;
-      }
-    }
-
-    // 6. Generate Vibe Recommended Artists
+    // 4. Generate contextual Vibe Recommended Artists
     const recommendedArtists = this.generateVibeArtistRecommendations(
       sessionVector,
       candidates,
       plays,
       followedArtists,
-      artistAffinities
+      rawArtistAffinities
     );
 
     return {
       queue: selectedQueue,
       recommendedArtists,
     };
+  }
+
+  /**
+   * Executes the Greedy Sequential Chain Decoder (k = 0 ... queueSize - 1)
+   * with tight stepwise energy/tempo continuity and a 5-track sinusoidal wave target.
+   */
+  private buildSequentialChainQueue(
+    candidates: Track[],
+    sessionVector: VibeVector,
+    lastPlayedTrack: Track | null,
+    sessionHistory: VibeDjHistoryItem[],
+    telemetry: TelemetrySnapshot,
+    queueSize: number = 8
+  ): VibeDjTrackRecommendation[] {
+    const nowMs = Date.now();
+
+    // Index plays by trackId for O(1) lookup
+    const playsByTrack = new Map<string, TrackPlayRecord[]>();
+    for (const play of telemetry.recentPlays) {
+      const list = playsByTrack.get(play.trackId) ?? [];
+      list.push(play);
+      playsByTrack.set(play.trackId, list);
+    }
+
+    // Track recently skipped artists in this session to avoid repeating them
+    const sessionSkippedArtists = new Set(
+      sessionHistory
+        .filter((h) => h.skipped && (h.completionRate ?? 0) < 0.35)
+        .map((h) => extractPrimaryArtist(h.track.artist).toLowerCase().trim())
+    );
+
+    // Step A: Hard Pre-Scoring Quality Gate & Intrinsic Fit Scoring
+    const scoredPool: ScoredCandidate[] = [];
+    const seenTrackIds = new Set<string>();
+
+    for (const track of candidates) {
+      if (!track?.id || seenTrackIds.has(track.id)) continue;
+      seenTrackIds.add(track.id);
+
+      const artistKey = extractPrimaryArtist(track.artist).toLowerCase().trim();
+      if (sessionSkippedArtists.has(artistKey)) continue;
+
+      const isLiked = telemetry.likedTrackIds.has(track.id);
+      const trackPlays = playsByTrack.get(track.id) ?? [];
+
+      const gate = computeTrackCooldownAndGate(track, trackPlays, sessionHistory, isLiked, nowMs);
+      if (!gate.allowed) continue;
+
+      const trackVec = this.computeTrackVibeVector(track);
+      const dominantGenre = genreProfiler.classifyGenre(track.sourceMetadata?.genre, track.artist, track.title);
+      const vibeSim = computeVibeSimilarity(sessionVector, trackVec);
+
+      // Reject tracks that fundamentally clash with active vibe
+      if (vibeSim < 0.38) continue;
+
+      // Continuous Telemetry Taste Affinity
+      const artistRec = telemetry.artistAffinities.get(artistKey);
+      const artistNorm = artistRec ? artistRec.affinityScore / 100 : 0.32;
+      const isFollowed = telemetry.followedArtists.has(artistKey);
+
+      const trackGenre = (track.sourceMetadata?.genre || dominantGenre).toLowerCase().trim();
+      const genreRec = telemetry.genreAffinities.get(trackGenre);
+      const genreNorm = genreRec ? genreRec.affinityScore / 100 : 0.40;
+
+      // Deep Cut Bonus: Unplayed track by high-affinity or followed artist
+      const isArtistDeepCut = trackPlays.length === 0 && (artistNorm >= 0.60 || isFollowed);
+      const trackHistScore = isArtistDeepCut ? 0.88 : gate.historicalScore;
+
+      const tasteAffinity = Math.min(
+        1.0,
+        0.45 * Math.max(artistNorm, isFollowed ? 0.80 : 0) +
+          0.25 * genreNorm +
+          0.20 * trackHistScore +
+          0.10 * (isLiked ? 1.0 : 0.0)
+      );
+
+      // Familiarity Alignment
+      const effectiveFam = isArtistDeepCut ? 0.55 : gate.familiarityLevel;
+      const freshnessScore = 1.0 - Math.abs(sessionVector.familiarity - effectiveFam);
+
+      // Duration & Pacing Sanity
+      const durSec = track.duration || 200;
+      const durationQuality = durSec < 75 ? 0.2 : durSec > 480 ? 0.65 : 1.0;
+
+      // Session-Salted Exploration Noise [-3.5, +3.5]
+      const explorationNoise =
+        computeSessionSaltedHash(telemetry.sessionId, telemetry.shakeCount, track.id) * 3.5;
+
+      const rawScore =
+        45 * vibeSim + 25 * tasteAffinity + 20 * freshnessScore + 10 * durationQuality;
+
+      const intrinsicScore = gate.cooldownMultiplier * rawScore + explorationNoise;
+
+      const familiarityTier: ScoredCandidate['familiarityTier'] =
+        trackPlays.length > 0 || isLiked
+          ? 'anchor'
+          : artistNorm >= 0.55 || isFollowed
+          ? 'deep_cut'
+          : 'discovery';
+
+      scoredPool.push({
+        track,
+        vector: trackVec,
+        dominantGenre,
+        intrinsicScore,
+        familiarityTier,
+        vibeSimilarity: vibeSim,
+        artistKey,
+      });
+    }
+
+    // Step B: Greedy Sequential Chain Decoding (Slot k = 0 ... queueSize - 1)
+    const selectedQueue: VibeDjTrackRecommendation[] = [];
+    const usedTrackIds = new Set<string>();
+
+    // Recent artist ring buffer (last 6 played in session)
+    const recentArtists: string[] = sessionHistory
+      .slice(-6)
+      .map((h) => extractPrimaryArtist(h.track.artist).toLowerCase().trim());
+
+    let prevVector: VibeVector = lastPlayedTrack
+      ? this.computeTrackVibeVector(lastPlayedTrack)
+      : sessionVector;
+
+    // Desired pacing pattern across the 8-track queue
+    const slotRolePattern: ScoredCandidate['familiarityTier'][] = [
+      'anchor',
+      'deep_cut',
+      'deep_cut',
+      'discovery',
+      'anchor',
+      'deep_cut',
+      'discovery',
+      'deep_cut',
+    ];
+
+    for (let slot = 0; slot < queueSize; slot++) {
+      const desiredRole = slotRolePattern[slot % slotRolePattern.length];
+
+      // 5-track sinusoidal energy wave around user's target energy
+      const wavePhase = ((telemetry.sessionTracksPlayed + slot) % 5) / 5;
+      const targetSlotEnergy = Math.max(
+        0.08,
+        Math.min(0.96, sessionVector.energy + 0.08 * Math.sin(wavePhase * 2 * Math.PI))
+      );
+
+      let bestCandidate: ScoredCandidate | null = null;
+      let bestChainScore = -Infinity;
+
+      for (const cand of scoredPool) {
+        if (usedTrackIds.has(cand.track.id)) continue;
+
+        // Hard block if artist appeared within the last 4 steps
+        const last4Artists = recentArtists.slice(-4);
+        if (last4Artists.includes(cand.artistKey)) continue;
+
+        // Soft penalty if artist appeared 5-6 steps ago
+        const artistPenalty = recentArtists.includes(cand.artistKey) ? -14 : 0;
+
+        // Stepwise Transition Continuity from prevVector -> cand.vector
+        const dE = Math.abs(prevVector.energy - cand.vector.energy);
+        const dT = Math.abs(prevVector.tempoNormalized - cand.vector.tempoNormalized);
+        const dA = Math.abs(prevVector.acousticness - cand.vector.acousticness);
+
+        const stepPenaltyE = Math.max(0, dE - 0.18);
+        const stepPenaltyT = Math.max(0, dT - 0.20);
+        const transitionMultiplier = Math.exp(
+          -8.0 * stepPenaltyE * stepPenaltyE - 6.0 * stepPenaltyT * stepPenaltyT
+        );
+
+        const textureBridgePenalty = dA > 0.40 ? -8.0 * (dA - 0.40) : 0;
+
+        // Alignment with the 5-track wave energy target
+        const waveFitBonus = 6.0 * (1.0 - Math.abs(targetSlotEnergy - cand.vector.energy));
+
+        // Role pacing bonus (+7 pts for matching the slot's familiarity tier)
+        const roleBonus = cand.familiarityTier === desiredRole ? 7.0 : 0;
+
+        const totalSlotScore =
+          cand.intrinsicScore * (0.75 + 0.25 * transitionMultiplier) +
+          waveFitBonus +
+          roleBonus +
+          textureBridgePenalty +
+          artistPenalty;
+
+        if (totalSlotScore > bestChainScore) {
+          bestChainScore = totalSlotScore;
+          bestCandidate = cand;
+        }
+      }
+
+      if (!bestCandidate) break;
+
+      usedTrackIds.add(bestCandidate.track.id);
+      recentArtists.push(bestCandidate.artistKey);
+      prevVector = bestCandidate.vector;
+
+      const isNovelty = bestCandidate.familiarityTier === 'discovery';
+      selectedQueue.push({
+        track: bestCandidate.track,
+        vibeScore: Math.max(40, Math.min(99, Math.round(bestChainScore))),
+        vibeReason: this.buildExplainableReason(bestCandidate),
+        predictedEnergy: bestCandidate.vector.energy,
+        sourceTier: bestCandidate.familiarityTier === 'anchor' ? 'taste_catalogue' : isNovelty ? 'ai_discovery' : 'serendipity',
+        isNovelty,
+      });
+    }
+
+    return selectedQueue;
+  }
+
+  private buildExplainableReason(cand: ScoredCandidate): string {
+    if (cand.familiarityTier === 'deep_cut') {
+      return `Fresh deep cut from ${cand.track.artist} matching your flow`;
+    }
+    if (cand.familiarityTier === 'anchor') {
+      return `Rested favorite anchoring your ${cand.dominantGenre} soundscape`;
+    }
+    if (cand.vector.energy > 0.75) {
+      return `High-energy momentum pick locking into your tempo`;
+    }
+    if (cand.vector.acousticness > 0.65) {
+      return `Organic acoustic texture bridging your current mood`;
+    }
+    return `Harmonically matched discovery tailored to your taste profile`;
   }
 
   /**

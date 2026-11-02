@@ -65,6 +65,7 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
   themeColor: defaultTheme.themeColor,
   themeGradient: defaultTheme.themeGradient,
   accentColor: defaultTheme.accentColor,
+  anchorVector: initialVector,
   currentVector: initialVector,
   djQueue: [],
   history: [],
@@ -94,6 +95,7 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
 
     set({
       isActive: true,
+      anchorVector: vector,
       currentVector: vector,
       vibeLabel: theme.label,
       vibeTagline: theme.tagline,
@@ -111,7 +113,13 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
       const { queue, recommendedArtists } = await vibeDjEngine.generateNextDjQueue(
         vector,
         get().history,
-        8
+        8,
+        {
+          sessionId: `dj_session_${Date.now()}`,
+          shakeCount: 0,
+          sessionTracksPlayed: 0,
+          lastPlayedTrack: effectiveSeed,
+        }
       );
 
       set({
@@ -154,16 +162,18 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
 
     // Rotate the vector dramatically
     const { newVector, theme } = vibeDjEngine.shakeUpVibe(currentVector);
+    const nextShakeCount = get().shakeCount + 1;
 
     set({
       isActive: true,
+      anchorVector: newVector,
       currentVector: newVector,
       vibeLabel: theme.label,
       vibeTagline: theme.tagline,
       themeColor: theme.themeColor,
       themeGradient: theme.themeGradient,
       accentColor: theme.accentColor,
-      shakeCount: get().shakeCount + 1,
+      shakeCount: nextShakeCount,
       lastShakeTimestamp: Date.now(),
     });
 
@@ -172,7 +182,13 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
       const { queue, recommendedArtists } = await vibeDjEngine.generateNextDjQueue(
         newVector,
         history,
-        8
+        8,
+        {
+          sessionId: `dj_session_${Date.now()}`,
+          shakeCount: nextShakeCount,
+          sessionTracksPlayed: history.length,
+          lastPlayedTrack: history.length > 0 ? history[0].track : null,
+        }
       );
 
       set({
@@ -206,13 +222,18 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
   },
 
   popNextDjTrack: async (): Promise<Track | null> => {
-    const { djQueue, currentVector, history } = get();
+    const { djQueue, currentVector, history, shakeCount, lastShakeTimestamp } = get();
 
     if (djQueue.length === 0) {
       // Emergency refill
       set({ isGenerating: true });
       try {
-        const { queue } = await vibeDjEngine.generateNextDjQueue(currentVector, history, 6);
+        const { queue } = await vibeDjEngine.generateNextDjQueue(currentVector, history, 6, {
+          sessionId: `dj_session_${lastShakeTimestamp || 'pop'}`,
+          shakeCount,
+          sessionTracksPlayed: history.length,
+          lastPlayedTrack: history.length > 0 ? history[0].track : null,
+        });
         set({ isGenerating: false });
         if (queue.length > 0) {
           const next = queue[0].track;
@@ -243,16 +264,32 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
     completionRate: number = 1.0,
     durationPlayedMs: number = 0
   ) => {
-    const { currentVector, history } = get();
+    const { currentVector, anchorVector, history } = get();
 
-    // 1. Update the session vibe vector
-    const updatedVector = vibeDjEngine.updateSessionVibeVector(
+    // Check if this is a fatigue skip on a familiar or liked song
+    let isFatigueSkip = false;
+    if (event === 'skipped') {
+      try {
+        const { usePlayerStore } = require('./playerStore');
+        const liked = usePlayerStore.getState().likedTracks || [];
+        if (liked.some((t: any) => t.id === track.id)) {
+          isFatigueSkip = true;
+        }
+      } catch {}
+    }
+
+    // 1. Update session vibe vectors using dual-horizon adaptation
+    const dualResult = vibeDjEngine.updateSessionVibeVector(
       currentVector,
       track,
       event,
-      completionRate
+      completionRate,
+      anchorVector,
+      isFatigueSkip
     );
-    const theme = vibeDjEngine.getThemeForVector(updatedVector);
+    const updatedLive = dualResult.currentVector || dualResult;
+    const updatedAnchor = dualResult.anchorVector || anchorVector;
+    const theme = vibeDjEngine.getThemeForVector(updatedLive);
 
     // 2. Add to session history
     const historyItem: VibeDjHistoryItem = {
@@ -262,10 +299,12 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
       completionRate,
       skipped: event === 'skipped',
       replayed: event === 'replayed',
+      vibeReason: isFatigueSkip ? 'Rested favorite' : undefined,
     };
 
     set({
-      currentVector: updatedVector,
+      currentVector: updatedLive,
+      anchorVector: updatedAnchor,
       vibeLabel: theme.label,
       vibeTagline: theme.tagline,
       themeColor: theme.themeColor,
@@ -274,7 +313,7 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
       history: [historyItem, ...history.slice(0, 30)],
     });
 
-    // 3. If skipped, refresh recommendations immediately to steer away from the skipped vibe!
+    // 3. If skipped, refresh recommendations immediately
     if (event === 'skipped') {
       get().refreshRecommendations();
     }
@@ -309,15 +348,20 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
     value: number
   ) => {
     const clamped = Math.max(0.05, Math.min(0.95, value));
-    const { currentVector } = get();
+    const { currentVector, anchorVector } = get();
     const updatedVector: VibeVector = {
       ...currentVector,
+      [metric]: clamped,
+    };
+    const updatedAnchor: VibeVector = {
+      ...(anchorVector || currentVector),
       [metric]: clamped,
     };
     const theme = vibeDjEngine.getThemeForVector(updatedVector);
 
     set({
       currentVector: updatedVector,
+      anchorVector: updatedAnchor,
       vibeLabel: theme.label,
       vibeTagline: theme.tagline,
       themeColor: theme.themeColor,
@@ -332,21 +376,26 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
   },
 
   steerAwayFromTrack: (track: Track) => {
-    const { currentVector, history } = get();
-    const updatedVector = vibeDjEngine.updateSessionVibeVector(
+    const { currentVector, anchorVector, history } = get();
+    const dualResult = vibeDjEngine.updateSessionVibeVector(
       currentVector,
       track,
       'skipped',
-      0.1
+      0.1,
+      anchorVector,
+      false
     );
-    const theme = vibeDjEngine.getThemeForVector(updatedVector);
+    const updatedLive = dualResult.currentVector || dualResult;
+    const updatedAnchor = dualResult.anchorVector || anchorVector;
+    const theme = vibeDjEngine.getThemeForVector(updatedLive);
 
     const updatedHistory = history.map((h) =>
       h.track.id === track.id ? { ...h, skipped: true, vibeReason: 'Steered away' } : h
     );
 
     set({
-      currentVector: updatedVector,
+      currentVector: updatedLive,
+      anchorVector: updatedAnchor,
       vibeLabel: theme.label,
       vibeTagline: theme.tagline,
       themeColor: theme.themeColor,
@@ -377,12 +426,18 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
     set({ isGenerating: true });
 
     try {
-      const { currentVector, history, djQueue } = get();
+      const { currentVector, history, djQueue, shakeCount, lastShakeTimestamp } = get();
       const theme = vibeDjEngine.getThemeForVector(currentVector);
       const { queue, recommendedArtists } = await vibeDjEngine.generateNextDjQueue(
         currentVector,
         history,
-        8
+        8,
+        {
+          sessionId: `dj_session_${lastShakeTimestamp || 'refresh'}`,
+          shakeCount,
+          sessionTracksPlayed: history.length,
+          lastPlayedTrack: history.length > 0 ? history[0].track : null,
+        }
       );
 
       // Merge avoiding duplicates
@@ -427,6 +482,7 @@ export const useVibeDjStore = create<VibeDjStore>((set, get) => ({
 
         set({
           isActive: true,
+          anchorVector: updatedVector,
           currentVector: updatedVector,
           vibeLabel: `${artist.name} Flow`,
           vibeTagline: `Deep dive into the soundscape of ${artist.name} in ${dominant}`,
