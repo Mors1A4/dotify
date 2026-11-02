@@ -407,12 +407,56 @@ The visual trademark of Vibe DJ is the **Three-Tone Fluid Disc Visualizer**:
 
 ## 14. Complete Listening Telemetry & Data Recording Specification
 
-Dotify incorporates a high-resolution, privacy-first **On-Device Listening Telemetry System**. All playback interactions, session durations, skips, replays, and musical affinities are recorded locally inside IndexedDB (`dotify_telemetry_db`) without external surveillance tracking.
+Dotify incorporates a high-resolution, privacy-first **On-Device Listening Telemetry System**. All playback interactions, session durations, skips, replays, and musical affinities are recorded locally inside IndexedDB (`dotify_telemetry_db`) without external surveillance tracking, cookies, or telemetry exfiltration.
 
-### 14.1 IndexedDB Database Topology (`dotify_telemetry_db`)
+---
 
-The database runs on version `1` and maintains four core object stores (with dual alias compatibility for legacy consumers):
+### 14.1 Privacy Guarantees & Architecture
 
+```mermaid
+flowchart TD
+    subgraph Playback_Heartbeat ["Audio Playback Heartbeat"]
+        Audio[Audio Engine / HTML5 Audio / YouTube Bridge] -->|Every 75ms Tick| Acc[Active Duration Accumulator]
+    end
+
+    subgraph Finalization_Pipeline ["Play Record Finalization"]
+        Acc -->|Track Ends / Skipped / Switch| Fin[finalizeCurrentPlayRecord]
+        Fin --> Classify[listeningClassifier.classifyListeningRecord]
+    end
+
+    subgraph Local_Storage_Tiers ["Local On-Device Storage"]
+        Classify -->|Put Play Record| IDB_Plays[IndexedDB: track_plays / plays]
+        Classify -->|Update Running Session| IDB_Sessions[IndexedDB: listening_sessions / sessions]
+        Classify -->|If not skipped| IDB_Genres[IndexedDB: genre_affinity]
+        Classify -->|If not skipped| IDB_Artists[IndexedDB: artist_affinity]
+        Classify -->|Feedback Event| VibeStore[useVibeDjStore.recordTrackEvent]
+    end
+
+    subgraph Optional_Cloud ["Opt-In Anonymous Cloud Feed"]
+        Fin -->|If ≥15s or ≥40% Listen| Comm[communityListeningService.recordPlay]
+        Comm -->|Anonymous Batch| Firestore[Firestore: app_config/community_listening]
+    end
+```
+
+1. **Local-First Isolation**: By default, 100% of the user's detailed listening history, skips, timestamps, searches, and affinities live strictly inside client-side browser/WebView2 storage.
+2. **Zero Third-Party Tracking**: No ad networks, tracking pixels, or commercial telemetry SDKs exist in the Dotify runtime.
+3. **High-Pass Community Anonymity**: The only data transmitted upstream is aggregated, anonymous play counts via Firestore, strictly gated behind a **15-second or 40% completion threshold** (transient skips are never transmitted).
+4. **Full User Ownership**: Users can export their entire dataset to a JSON file at any time with one click, or completely purge it via `clearTelemetry()`.
+
+---
+
+### 14.2 Physical Storage Tier Topology
+
+Dotify partitions listening and session data across four discrete tiers:
+
+| Tier | Storage Technology | Target Identifier | Data Contents & Scope | Persistence |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tier 1: Telemetry DB** | **IndexedDB** | `dotify_telemetry_db` (v1) | Immutable play records (`track_plays`), session aggregates (`listening_sessions`), genre affinities (`genre_affinity`), and artist affinities (`artist_affinity`) | Permanent on-device database |
+| **Tier 2: Client Preferences**| **LocalStorage** (`safeStorage`) | `dotify_community_recent_plays`, `queue`, `likedTracks`, `playlists`, `history` | Serialized active playback queue, library likes, custom playlist manifests, and cached recent community events | Persistent browser/app profile |
+| **Tier 3: In-Memory Runtime** | **Zustand State** | `playerStore`, `vibeDjStore` | In-flight play buffer (`activePlayRecord`), live 8D `currentVector`, and 30-item rotating DJ session history (`VibeDjHistoryItem[]`) | Volatile (active session) |
+| **Tier 4: Global Cloud Feed** | **Google Cloud Firestore** | `app_config/community_listening`, `mobile_diagnostics` | Anonymous community global trends (listener counts, top tracks) and Android ExoPlayer/streaming diagnostic crash reports | Cloud database (`dotify-11e01`) |
+
+#### IndexedDB Object Stores & Indexes (`dotify_telemetry_db`):
 ```
 dotify_telemetry_db (v1)
 ├── listening_sessions (alias: sessions) [keyPath: sessionId]
@@ -435,153 +479,418 @@ dotify_telemetry_db (v1)
 
 ---
 
-### 14.2 Detailed Field-by-Field Telemetry Schema
+### 14.3 Lifecycle of a Listening Event
 
-#### A. Track Play Record (`TrackPlayRecord` in `track_plays`)
-Every time a track is played and finalized (when changing songs, completing, or skipping), an immutable play record is written:
+```
+ 1. Play Triggered ─────────► activePlayRecord allocated in playerStore.ts:
+                               - playId: "play_1730545200000_a8f9z"
+                               - startTime: Date.now()
+                               - durationPlayedMs: 0
+                               - playContext: { origin, intent, searchQuery, playlistId... }
+                               - replayed: (lastPlayedTrackId === track.id)
 
-| Field Name | Type | Unit / Range | Derivation & Semantics |
+ 2. Active Audio ──────────► Position Heartbeat Loop runs every 75ms:
+                               - Validates player is actively playing (not paused or buffering)
+                               - Calculates delta = performance.now() - lastTick
+                               - If delta is valid (< 2000ms), increments durationPlayedMs
+                               - Excludes system sleeps, tab suspension, and pause time
+
+ 3. Play Interrupted ──────► finalizeCurrentPlayRecord() called on:
+    or Completed               - Natural song end (auto-advance)
+                               - User clicking "Next Track" or "Previous Track"
+                               - User selecting a different song in any view
+                               - App shutdown / page navigation
+
+ 4. Processing ────────────► 1. Calculates completionRate = durationPlayedMs / totalDurationMs
+                             2. Sets completed = completionRate >= 0.8
+                             3. Sets skipped = (durationPlayedMs < 30000 || completionRate < 0.5) && !completed
+                             4. Evaluates origin & intent via listeningClassifier
+                             5. Writes record into IndexedDB (track_plays & plays)
+                             6. Updates parent session in IndexedDB (listening_sessions)
+                             7. If not skipped: updates genre_affinity and artist_affinity
+                             8. Dispatches real-time event to VibeDjStore (completed / skipped / replayed)
+                             9. If duration ≥ 15s or comp ≥ 40%: logs to communityListeningService
+```
+
+---
+
+### 14.4 Database Schema: `track_plays` (Track Play Record)
+
+Written immutably every time a song stops playing.
+
+#### Schema Field Reference (`TrackPlayRecord`):
+| Field Name | Type | Range / Format | Description |
 | :--- | :--- | :--- | :--- |
-| `playId` | `string` | Unique ID | Format: `play_{timestamp}_{random5}` (e.g. `play_1730545200000_a8f9z`) |
-| `sessionId` | `string` | Foreign Key | References active `listening_sessions.sessionId` |
-| `trackId` | `string` | Unique ID | Upstream stream ID (e.g. `charts:123456`, `yt_dQw4w9WgXcQ`, `audius_...`) |
-| `title` | `string` | Text | Clean track title |
-| `artist` | `string` | Text | Primary artist name (stripped of featured artists) |
-| `genre` | `string` | Text | Classified genre or macro-genre (or `'Unknown'`) |
-| `source` | `TrackSource` | Enum | Origin feed: `'charts'`, `'audius'`, `'archive'`, `'radio'`, `'torrent'`, `'youtube'`, `'local'` |
-| `startTime` | `number` | Unix ms | Timestamp when the user started listening to this track |
-| `durationPlayedMs`| `number`| Milliseconds | **Active listening time**: Accumulated exclusively while playing. Pauses, buffers, and tab suspensions are frozen out |
-| `totalDurationMs` | `number`| Milliseconds | Total expected song duration in ms |
-| `completionRate` | `number` | $0.0 \dots 1.0$ | Exact fraction: $\min(1.0, \text{durationPlayedMs} / \text{totalDurationMs})$ |
-| `completed` | `boolean`| Boolean | `true` if `completionRate >= 0.8` (listened to at least 80% of song) |
-| `skipped` | `boolean`| Boolean | `true` if (`durationPlayedMs < 30000` or `completionRate < 0.5`) AND `completed === false` |
-| `replayed` | `boolean`| Boolean | `true` if the user immediately restarted or re-cued the song |
-| `userLiked` | `boolean`| Boolean | `true` if the track resides in the user's Liked Songs library |
-| `artworkUrl` | `string` | URL | High-resolution cover art URL |
-| `origin` | `PlayOrigin` | Enum (13 types)| Explicit origin channel where play was initiated (see Section 14.3) |
-| `intent` | `PlayIntent` | Enum | `'favoured'` (high personal taste signal) vs `'exploratory'` (passive discovery) |
-| `intentWeight` | `number` | $0.05 \dots 1.0$| $1.0$ for favoured, $0.05$ for skips, $0.15 \times \text{comp}$ for passive |
-| `searchQuery` | `string?` | Text | If played from Search, the exact search string query entered |
-| `contextMetadata` | `object` | JSON | Context metadata: `{ playlistId, playlistName, artistName, albumTitle }` |
+| **`playId`** | `string` | `play_{timestamp}_{hash}` | Primary key. Unique identifier for this discrete listening event. |
+| **`id`** | `string` | Alias | Backward-compatible alias matching `playId`. |
+| **`sessionId`** | `string` | `session_{timestamp}_{hash}` | Foreign key linking to the parent `listening_sessions` record. |
+| **`trackId`** | `string` | String (e.g. `charts:908604612`, `yt:dQw4w9WgXcQ`) | Unique track identifier. |
+| **`title`** | `string` | UTF-8 Text | Song title (e.g. `"Blinding Lights"`). |
+| **`artist`** | `string` | UTF-8 Text | Primary artist name (e.g. `"The Weeknd"`). |
+| **`genre`** | `string` | UTF-8 Text | Track genre from metadata or classified `MacroGenre` (defaults to `"Unknown"`). |
+| **`source`** | `TrackSource` | Enum | Audio provider: `'charts'`, `'audius'`, `'archive'`, `'radio'`, `'torrent'`, `'youtube'`. |
+| **`startTime`** | `number` | Unix Timestamp (ms) | Wall-clock millisecond timestamp when playback commenced. |
+| **`durationPlayedMs`**| `number` | Non-negative integer | **Net active listening time in milliseconds**. Pauses, network buffering, and background tab sleeps are excluded. |
+| **`timePlayedMs`** | `number` | Alias | Backward-compatible alias matching `durationPlayedMs`. |
+| **`totalDurationMs`** | `number` | Non-negative integer | Total duration of the audio file in milliseconds. |
+| **`durationMs`** | `number` | Alias | Backward-compatible alias matching `totalDurationMs`. |
+| **`completionRate`** | `number` | $0.0 \dots 1.0$ Float | Fraction of track listened to: $\min(1.0, \text{durationPlayedMs} / \text{totalDurationMs})$. |
+| **`completed`** | `boolean` | `true` or `false` | High-intent completion flag. `true` if `completionRate >= 0.8` ($\ge 80\%$). |
+| **`skipped`** | `boolean` | `true` or `false` | Negative signal flag. `true` if ($\text{durationPlayedMs} < 30000$ OR $\text{completionRate} < 0.5$) AND `completed === false`. |
+| **`replayed`** | `boolean` | `true` or `false` | Strong taste signal. `true` if played immediately back-to-back or in repeat-one mode. |
+| **`userLiked`** | `boolean` | `true` or `false` | `true` if the track was liked in the user's library at the time of playback. |
+| **`artworkUrl`** | `string` | URL | Verified high-resolution album cover artwork URL. |
+| **`origin`** | `PlayOrigin` | Enum (13 types) | Channel where play was initiated (see Section 14.8). |
+| **`intent`** | `PlayIntent` | `'favoured'` \| `'exploratory'` | Taste intent: deliberate user choice (`favoured`) vs passive discovery (`exploratory`). |
+| **`intentWeight`** | `number` | $0.05 \dots 1.0$ Float | Scalar weight for recommendations ($1.0$ for favoured, $0.05$ for skips, $0.15 \times \text{comp}$ for passive). |
+| **`searchQuery`** | `string?` | Text (optional) | The exact text query entered by the user if this play originated from search. |
+| **`contextMetadata`**| `object` | JSON Object | Enclosing context: `{ playlistId, playlistName, artistName, albumTitle }`. |
 
-#### B. Listening Session Record (`ListeningSessionRecord` in `listening_sessions`)
-Groups sequential continuous plays into aggregate sessions:
+#### Concrete JSON Examples:
 
-| Field Name | Type | Semantics |
-| :--- | :--- | :--- |
-| `sessionId` | `string` | Format: `session_{timestamp}_{random5}` |
-| `startTime` / `startedAt` | `number` | Unix timestamp ms when the session began |
-| `endTime` / `endedAt` | `number` | Unix timestamp ms of last recorded play activity |
-| `lastActiveAt` | `number` | Heartbeat timestamp of last playback update |
-| `deviceType` | `DeviceType` | `'desktop'`, `'mobile'` (screen width $< 768\text{px}$), or `'web'` |
-| `tracksPlayed` | `number` | Cumulative integer count of tracks queued and played in this session |
-| `totalPlayTimeMs` | `number` | Cumulative milliseconds of actual audio rendered |
-| `totalDurationMs` | `number` | Total duration of songs queued in session |
-
-#### C. Genre Affinity Record (`GenreAffinityRecord` in `genre_affinity`)
-Aggregated per distinct genre to build the user's continuous taste profile:
-
-| Field Name | Type | Semantics |
-| :--- | :--- | :--- |
-| `genre` | `string` | Primary key (e.g. `'Synthpop'`, `'Electronic & Dance'`, `'Indie Rock'`) |
-| `playCount` | `number` | Total number of times tracks in this genre were played |
-| `favouredPlayCount`| `number` | Plays originating from explicit user intent (Search, Library, Liked, Replay) |
-| `passivePlayCount` | `number` | Plays originating from passive discovery (DJ, Autoplay, Daily Mix) |
-| `totalTimePlayedMs`| `number` | Cumulative listening time in milliseconds |
-| `affinityScore` | `number` ($1 \dots 100$) | Algorithmic taste strength score (see formula below) |
-| `lastUpdated` | `number` | Unix timestamp ms of most recent update |
-
-#### D. Artist Affinity Record (`ArtistAffinityRecord` in `artist_affinity`)
-Maintains per-artist loyalty metrics using the exact same schema and scoring formula as Genre Affinity, keyed by primary artist name.
-
----
-
-### 14.3 Origin & Intent Classification (`listeningClassifier.ts`)
-
-Dotify distinguishes between **Explicit Favour** (the user deliberately chose to hear this track) and **Passive / Exploratory Discovery** (the algorithm served the track).
-
-#### The 13 Origin Channels (`PlayOrigin`):
-1. `'search'` — User typed a query in the search bar and clicked the result.
-2. `'artist'` — User clicked an artist profile, artist top hits, or artist discography.
-3. `'song'` — User clicked directly on a specific track row.
-4. `'library'` — User played from their Liked Songs collection.
-5. `'user_playlist'` — User played from a custom created/imported playlist.
-6. `'vibe_dj'` — Streamed sequentially via the Live AI Vibe DJ flow.
-7. `'vibe_playlist'` — Played from a daily Gemini AI-curated playlist (Gaming, Chill, etc.).
-8. `'discover_track'` — Played from a discovery shelf / echo break.
-9. `'discover_weekly'` — Played from the algorithmic Discover Weekly shelf.
-10. `'autoplay'` — Infinite playback continuation triggered when the queue ended.
-11. `'radio'` — Artist radio or genre station stream.
-12. `'recommendation'` — Played from Daily Mix, Heavy Rotation, or Forgotten Favorites.
-13. `'charts'` — Played directly from the global trending Top Charts.
-
-#### Intent Classification Rules:
-- **`favoured` ($1.0$ weight)**: Explicit search clicks, direct artist profile hits, library/liked tracks, user custom playlists, and **any replayed track** (even if discovered on a vibe playlist).
-- **`exploratory` ($0.05 \dots 0.25$ weight)**: Vibe DJ, Daily Mix, Autoplay, Radio, and Charts.
-- **Skip penalty ($0.05$ weight)**: Any track abandoned before $30\text{ seconds}$ or $50\%$ completion.
-
----
-
-### 14.4 Affinity Scoring Mathematics
-
-For both genres and artists, the `affinityScore` ($1 \dots 100$) is calculated as:
-
-$$\text{PlayFactor} = (\text{favouredPlays} \times 5) + (\text{passivePlays} \times 1)$$
-$$\text{TimeMinutes} = \lfloor \text{totalTimePlayedMs} / 60000 \rfloor$$
-$$\text{TimeFactor} = \text{favouredMinutes} + (\text{passiveMinutes} \times 0.3)$$
-$$\text{DeltaBonus} = (\text{replayed} \ ? \ +15 : 0) + (\text{completed} \ ? \ +10 : 0) - (\text{skipped} \ ? \ 5 : 0)$$
-
-$$\text{AffinityScore} = \text{clamp}\Big(1, 100, \text{round}(\text{PlayFactor} + \text{TimeFactor} + \text{DeltaBonus})\Big)$$
-
-This ensures that an artist the user actively searches for and replays gains affinity $5\times$ faster than an artist played passively in the background.
-
----
-
-### 14.5 Real-Time Duration Accumulator (`playerStore.ts`)
-
-To prevent false telemetry from paused audio or backgrounded tabs, `playerStore.ts` implements a high-resolution accumulation loop:
-
-```typescript
-// Heartbeat tick loop running every ~100-200ms
-if (activePlayRecord && get().isPlaying) {
-  const now = performance.now();
-  const delta = now - activePlayRecord.lastTick;
-  if (delta > 0 && delta < 500) { // Discard clock jumps / tab suspensions
-    activePlayRecord.durationPlayedMs += delta;
+##### Example 1: Explicit High-Intent Search Play (Completed)
+```json
+{
+  "playId": "play_1730545210450_k8x2m",
+  "id": "play_1730545210450_k8x2m",
+  "sessionId": "session_1730545000000_f9a1b",
+  "trackId": "charts:908604612",
+  "title": "Blinding Lights",
+  "artist": "The Weeknd",
+  "genre": "Synthpop",
+  "source": "charts",
+  "startTime": 1730545210450,
+  "durationPlayedMs": 200000,
+  "timePlayedMs": 200000,
+  "totalDurationMs": 200000,
+  "durationMs": 200000,
+  "completionRate": 1.0,
+  "completed": true,
+  "skipped": false,
+  "replayed": false,
+  "userLiked": true,
+  "artworkUrl": "https://cdn-images.dzcdn.net/images/cover/fd00ebd6d30d7253f813dba3bb1c66a9/500x500-000000-80-0-0.jpg",
+  "origin": "search",
+  "intent": "favoured",
+  "intentWeight": 1.0,
+  "searchQuery": "the weeknd blinding lights",
+  "contextMetadata": {
+    "artistName": "The Weeknd"
   }
-  activePlayRecord.lastTick = now;
 }
 ```
 
-When track playback terminates (`finalizeCurrentPlayRecord`), the exact active duration is committed to `telemetryDb.recordPlay()`.
+##### Example 2: Exploratory Vibe DJ Play (Fully Listened)
+```json
+{
+  "playId": "play_1730545415120_p4w9q",
+  "id": "play_1730545415120_p4w9q",
+  "sessionId": "session_1730545000000_f9a1b",
+  "trackId": "charts:1352360622",
+  "title": "Save Your Tears (Remix)",
+  "artist": "The Weeknd",
+  "genre": "Electronic & Dance",
+  "source": "charts",
+  "startTime": 1730545415120,
+  "durationPlayedMs": 185000,
+  "timePlayedMs": 185000,
+  "totalDurationMs": 191000,
+  "durationMs": 191000,
+  "completionRate": 0.968,
+  "completed": true,
+  "skipped": false,
+  "replayed": false,
+  "userLiked": false,
+  "artworkUrl": "https://cdn-images.dzcdn.net/images/cover/4acc3760e12996fe21a77115fc67760b/500x500-000000-80-0-0.jpg",
+  "origin": "vibe_dj",
+  "intent": "exploratory",
+  "intentWeight": 0.145,
+  "contextMetadata": {
+    "playlistName": "Neon Cyber Circuit"
+  }
+}
+```
+
+##### Example 3: Early Skip (<30s)
+```json
+{
+  "playId": "play_1730545600200_z1m7c",
+  "id": "play_1730545600200_z1m7c",
+  "sessionId": "session_1730545000000_f9a1b",
+  "trackId": "charts:449811200",
+  "title": "Ambient Meditation Chords",
+  "artist": "Zen Master",
+  "genre": "Chill & Lo-Fi",
+  "source": "charts",
+  "startTime": 1730545600200,
+  "durationPlayedMs": 12400,
+  "timePlayedMs": 12400,
+  "totalDurationMs": 240000,
+  "durationMs": 240000,
+  "completionRate": 0.051,
+  "completed": false,
+  "skipped": true,
+  "replayed": false,
+  "userLiked": false,
+  "artworkUrl": "https://cdn-images.dzcdn.net/images/cover/example.jpg",
+  "origin": "vibe_dj",
+  "intent": "exploratory",
+  "intentWeight": 0.05,
+  "contextMetadata": {
+    "playlistName": "Velvet Midnight Reverie"
+  }
+}
+```
 
 ---
 
-### 14.6 Community Listening & Cloud Telemetry
+### 14.5 Database Schema: `listening_sessions` (Listening Sessions)
 
-In addition to local IndexedDB storage:
+Groups consecutive tracks played in a single listening sitting.
 
-1. **Community Listening Feed (`communityListeningService.ts`)**:
-   - Condition: If a track is listened to for $\ge 15\text{ seconds}$ OR $\ge 40\%$ completion:
-   - Writes to Firestore document `app_config/community_listening` and localStorage `dotify_community_recent_plays`:
-     * `trackId`: unique ID
-     * `title`: song title
-     * `artist`: primary artist
-     * `album`: album name
-     * `artworkUrl`: verified album art
-     * `timestamp`: Unix ms
-     * `genre`: track genre
-     * `userId`: user UID or `'guest'`
-   - Powers global listener counts and community trending shelves.
+#### Schema Field Reference (`ListeningSessionRecord`):
+| Field Name | Type | Range / Format | Description |
+| :--- | :--- | :--- | :--- |
+| **`sessionId`** | `string` | `session_{timestamp}_{hash}` | Primary key. Unique session identifier. |
+| **`startTime`** / **`startedAt`** | `number` | Unix Timestamp (ms) | Millisecond timestamp when the session started. |
+| **`endTime`** / **`endedAt`** | `number?` | Unix Timestamp (ms) | Millisecond timestamp when the session concluded. |
+| **`lastActiveAt`** | `number` | Unix Timestamp (ms) | Heartbeat timestamp of the most recent playback activity. |
+| **`deviceType`** | `DeviceType` | `'desktop'` \| `'mobile'` \| `'web'` | Hardware category (detected via `window.innerWidth < 768`). |
+| **`tracksPlayed`** | `number` | Non-negative integer | Total number of songs initiated during this session. |
+| **`totalPlayTimeMs`**| `number` | Non-negative integer | Total cumulative milliseconds of active audio listened to. |
+| **`totalDurationMs`**| `number` | Non-negative integer | Total duration of songs queued in this session. |
 
-2. **Mobile Remote Diagnostics (`mobileTelemetryService.ts`)**:
-   - Stream playback failures, ExoPlayer decoder errors, and NewPipeExtractor parsing exceptions are pushed to Firestore `mobile_diagnostics` for real-time mobile debugging.
+#### Concrete JSON Example:
+```json
+{
+  "sessionId": "session_1730545000000_f9a1b",
+  "startTime": 1730545000000,
+  "startedAt": 1730545000000,
+  "lastActiveAt": 1730547400000,
+  "endTime": 1730547400000,
+  "endedAt": 1730547400000,
+  "deviceType": "desktop",
+  "tracksPlayed": 11,
+  "totalPlayTimeMs": 2185000,
+  "totalDurationMs": 2340000
+}
+```
 
 ---
 
-### 14.7 Exportable Telemetry Dataset Schema (`ExportableTelemetryDataset`)
+### 14.6 Database Schema: `genre_affinity` (Genre Taste Model)
 
-Users can export their complete listening history into a structured, portable JSON dataset for backup or external recommendation modeling:
+Maintains the user's continuous taste profile per musical genre.
+
+#### Schema Field Reference (`GenreAffinityRecord`):
+| Field Name | Type | Semantics |
+| :--- | :--- | :--- |
+| **`genre`** | `string` | Primary key (e.g. `'Synthpop'`, `'Electronic & Dance'`, `'Indie Rock'`). |
+| **`playCount`** | `number` | Total number of plays recorded in this genre. |
+| **`favouredPlayCount`** | `number` | Number of plays initiated with high user intent (Search, Library, Like, Replay). |
+| **`passivePlayCount`** | `number` | Number of plays from passive discovery (DJ flow, Autoplay, Radio). |
+| **`totalTimePlayedMs`** | `number` | Cumulative listening time in milliseconds across all tracks in this genre. |
+| **`affinityScore`** | `number` ($1 \dots 100$) | Algorithmic taste strength score (see formula below). |
+| **`lastUpdated`** / **`lastPlayedAt`** | `number` | Timestamp of the most recent play event in this genre. |
+
+#### Scoring Formula:
+$$\text{PlayFactor} = \begin{cases} 5 \cdot \text{playCount} & \text{if favored/replayed} \\ 5 \cdot \text{favouredPlayCount} + 1 \cdot \text{passivePlayCount} & \text{if passive} \end{cases}$$
+$$\text{TimeMinutes} = \lfloor \text{totalTimePlayedMs} / 60000 \rfloor$$
+$$\text{TimeFactor} = \begin{cases} \text{TimeMinutes} & \text{if favored/replayed} \\ 0.3 \cdot \text{TimeMinutes} & \text{if passive} \end{cases}$$
+$$\text{DeltaBonus} = (\text{replayed} \ ? \ +15 : 0) + (\text{completed} \ ? \ +10 : 0) - (\text{skipped} \ ? \ 5 : 0)$$
+$$\text{AffinityScore} = \text{clamp}\Big(1, 100, \text{round}(\text{PlayFactor} + \text{TimeFactor} + \text{DeltaBonus})\Big)$$
+
+#### Concrete JSON Example:
+```json
+{
+  "genre": "Electronic & Dance",
+  "playCount": 42,
+  "favouredPlayCount": 28,
+  "passivePlayCount": 14,
+  "totalTimePlayedMs": 8420000,
+  "affinityScore": 94,
+  "lastUpdated": 1730547400000,
+  "lastPlayedAt": 1730547400000
+}
+```
+
+---
+
+### 14.7 Database Schema: `artist_affinity` (Artist Loyalty Model)
+
+Maintains per-artist loyalty metrics using the exact same schema and formula as `genre_affinity`, keyed by primary artist name (extracted via `extractPrimaryArtist`).
+
+#### Concrete JSON Example:
+```json
+{
+  "artist": "The Weeknd",
+  "playCount": 26,
+  "favouredPlayCount": 21,
+  "passivePlayCount": 5,
+  "totalTimePlayedMs": 5120000,
+  "affinityScore": 98,
+  "lastUpdated": 1730547400000,
+  "lastPlayedAt": 1730547400000
+}
+```
+
+---
+
+### 14.8 Origin & Intent Classification Matrix
+
+The Dotify `listeningClassifier` categorizes every play into one of **13 origin channels**, mapping each to an intent level and recommendation weight:
+
+| Origin (`PlayOrigin`) | User Trigger / Context | Classified Intent | Intent Weight | Influence on Algorithm |
+| :--- | :--- | :--- | :--- | :--- |
+| **`search`** | User typed query and selected result | `favoured` | **1.0** | Strong positive boost to artist and genre |
+| **`artist`** | User clicked artist profile, top tracks, or discography | `favoured` | **1.0** | Maximum artist loyalty reinforcement |
+| **`song`** | Direct click on a specific song row | `favoured` | **1.0** | High track-specific affinity signal |
+| **`library`** | Played from Liked Songs or saved Library | `favoured` | **1.0** | Re-confirms heavy-rotation collection preference |
+| **`user_playlist`**| Played from custom created or imported playlist | `favoured` | **1.0** | High contextual affinity |
+| **`vibe_dj`** | Sequential stream from Live AI Vibe DJ | `exploratory` | **$0.15 \times \text{comp}$** | Nudges active vibe vector; does not pollute library |
+| **`vibe_playlist`**| Daily Gemini AI curated playlist (Gaming, Chill, etc.)| `exploratory` | **$0.15 \times \text{comp}$** | Moderate discovery signal |
+| **`discover_track`**| Played from a discovery shelf / break / echo | `exploratory` | **$0.15 \times \text{comp}$** | Discovery credit |
+| **`discover_weekly`**| Algorithmic Discover Weekly recommendation shelf | `exploratory` | **$0.20 \times \text{comp}$** | Validates discovery pipeline quality |
+| **`autoplay`** | Infinite playback continuation on queue end | `exploratory` | **$0.10 \times \text{comp}$** | Passive background continuation |
+| **`radio`** | Artist radio or live internet radio station | `exploratory` | **$0.10 \times \text{comp}$** | Passive background listening |
+| **`recommendation`**| Daily Mix, Heavy Rotation, Forgotten Favorites | `exploratory` | **$0.15 \times \text{comp}$** | Reinforces personalized shelf accuracy |
+| **`charts`** | Global trending charts or Deezer exploration | `exploratory` | **$0.10 \times \text{comp}$** | Cold discovery |
+
+> **Intent Promotion Invariant**:  
+> If an exploratory track is **replayed back-to-back**, **liked** during playback, or **added to a custom playlist**, its intent is immediately elevated to **`favoured` with a weight of 1.0**.
+
+---
+
+### 14.9 Vibe DJ In-Memory State & Session History
+
+During active Vibe DJ sessions, `src/store/vibeDjStore.ts` tracks a real-time rotating session history buffer (up to 30 items) that powers the **"Session Flow"** audit trail in `VibeDjView`:
+
+#### Schema Field Reference (`VibeDjHistoryItem`):
+| Field Name | Type | Description |
+| :--- | :--- | :--- |
+| **`track`** | `Track` | Full track model (id, title, artist, album, duration, artwork, streamUrl). |
+| **`playedAt`** | `number` | Unix timestamp ms when track was played in DJ mode. |
+| **`durationPlayedMs`**| `number?` | Milliseconds listened. |
+| **`completionRate`** | `number?` | Completion percentage ($0.0 \dots 1.0$). |
+| **`skipped`** | `boolean?`| `true` if skipped early or manually steered away. |
+| **`replayed`** | `boolean?`| `true` if replayed. |
+| **`vibeReason`** | `string?` | Human-readable explanation: `"Session starter"`, `"Vibed"`, `"Steered away"`, etc. |
+
+#### Concrete JSON Example:
+```json
+{
+  "track": {
+    "id": "charts:908604612",
+    "title": "Blinding Lights",
+    "artist": "The Weeknd",
+    "duration": 200,
+    "source": "charts",
+    "streamUrl": "",
+    "artworkUrl": "https://cdn-images.dzcdn.net/images/cover/fd00ebd6d30d7253f813dba3bb1c66a9/500x500-000000-80-0-0.jpg"
+  },
+  "playedAt": 1730545210450,
+  "durationPlayedMs": 200000,
+  "completionRate": 1.0,
+  "skipped": false,
+  "replayed": false,
+  "vibeReason": "Harmonically aligned with your active mood"
+}
+```
+
+---
+
+### 14.10 Community Listening & Cloud Telemetry
+
+For global community shelves and trending tracks, Dotify logs high-retention plays to Firebase Firestore:
+
+- **Target Firestore Document**: `app_config/community_listening` on project `dotify-11e01`.
+- **Local Fallback Cache**: `safeStorage` under `dotify_community_recent_plays`.
+- **Gating Filter (Strict Privacy Invariant)**:
+  $$\text{durationPlayedMs} \ge 15000 \quad \lor \quad \text{completionRate} \ge 0.40$$
+  *Tracks skipped early are discarded and NEVER sent to the cloud.*
+
+#### Community Play Event Schema (`CommunityPlayEvent`):
+| Field Name | Type | Description |
+| :--- | :--- | :--- |
+| **`trackId`** | `string` | Track identifier. |
+| **`title`** | `string` | Track title. |
+| **`artist`** | `string` | Primary artist. |
+| **`album`** | `string?` | Album title. |
+| **`artworkUrl`**| `string?` | Verified album cover art. |
+| **`timestamp`** | `number` | Unix timestamp (ms). |
+| **`genre`** | `string?` | Classified genre. |
+| **`userId`** | `string?` | Pseudonymous Firebase Auth UID or `'guest'`. |
+
+#### Concrete JSON Example:
+```json
+{
+  "trackId": "charts:908604612",
+  "title": "Blinding Lights",
+  "artist": "The Weeknd",
+  "album": "After Hours",
+  "artworkUrl": "https://cdn-images.dzcdn.net/images/cover/fd00ebd6d30d7253f813dba3bb1c66a9/500x500-000000-80-0-0.jpg",
+  "timestamp": 1730545410450,
+  "genre": "Synthpop",
+  "userId": "guest"
+}
+```
+
+---
+
+### 14.11 Android Mobile Diagnostic Telemetry
+
+On Android devices, runtime audio streaming events are recorded for developer debugging:
+
+- **Target Firestore Collection**: `mobile_diagnostics`
+- **Recorded Events**:
+  1. **ExoPlayer Decoder Failures**: Codec initialization errors, audio sink under-runs, and format mismatches.
+  2. **NewPipeExtractor Exceptions**: Stream parsing errors and YouTube signature deciphering timeouts.
+  3. **Stream Latency Metrics**: Cold-start DNS resolution, HTTP connection time, and initial byte buffering delay.
+  4. **Device Fingerprint**: Android OS version, SDK API level, manufacturer, and model (e.g. `Samsung SM-G991B, Android 14, API 34`).
+
+---
+
+### 14.12 Retroactive Re-Classification & Sanitization
+
+The telemetry engine actively maintains database cleanliness and accuracy over time:
+
+1. **Retroactive Classification (`classifyPastPlays`)**:
+   When a user follows an artist or likes a song, `telemetryDb.classifyPastPlays(userContext)` scans past plays. Any past play previously recorded as passive or exploratory is **retroactively upgraded to favoured status**, boosting historical taste profiles.
+2. **Mock Data Sanitization (`sanitizeMockData`)**:
+   Runs automatically upon database initialization. Purges mock testing records (e.g. tracks by `"Synthetic Pulse"`, `"Klarity"`, or IDs containing `"mock-"`) created during unit/integration tests to ensure user analytics remain genuine.
+
+---
+
+### 14.13 Complete `TelemetryDatabase` API Reference
+
+All methods exposed by `telemetryDb` (`src/services/telemetryDb.ts`):
+
+| Method Name | Return Type | Description |
+| :--- | :--- | :--- |
+| **`recordPlay(...)`** | `Promise<TrackPlayRecord>` | Commits a finalized play record, updates the session, and increments affinities. |
+| **`startSession(deviceType)`**| `Promise<ListeningSessionRecord>` | Initializes a new listening session record. |
+| **`updateSession(sessionId, ms)`**| `Promise<void>` | Updates play count, duration, and heartbeat timestamp for an active session. |
+| **`endSession(sessionId)`** | `Promise<void>` | Closes a session and marks `endTime`. |
+| **`getAllPlays()`** | `Promise<TrackPlayRecord[]>` | Returns all recorded track plays in chronological order. |
+| **`getRecentPlays(limit)`** | `Promise<TrackPlayRecord[]>` | Fetches the most recent $N$ plays (default 50). |
+| **`getSessionPlays(sessionId)`**| `Promise<TrackPlayRecord[]>` | Fetches all track plays belonging to a specific session. |
+| **`getAllSessions()`** | `Promise<ListeningSessionRecord[]>` | Returns all recorded listening sessions. |
+| **`getTopGenres(limit)`** | `Promise<GenreAffinityRecord[]>` | Returns highest-affinity genres sorted by `affinityScore`. |
+| **`getAllGenreAffinities()`** | `Promise<GenreAffinityRecord[]>` | Returns the complete genre affinity catalog. |
+| **`getTopArtists(limit)`** | `Promise<ArtistAffinityRecord[]>` | Returns highest-affinity artists sorted by `affinityScore`. |
+| **`getAllArtistAffinities()`** | `Promise<ArtistAffinityRecord[]>` | Returns the complete artist affinity catalog. |
+| **`classifyPastPlays(context)`**| `Promise<number>` | Retroactively re-evaluates past exploratory plays against newly updated likes/follows. |
+| **`sanitizeMockData()`** | `Promise<void>` | Purges test mock artifacts from IndexedDB. |
+| **`exportDataset()`** | `Promise<ExportableTelemetryDataset>` | Returns all sessions, plays, and affinities in a structured JSON object. |
+| **`exportTelemetryDataset()`** | `Promise<string>` | Returns the exported dataset serialized as an indented JSON string. |
+| **`importDataset(data)`** | `Promise<{ plays, sessions, genres, artists }>` | Merges or restores a previously exported telemetry JSON dataset. |
+| **`clearTelemetry()`** | `Promise<void>` | Purges all telemetry stores completely from IndexedDB. |
+
+---
+
+### 14.14 Data Portability & Export Specification
+
+Users have full data sovereignty over their listening telemetry. Calling `telemetryDb.exportTelemetryDataset()` produces a standardized, versioned JSON document:
 
 ```typescript
 export interface ExportableTelemetryDataset {
@@ -594,4 +903,70 @@ export interface ExportableTelemetryDataset {
   artistAffinities: ArtistAffinityRecord[];
 }
 ```
+
+#### Example Exported Dataset Fragment:
+```json
+{
+  "schemaVersion": 1,
+  "version": 1,
+  "exportedAt": "2026-11-02T11:15:00.000Z",
+  "sessions": [
+    {
+      "sessionId": "session_1730545000000_f9a1b",
+      "startTime": 1730545000000,
+      "lastActiveAt": 1730547400000,
+      "endTime": 1730547400000,
+      "deviceType": "desktop",
+      "tracksPlayed": 11,
+      "totalPlayTimeMs": 2185000,
+      "totalDurationMs": 2340000
+    }
+  ],
+  "plays": [
+    {
+      "playId": "play_1730545210450_k8x2m",
+      "sessionId": "session_1730545000000_f9a1b",
+      "trackId": "charts:908604612",
+      "title": "Blinding Lights",
+      "artist": "The Weeknd",
+      "genre": "Synthpop",
+      "source": "charts",
+      "startTime": 1730545210450,
+      "durationPlayedMs": 200000,
+      "totalDurationMs": 200000,
+      "completionRate": 1.0,
+      "completed": true,
+      "skipped": false,
+      "replayed": false,
+      "userLiked": true,
+      "origin": "search",
+      "intent": "favoured",
+      "intentWeight": 1.0
+    }
+  ],
+  "genreAffinities": [
+    {
+      "genre": "Electronic & Dance",
+      "playCount": 42,
+      "favouredPlayCount": 28,
+      "passivePlayCount": 14,
+      "totalTimePlayedMs": 8420000,
+      "affinityScore": 94,
+      "lastUpdated": 1730547400000
+    }
+  ],
+  "artistAffinities": [
+    {
+      "artist": "The Weeknd",
+      "playCount": 26,
+      "favouredPlayCount": 21,
+      "passivePlayCount": 5,
+      "totalTimePlayedMs": 5120000,
+      "affinityScore": 98,
+      "lastUpdated": 1730547400000
+    }
+  ]
+}
+```
+
 

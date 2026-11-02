@@ -138,10 +138,10 @@ function getGitHubToken() {
     return process.env.GITHUB_TOKEN.trim();
   }
   try {
-    const res = spawnSync('git', ['credential', 'fill'], {
-      input: 'protocol=https\nhost=github.com\n\n',
+    const res = spawnSync('powershell.exe', ['-NoProfile', '-Command', 'echo "protocol=https`nhost=github.com`n`n" | git credential fill'], {
       encoding: 'utf8',
       cwd: ROOT_DIR,
+      timeout: 6000,
     });
     if (res.stdout) {
       const match = res.stdout.match(/^password=(.+)$/m);
