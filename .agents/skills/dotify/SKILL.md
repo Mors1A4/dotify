@@ -1,11 +1,11 @@
 ---
 name: dotify
-description: Complete architecture, operational runbook, build commands, auto-updater release pipeline, audio engine, zero-node streaming, Spotify Connect LAN sync, Google Cast streaming, and debugging invariants for Dotify (notify) - the Spotify-inspired decentralized multi-source music streaming app built with Tauri v2, React 18, Windows WebView2, and Android NDK. Activate whenever working on Dotify, notify, app.exe, dotify.exe, dotify-setup.exe, dotify.apk, build-apk.bat, release.mjs, auto-updater, publish updates, deploy update, visualizer silence, audio engine, Spotify Connect, Google Home, Google Cast, or Android builds.
+description: Complete architecture, operational runbook, build commands, auto-updater release pipeline, audio engine, zero-node streaming, Spotify Connect LAN sync, Google Cast streaming, Vibe DJ v2.0 algorithmic discovery engine, IndexedDB telemetry schema (dotify_telemetry_db), responsive desktop window layout invariants (PlayerBar adaptiveness), and debugging invariants for Dotify (notify) - the Spotify-inspired decentralized multi-source music streaming app built with Tauri v2, React 18, Windows WebView2, and Android NDK. Activate whenever working on Dotify, notify, app.exe, dotify.exe, dotify-setup.exe, dotify.apk, build-apk.bat, release.mjs, auto-updater, publish updates, deploy update, visualizer silence, audio engine, Spotify Connect, Google Home, Google Cast, Vibe DJ, DJ_FUNCTIONALITY.md, telemetryDb, player bar layout, or Android builds.
 ---
 
 # Dotify (Notify) — Operations, Architecture & Development Guide
 
-Dotify (`notify`) is a full-stack, Spotify-inspired music streaming application supporting multi-source audio (central YouTube streaming via hidden YouTube iframe bridge, Deezer/Charts, Audius, Internet Archive, RadioBrowser, and WebTorrent P2P), real-time collaborative Jams, and cross-device cloud synchronization (Firestore + REST fallback) across Windows Desktop and Android.
+Dotify (`notify`) is a full-stack, Spotify-inspired music streaming application supporting multi-source audio (central YouTube streaming via hidden YouTube iframe bridge, Deezer/Charts, Audius, Internet Archive, RadioBrowser, and WebTorrent P2P), real-time collaborative Jams, algorithmic flow curation (Vibe DJ v2.0), local listening telemetry (`dotify_telemetry_db`), and cross-device cloud synchronization (Firestore + REST fallback) across Windows Desktop and Android.
 
 ---
 
@@ -14,6 +14,7 @@ Dotify (`notify`) is a full-stack, Spotify-inspired music streaming application 
 | Asset | Location / Path | Purpose |
 | :--- | :--- | :--- |
 | **Workspace Root** | `c:\Users\monty\Documents\AB\notify\` | Core repository root |
+| **DJ Functionality Spec** | `c:\Users\monty\Documents\AB\notify\DJ_FUNCTIONALITY.md` | Exhaustive 14-section architectural, mathematical, state, telemetry & UI specification for Vibe DJ |
 | **Release Publisher CLI** | `scripts/release.mjs` | Version bumper, compiles Desktop & Android, publishes to GitHub & Firestore |
 | **Release GitHub Repo** | `https://github.com/Mors1A4/dotify-releases` | Public release repo hosting `dotify.exe`, `dotify-setup.exe`, `dotify.apk`, `latest.json` |
 | **Cloud Config (Firestore)**| `app_config/release` on `dotify-11e01` | Real-time release manifest tracked by client apps |
@@ -26,6 +27,8 @@ Dotify (`notify`) is a full-stack, Spotify-inspired music streaming application 
 | **Tauri Config & Backend** | `src-tauri/tauri.conf.json` / `src-tauri/src/lib.rs` | Tauri v2 config, embedded Rust proxy, yt-dlp downloader, and in-place updater |
 | **Web Auth Portal** | `src-tauri/src/auth.html` | Embedded OAuth redirect receiver for Google Sign-In |
 | **Local Proxy Server** | `server/index.js` (port 3001) | Dev/local Node REST proxy for audio streams, metadata & library sync |
+| **Telemetry Engine** | `src/services/telemetryDb.ts` | IndexedDB persistent store for track plays, sessions, and genre/artist affinities |
+| **Vibe DJ Engine** | `src/services/vibeDjEngine.ts` | 8D vector space continuous listener flow curator and queue generator |
 | **In-App Upgrades Service**| `server/upgradeWorker.js` / `HelpUpgradeModal.tsx` | In-app OpenCode AI chat fork merge and 1-click update release system |
 
 ---
@@ -111,7 +114,7 @@ cmd.exe /c build-apk.bat
 ### A. Publishing a Live Update (`scripts/release.mjs`)
 Publishing an update synchronizes `package.json`, `tauri.conf.json`, `Cargo.toml`, `version.ts`, and Android `tauri.properties`, compiles binaries, tags GitHub releases, and syncs Firestore:
 ```bash
-# Standard release: bumps patch version (e.g. 1.0.15 -> 1.0.16), builds Desktop + Android, and publishes live:
+# Standard release: bumps patch version (e.g. 1.0.56 -> 1.0.57), builds Desktop + Android, and publishes live:
 npm run release -- --notes "Release notes summary"
 
 # Specific targets:
@@ -223,3 +226,109 @@ Dotify supports dual sign-in paths in `AuthModal.tsx`:
 - **Dedicated Playlist Page**: Clicking playlists or albums in `Sidebar.tsx` MUST call `navigateToPlaylist(playlistId)` or `navigateToAlbum(albumId)`.
 - **Spotify OLED Dark Aesthetic**: Use `bg-surface`, `bg-elevated`, `border-customBorder`, `bg-accent`, `text-accent`. Never use hardcoded Tailwind slate/navy palettes (`#121622`, `border-slate-800`).
 - **Firestore Sanitization**: Always serialize/deserialize data with `JSON.parse(JSON.stringify(...))` before calling Firestore `setDoc()` to strip `undefined` fields.
+
+---
+
+## 10. Vibe DJ v2.0 Algorithmic Engine & Three-Ring Discovery Architecture
+
+> **Complete Specification**: See [DJ_FUNCTIONALITY.md](file:///c:/Users/monty/Documents/AB/notify/DJ_FUNCTIONALITY.md) for the complete 14-section architectural, mathematical, and state specification.
+
+Vibe DJ (`src/services/vibeDjEngine.ts`, `src/store/vibeDjStore.ts`) continuously models listener state across an 8-dimensional normalized acoustic vector $\mathbf{V} = \langle E, D, M, A, T, F, \mathbf{W}_{\text{genre}} \rangle$ and curates dynamic song-to-song playback flow.
+
+### A. Root Causes of v1 Repetition & Fixes
+The legacy v1 DJ engine suffered from 5 algorithmic failure modes:
+1. **Static Hash Bias**: Deterministic track ID hashing added a fixed $\pm 7\text{ pt}$ serendipity modifier without session salting, boosting the exact same songs every session forever.
+2. **Novelty Penalty Delta Too Weak**: Taste weight awarded up to $+25.3\text{ pts}$ while the novelty penalty between new vs. played tracks was only $1.8\text{ pts}$.
+3. **Anti-Clumping Starvation**: Locking out top artists after 1 track combined with broad macro-genre queries (e.g. `"Chill & Lo-Fi"`) pulled generic SEO filler.
+4. **Coarse Feature Smoothing Deadzone**: $\Delta E < 0.45$ received zero smoothing penalty, allowing abrupt 44% energy swings.
+5. **Pointwise Queue Sorting vs. Chained Transitions**: All 8 queue tracks were scored against track 0 instead of chained $k \to k+1$.
+
+### B. Vibe DJ v2.0 Core Upgrades
+1. **Three-Ring Candidate Pool**:
+   - **Ring 1: Comfort Core (~30%)**: High-affinity artist catalog (`affinityScore > 50` from `telemetryDb.getTopArtists`) and library favorites rested for $> 72\text{ hours}$.
+   - **Ring 2: Taste-Graph Expansion (~45%)**: Granular sub-genres from `telemetryDb.getTopGenres(15)` (e.g. `"Synthpop"`, `"Liquid Drum and Bass"`) and seed/session artist collaborations.
+   - **Ring 3: Vetted Discovery (~25%)**: High-retention community tracks ($\ge 40\%$ completion from `communityListeningService`) and Discover Weekly shelves.
+2. **Hard Pre-Scoring Quality Gate**:
+   - **6-Hour Lockout**: Rejects tracks played in the current session or within the last 6 hours (`now - lastPlayedAt < 6 * 3600 * 1000`).
+   - **Chronic Skip Ban**: If a track has $\ge 2$ plays and historical skip ratio $\ge 0.65$ (and `userLiked === false`), it is banned for 30 days.
+   - **SEO Farm Filter**: Blocks generic tokens (`/\b(karaoke|tribute to|8d audio|ringtone|white noise|sleep sounds|study alpha waves)\b/i`).
+3. **Continuous Exponential Exposure Fatigue Model**:
+   $$\tau_{\text{half-life}} = 18 \cdot \left(1 + 0.35 \cdot \text{playsInLast14Days}\right)$$
+   $$F_{\text{cooldown}}(t) = 1.0 - 0.85 \cdot \exp\left(-\frac{\Delta h}{\tau_{\text{half-life}}}\right)$$
+   Beloved songs played 8h ago suffer a ~71% score penalty, resting naturally and resurfacing only after 5–7 days.
+4. **Deep Cut Bonus**: Unplayed tracks by high-affinity artists ($\tilde{A}_{\text{artist}} \ge 0.65$) receive $S_{\text{trackHistory}} = 0.85$, actively introducing fresh songs by artists the user already loves.
+5. **Sequential Beam Chain Sequencing ($k \to k+1$)**: Enforces stepwise energy continuity ($|\Delta E| \le 0.18$) and dynamic 5-track wave pacing.
+
+---
+
+## 11. Listening Telemetry Architecture (`dotify_telemetry_db`)
+
+Dotify maintains a local-first, privacy-respecting client telemetry engine in IndexedDB (`dotify_telemetry_db`, Version 1) managed by `src/services/telemetryDb.ts`.
+
+### A. Four Core Object Stores
+
+1. **`sessions` (Key: `sessionId`)**:
+   Tracks aggregate listening sessions with fields: `sessionId`, `startTime`, `lastActiveAt`, `endTime`, `deviceType` (`'desktop' | 'mobile' | 'tablet' | 'smart_speaker'`), `tracksPlayed`, `totalPlayTimeMs`, `totalDurationMs`.
+2. **`plays` (Key: `playId`, Indexes: `sessionId`, `trackId`, `startTime`, `artist`, `genre`)**:
+   Individual track play records:
+   - `playId`, `sessionId`, `trackId`, `title`, `artist`, `genre`, `source`.
+   - `startTime`, `durationPlayedMs`, `totalDurationMs`, `completionRate`.
+   - Behavioral booleans: `completed` ($\ge 80\%$), `skipped` ($< 30\text{s}$ or $< 20\%$), `replayed`, `userLiked`.
+   - `intent`: `'favoured'` ($1.0$), `'search'` ($0.85$), `'passive'` ($0.5$), `'autoplay_dj'` ($0.4$).
+3. **`genreAffinities` (Key: `genre`)**:
+   Maintains continuous taste profiles: `genre`, `playCount`, `favouredPlayCount`, `passivePlayCount`, `totalTimePlayedMs`, `affinityScore` ($0\text{--}100$), `lastUpdated`.
+4. **`artistAffinities` (Key: `artist`)**:
+   Maintains artist taste profiles: `artist`, `playCount`, `favouredPlayCount`, `passivePlayCount`, `totalTimePlayedMs`, `affinityScore` ($0\text{--}100$), `lastUpdated`.
+
+### B. Telemetry Invariants & Data Sovereignty
+- **Double-Import Idempotency**: `importDataset()` checks existing IDs and merges records without creating duplicates.
+- **Retroactive Upgrading (`classifyPastPlays`)**: Following an artist or liking a track retroactively upgrades past passive/exploratory plays to favoured intent, re-biasing taste scores.
+- **Mock Data Purging (`sanitizeMockData`)**: Automatically removes test traces (`"Synthetic Pulse"`, `"mock-"`) on startup.
+- **Full Portability**: `telemetryDb.exportTelemetryDataset()` generates standard versioned JSON (`ExportableTelemetryDataset`) for complete export and restore.
+
+---
+
+## 12. Adaptive Desktop Window Layout & Player Bar Invariants
+
+Dotify Windows Desktop dynamically adapts from full 4K screens down to compact half-monitor snapped widths (768px–1100px).
+
+### A. Root Cause of Previous Overflow & Clipping
+In `src/components/layout/PlayerBar.tsx`, the desktop bottom bar previously used a rigid CSS Grid `grid-cols-3`. On window widths $< 1100\text{px}$, Column 3 received $\le 330\text{px}$ but contained $\approx 504\text{px}$ of non-shrinking controls (Lyrics, Visualizer, Queue, Equalizer, ActiveDeviceBadge, DevicePicker button, Volume icon, and `w-28` volume slider). The resulting ~200px overflow brutally clipped the volume slider in half and showed redundant duplicate laptop icons.
+
+### B. Proportional Flexbox Responsive Invariants
+1. **Container Architecture**:
+   `PlayerBar.tsx` MUST use proportional flexbox:
+   ```tsx
+   <footer className="hidden md:flex items-center justify-between h-20 bg-playerBg border-t border-customBorder px-3 lg:px-4 z-30 select-none overflow-hidden">
+   ```
+2. **Left Section (`w-[30%] max-w-[340px] min-w-0 shrink-0`)**:
+   - Artwork scales dynamically: `w-12 h-12 lg:w-14 lg:h-14`.
+   - Track title and artist truncate with `flex-1 min-w-0 overflow-hidden`.
+   - Secondary actions yield space on compact widths: `SaveMp3Button` (`hidden xl:inline-flex`), `audio-source-btn` (`hidden 2xl:inline-flex`).
+3. **Center Section (`flex-1 max-w-xl min-w-[180px]`)**:
+   - Continuous seekbar scrubbing with tabular compact timestamps (`min-w-[50px]`).
+4. **Right Section (`w-[30%] max-w-[340px] min-w-0 shrink-0 justify-end`)**:
+   - **Single Device Icon**: When local, render ONLY `<button data-testid="device-picker-btn">`. When controlling remote playback (`connectMode === 'remote_controller'`), render `<ActiveDeviceBadge>` with animated green equalizer bars; its text label collapses (`hidden xl:inline`) on screens below `xl`.
+   - **Progressive Utility Disclosure**: Equalizer (`Sliders`: `hidden xl:flex`) and Visualizer (`VisualizerIcon`: `hidden lg:flex`) hide gracefully in the bar on compact widths (both remain 1-click accessible via `TopBar.tsx`).
+   - **Volume Slider Protection**: Sized with strict `shrink-0 w-20 md:w-24 lg:w-28 ml-1 md:ml-2` and `min-w-[40px]` on the `<input type="range" />`, guaranteeing the volume thumb and mute button are NEVER compressed or clipped.
+
+---
+
+## 13. GitHub Token Resolution & Release Push CLI Pattern
+
+When executing `scripts/release.mjs` or pushing commits on Windows, Git Credential Manager may prompt or hang if multiple credential records exist.
+
+### Robust Credential Helper Resolution:
+In `scripts/release.mjs`, `getGitHubToken()` queries Git Credential Manager using specific username hints:
+```javascript
+const inputs = [
+  'protocol=https\nhost=github.com\nusername=x-access-token\n\n',
+  'protocol=https\nhost=github.com\nusername=Mors1A4\n\n',
+  'protocol=https\nhost=github.com\n\n',
+];
+```
+
+### Git Commit & Push One-Liner (Automated Scripting):
+```powershell
+node --% -e "const {spawnSync} = require('child_process'); const res = spawnSync('git', ['credential', 'fill'], { input: 'protocol=https\nhost=github.com\nusername=x-access-token\n\n', encoding: 'utf8', timeout: 4000 }); const token = res.stdout.match(/^password=(.+)$/m)[1].trim(); spawnSync('git', ['push', `https://x-access-token:${token}@github.com/Mors1A4/dotify.git`, 'main'], { encoding: 'utf8', stdio: 'inherit' });"
+```
