@@ -153,6 +153,7 @@ describe('Smooth Song Switching & Seekbar Transitions', () => {
           vibeReason: 'Perfect follow-up',
           predictedEnergy: 0.8,
           sourceTier: 'taste_catalogue',
+          isNovelty: false,
         },
       ],
     });
