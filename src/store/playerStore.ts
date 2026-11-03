@@ -1684,6 +1684,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
             }
           }
         }
+        remoteProgressInterpolator.resetForTrack(0);
         connectClient.sendRemoteCommand('next');
         return;
       }
@@ -1693,7 +1694,8 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
         if (djState?.isActive) {
           const nextDjTrack = await djState.popNextDjTrack();
           if (nextDjTrack) {
-            get().playTrack(nextDjTrack, undefined, undefined, {
+            const currentDjQueue = (djState.djQueue || []).map((q: any) => q.track);
+            get().playTrack(nextDjTrack, [nextDjTrack, ...currentDjQueue], 0, {
               origin: 'vibe_dj',
               intent: 'exploratory',
               playlistName: djState.vibeLabel,
@@ -1777,6 +1779,7 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
             }
           }
         }
+        remoteProgressInterpolator.resetForTrack(0);
         connectClient.sendRemoteCommand('previous');
         return;
       }

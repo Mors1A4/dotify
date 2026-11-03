@@ -242,6 +242,12 @@ export class AudioEngine {
       this.rafId = null;
       this.lastTickTime = Date.now();
       if (this.isControllerMode) return;
+      if (this.isSwitchingTrack) {
+        if (typeof requestAnimationFrame !== 'undefined') {
+          this.rafId = requestAnimationFrame(tick);
+        }
+        return;
+      }
 
       if (this.isUsingNativeEngine) {
         if (androidNativePlayback.isPlaying()) {
@@ -847,6 +853,16 @@ export class AudioEngine {
     this.stopProgressLoop();
     this.isSwitchingTrack = true;
 
+    // Reset direct audio elements to prevent residual timestamp leakage
+    try {
+      this.activeAudio.pause();
+      this.activeAudio.currentTime = 0;
+    } catch {}
+    try {
+      this.standbyAudio.pause();
+      this.standbyAudio.currentTime = 0;
+    } catch {}
+
     // Tear down the previous native queue first so two players never overlap.
     if (this.isUsingNativeEngine) {
       this.isUsingNativeEngine = false;
@@ -1394,6 +1410,9 @@ export class AudioEngine {
   }
 
   public getCurrentTime(): number {
+    if (this.isSwitchingTrack) {
+      return 0;
+    }
     if (this.isControllerMode) {
       return this.controllerCurrentTime;
     }
@@ -1407,6 +1426,9 @@ export class AudioEngine {
   }
 
   public getDuration(): number {
+    if (this.isSwitchingTrack) {
+      return this.currentTrack?.duration || 0;
+    }
     if (this.isControllerMode) {
       if (this.controllerDuration > 0) return this.controllerDuration;
       if (this.currentTrack?.duration && isFinite(this.currentTrack.duration) && this.currentTrack.duration > 0) {

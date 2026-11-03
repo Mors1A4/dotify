@@ -36,6 +36,7 @@ export class YouTubeIframeBridge {
   private isPlayingState = false;
   private isBufferingState = false;
   private currentVideoId: string | null = null;
+  private loadedVideoId: string | null = null;
   private targetStartSeconds = 0;
   private currentVolume = 1.0; // 0.0 - 1.0
   private userInitiatedPause = false;
@@ -172,6 +173,19 @@ export class YouTubeIframeBridge {
   private handleStateChange(state: number): void {
     // YT.PlayerState:
     // -1: UNSTARTED, 0: ENDED, 1: PLAYING, 2: PAUSED, 3: BUFFERING, 5: CUED
+    try {
+      const activeVid = this.player?.getVideoData?.()?.video_id;
+      if (activeVid && activeVid === this.currentVideoId) {
+        this.loadedVideoId = activeVid;
+      } else if (state === 1 || state === 3) {
+        this.loadedVideoId = this.currentVideoId;
+      }
+    } catch {
+      if (state === 1 || state === 3) {
+        this.loadedVideoId = this.currentVideoId;
+      }
+    }
+
     switch (state) {
       case 1: // PLAYING
         this.isPlayingState = true;
@@ -229,6 +243,9 @@ export class YouTubeIframeBridge {
     this.userInitiatedPause = false;
     this.currentVideoId = videoId;
     this.targetStartSeconds = startSeconds;
+    this.loadedVideoId = null;
+    this.isPlayingState = false;
+    this.isBufferingState = true;
 
     try {
       this.player.loadVideoById({
@@ -241,7 +258,6 @@ export class YouTubeIframeBridge {
         this.player.setVolume(Math.round(this.currentVolume * 100));
       } catch {}
       this.player.playVideo();
-      this.isPlayingState = true;
     } catch (err) {
       console.error('[YouTubeIframeBridge] play error:', err);
     }
@@ -290,6 +306,19 @@ export class YouTubeIframeBridge {
     if (!this.player || !this.isReady || typeof this.player.getCurrentTime !== 'function') {
       return 0;
     }
+    // Prevent leaking previous track playback position during video transition
+    if (this.currentVideoId && this.loadedVideoId !== this.currentVideoId) {
+      try {
+        const activeVid = this.player?.getVideoData?.()?.video_id;
+        if (activeVid && activeVid === this.currentVideoId) {
+          this.loadedVideoId = activeVid;
+        } else {
+          return this.targetStartSeconds || 0;
+        }
+      } catch {
+        return this.targetStartSeconds || 0;
+      }
+    }
     try {
       return this.player.getCurrentTime() || 0;
     } catch {
@@ -299,6 +328,10 @@ export class YouTubeIframeBridge {
 
   public getDuration(): number {
     if (!this.player || !this.isReady || typeof this.player.getDuration !== 'function') {
+      return 0;
+    }
+    // Prevent leaking previous track duration during video transition
+    if (this.currentVideoId && this.loadedVideoId !== this.currentVideoId) {
       return 0;
     }
     try {

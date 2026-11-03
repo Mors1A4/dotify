@@ -119,9 +119,7 @@ export function useSmoothSeekbar({ track, isActive = true }: SmoothSeekbarOption
         const curTrack = trackRef.current;
         const isLive = isLiveStreamTrack(targetDurationRef.current, curTrack);
         const effDur = resolveEffectiveDuration(targetDurationRef.current, curTrack);
-        const targetPct =
-          effDur > 0 && isFinite(effDur) ? (targetTimeRef.current / effDur) * 100 : 0;
-        applySeekbarDom(targetPct, targetTimeRef.current, effDur, isLive);
+        applySeekbarDom(0, 0, effDur, isLive);
         return;
       }
 
@@ -150,23 +148,20 @@ export function useSmoothSeekbar({ track, isActive = true }: SmoothSeekbarOption
         const curTrack = trackRef.current;
         const effDur = resolveEffectiveDuration(targetDurationRef.current, curTrack);
         const isLive = isLiveStreamTrack(effDur, curTrack);
-        const liveTargetPct =
-          effDur > 0 && isFinite(effDur)
-            ? Math.min(100, Math.max(0, (targetTimeRef.current / effDur) * 100))
-            : 0;
+        const liveTargetPct = 0;
 
         const currentPct =
           glideStateRef.current.startPercent +
           (liveTargetPct - glideStateRef.current.startPercent) * eased;
 
-        applySeekbarDom(currentPct, targetTimeRef.current, effDur, isLive);
+        applySeekbarDom(currentPct, 0, effDur, isLive);
 
         if (t < 1) {
           glideRafRef.current = requestAnimationFrame(stepGlide);
         } else {
           glideStateRef.current.active = false;
           glideRafRef.current = null;
-          applySeekbarDom(liveTargetPct, targetTimeRef.current, effDur, isLive);
+          applySeekbarDom(0, 0, effDur, isLive);
         }
       };
 
@@ -184,6 +179,7 @@ export function useSmoothSeekbar({ track, isActive = true }: SmoothSeekbarOption
     lastTrackIdRef.current = track.id;
 
     if (isTrackSwitch) {
+      cancelGlide();
       // Trigger smooth compositor-accelerated transition on artwork & track metadata
       try {
         artworkRef.current?.animate?.(
@@ -208,6 +204,9 @@ export function useSmoothSeekbar({ track, isActive = true }: SmoothSeekbarOption
       const isLive = isLiveStreamTrack(initDur, track);
       targetTimeRef.current = 0;
       targetDurationRef.current = initDur;
+
+      // Always reset DOM seekbar to 0:00 immediately on track switch
+      applySeekbarDom(0, 0, initDur, isLive);
 
       if (currentTimeRef.current && !isDraggingRef.current) {
         currentTimeRef.current.textContent = '0:00';
@@ -238,6 +237,13 @@ export function useSmoothSeekbar({ track, isActive = true }: SmoothSeekbarOption
 
     const unsubscribe = audioEngine.onTimeUpdate((current, duration) => {
       const curTrack = trackRef.current || audioEngine.getCurrentTrack();
+      const engineTrack = audioEngine.getCurrentTrack();
+
+      // Guard: Ignore time updates from a previous track that does not match the active UI track
+      if (engineTrack && trackRef.current && engineTrack.id !== trackRef.current.id) {
+        return;
+      }
+
       const effDur = resolveEffectiveDuration(duration, curTrack);
       const isLive = isLiveStreamTrack(effDur, curTrack);
       const newPct =
@@ -253,8 +259,8 @@ export function useSmoothSeekbar({ track, isActive = true }: SmoothSeekbarOption
         return;
       }
 
-      // If an explicit mid-track seek/handoff occurred during a rewind glide, cancel glide and snap
-      if (glideStateRef.current.active && current > 1.2) {
+      // If an explicit user-drag seek occurred during a rewind glide, cancel glide and snap
+      if (glideStateRef.current.active && isDraggingRef.current) {
         cancelGlide();
       }
 
