@@ -216,6 +216,9 @@ export const DevicePickerModal: React.FC = () => {
                 max="1"
                 step="0.01"
                 value={displayVolume}
+                style={{
+                  background: `linear-gradient(to right, #ffffff 0%, #ffffff ${displayVolume * 100}%, rgba(255, 255, 255, 0.2) ${displayVolume * 100}%, rgba(255, 255, 255, 0.2) 100%)`,
+                }}
                 onMouseDown={() => { isDraggingVol.current = true; }}
                 onTouchStart={() => { isDraggingVol.current = true; }}
                 onChange={(e) => {
@@ -236,7 +239,7 @@ export const DevicePickerModal: React.FC = () => {
                   setSliderVal(null);
                 }}
                 data-testid="device-volume-slider"
-                className="w-full h-1 rounded-none appearance-none cursor-pointer"
+                className="w-full h-1 rounded-none appearance-none cursor-pointer hover:h-1.5 transition-all"
               />
               <span className="text-xs font-mono text-muted w-8 text-right">
                 {Math.round(displayVolume * 100)}%

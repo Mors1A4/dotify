@@ -275,7 +275,11 @@ export const LyricsModal: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 w-28">
-            <button onClick={handleToggleMute} className="text-secondary hover:text-primary">
+            <button
+              onClick={handleToggleMute}
+              className="text-secondary hover:text-primary transition-colors shrink-0 p-0.5"
+              title={isMuted || volume === 0 ? 'Unmute' : 'Mute'}
+            >
               {volume === 0 || isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </button>
             <input
@@ -283,12 +287,16 @@ export const LyricsModal: React.FC = () => {
               min="0"
               max="1"
               step="0.01"
+              title={`Volume: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
               value={isMuted ? 0 : volume}
+              style={{
+                background: `linear-gradient(to right, #ffffff 0%, #ffffff ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.2) ${(isMuted ? 0 : volume) * 100}%, rgba(255, 255, 255, 0.2) 100%)`,
+              }}
               onChange={(e) => {
                 setIsMuted(false);
                 setVolume(parseFloat(e.target.value));
               }}
-              className="w-full h-1 rounded-none appearance-none cursor-pointer"
+              className="w-full h-1 rounded-none appearance-none cursor-pointer hover:h-1.5 transition-all"
             />
           </div>
         </div>
