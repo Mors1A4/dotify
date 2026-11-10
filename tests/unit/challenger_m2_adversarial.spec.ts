@@ -439,6 +439,7 @@ describe('Adversarial Challenge Suite: Milestone 2 Telemetry & Dataset Robustnes
   // =========================================================================
   describe('4. Concurrent Play Records and Rapid Session Updates', () => {
     it('50 concurrent recordPlay calls via Promise.all resolve successfully and store 50 records', async () => {
+      await new Promise((r) => setTimeout(r, 50));
       await telemetryDb.clearTelemetry();
       const session = await telemetryDb.startSession('desktop');
       const tracks = [

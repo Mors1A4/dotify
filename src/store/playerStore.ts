@@ -179,7 +179,7 @@ export class RemoteProgressInterpolator {
 
 export const remoteProgressInterpolator = new RemoteProgressInterpolator();
 
-export type AppView = 'home' | 'search' | 'radio' | 'archive' | 'torrents' | 'library' | 'artist' | 'album' | 'playlist' | 'vibe-dj';
+export type AppView = 'home' | 'search' | 'radio' | 'archive' | 'torrents' | 'library' | 'artist' | 'album' | 'playlist' | 'vibe-dj' | 'settings';
 
 // Backward compatibility alias for Playlist
 export type Playlist = CustomPlaylist;
@@ -303,6 +303,7 @@ export interface PlayerStoreState {
   navigateToAlbum: (album: SelectedAlbumState) => void;
   navigateToPlaylist: (playlistId: string) => void;
   navigateToVibeDj: () => void;
+  navigateToSettings: () => void;
   addAlbumToLibrary: (album: SelectedAlbumState, tracks: Track[]) => void;
   removeAlbumFromLibrary: (albumTitle: string) => void;
   isAlbumInLibrary: (albumTitle: string) => boolean;
@@ -2150,6 +2151,18 @@ export const usePlayerStore = create<PlayerStoreState>((set, get, api) => {
       set((state) => {
         const res = pushNavEntry(state, {
           view: 'vibe-dj',
+        });
+        return {
+          ...res,
+          isMobileSheetOpen: false,
+        };
+      });
+    },
+
+    navigateToSettings: () => {
+      set((state) => {
+        const res = pushNavEntry(state, {
+          view: 'settings',
         });
         return {
           ...res,

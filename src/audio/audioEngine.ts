@@ -13,6 +13,7 @@ import {
 } from '../services/youtubeResolver';
 import { badSourceService } from '../services/badSourceService';
 import { mobileDiagnostics } from '../services/mobileDiagnostics';
+import { safeStorage } from '../utils/storage';
 
 function createAudioElement(): HTMLAudioElement {
   if (typeof Audio !== 'undefined') {
@@ -94,6 +95,9 @@ export class AudioEngine {
   private controllerCurrentTime: number = 0;
   private controllerDuration: number = 0;
 
+  // Audio output device routing
+  private audioSinkId: string = 'default';
+
   private constructor() {
     this.primaryAudio = createAudioElement();
     this.primaryAudio.crossOrigin = 'anonymous';
@@ -129,6 +133,15 @@ export class AudioEngine {
 
     this.setupAudioListeners(this.primaryAudio, true);
     this.setupAudioListeners(this.secondaryAudio, false);
+
+    // Load persisted hardware audio output device
+    try {
+      const savedSinkId = safeStorage.getItem('dotify_audio_output_device', 'default');
+      if (savedSinkId && savedSinkId !== 'default') {
+        this.audioSinkId = savedSinkId;
+        this.setAudioOutputDevice(savedSinkId).catch(() => {});
+      }
+    } catch {}
   }
 
   public static getInstance(): AudioEngine {
@@ -158,6 +171,12 @@ export class AudioEngine {
 
       const ctx = new AudioCtx() as AudioContext;
       this.audioContext = ctx;
+
+      if (this.audioSinkId && this.audioSinkId !== 'default' && typeof (ctx as any).setSinkId === 'function') {
+        try {
+          (ctx as any).setSinkId(this.audioSinkId).catch(() => {});
+        } catch {}
+      }
 
       // Pre-amp gain node
       this.preAmpNode = ctx.createGain();
@@ -2067,6 +2086,54 @@ export class AudioEngine {
   public onApproachingEnd(cb: () => void): () => void {
     this.approachingEndCallbacks.add(cb);
     return () => this.approachingEndCallbacks.delete(cb);
+  }
+
+  /**
+   * Routes all audio playback to the specified hardware output device.
+   * Directs HTMLAudioElements, Web Audio context, and YouTube bridge.
+   */
+  public async setAudioOutputDevice(deviceId: string): Promise<boolean> {
+    this.audioSinkId = deviceId || 'default';
+    let success = true;
+
+    // Apply to HTML5 Audio elements
+    if (this.primaryAudio && typeof (this.primaryAudio as any).setSinkId === 'function') {
+      try {
+        await (this.primaryAudio as any).setSinkId(this.audioSinkId);
+      } catch (err) {
+        console.warn('[AudioEngine] Failed to setSinkId on primaryAudio:', err);
+        success = false;
+      }
+    }
+
+    if (this.secondaryAudio && typeof (this.secondaryAudio as any).setSinkId === 'function') {
+      try {
+        await (this.secondaryAudio as any).setSinkId(this.audioSinkId);
+      } catch (err) {
+        console.warn('[AudioEngine] Failed to setSinkId on secondaryAudio:', err);
+        success = false;
+      }
+    }
+
+    // Apply to Web Audio AudioContext
+    if (this.audioContext && typeof (this.audioContext as any).setSinkId === 'function') {
+      try {
+        await (this.audioContext as any).setSinkId(this.audioSinkId);
+      } catch (err) {
+        console.warn('[AudioEngine] Failed to setSinkId on audioContext:', err);
+      }
+    }
+
+    // Forward to YouTube Iframe Bridge
+    if (this.ytBridge) {
+      this.ytBridge.setAudioOutputDevice(this.audioSinkId).catch(() => {});
+    }
+
+    return success;
+  }
+
+  public getAudioOutputDevice(): string {
+    return this.audioSinkId;
   }
 }
 

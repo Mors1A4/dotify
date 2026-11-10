@@ -22,6 +22,7 @@ import { ArtistView } from './components/views/ArtistView';
 import { AlbumView } from './components/views/AlbumView';
 import { PlaylistView } from './components/views/PlaylistView';
 import { VibeDjView } from './components/views/VibeDjView';
+import { SettingsView } from './components/views/SettingsView';
 import { useAuthStore } from './store/authStore';
 import { useUpdateStore } from './store/updateStore';
 import { isAndroidApp } from './services/apiConfig';
@@ -138,6 +139,8 @@ export const App: React.FC = () => {
         return <PlaylistView />;
       case 'vibe-dj':
         return <VibeDjView />;
+      case 'settings':
+        return <SettingsView />;
       default:
         return <HomeView />;
     }

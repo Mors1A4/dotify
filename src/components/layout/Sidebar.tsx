@@ -23,6 +23,7 @@ import {
   FolderDown,
   Trash2,
   Sparkles,
+  Settings,
 } from 'lucide-react';
 import { useUpdateStore } from '../../store/updateStore';
 
@@ -692,15 +693,26 @@ export const Sidebar: React.FC = () => {
           {!isSidebarCollapsed ? (
             <>
               <span className="font-mono text-secondary">v{currentVersion}</span>
-              <button
-                type="button"
-                onClick={() => checkForUpdates(true)}
-                className="hover:text-primary transition-colors flex items-center gap-1.5 cursor-pointer font-medium"
-                title="Check for updates"
-              >
-                <RefreshCw size={11} className={isChecking ? 'animate-spin text-accent' : ''} />
-                <span>{isChecking ? 'Checking...' : 'Check updates'}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveView('settings')}
+                  className="hover:text-primary transition-colors flex items-center gap-1 cursor-pointer font-medium p-1 rounded hover:bg-elevated"
+                  title="Settings & Audio Output"
+                  data-testid="sidebar-settings-btn"
+                >
+                  <Settings size={13} className="text-secondary hover:text-accent transition-colors" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => checkForUpdates(true)}
+                  className="hover:text-primary transition-colors flex items-center gap-1.5 cursor-pointer font-medium"
+                  title="Check for updates"
+                >
+                  <RefreshCw size={11} className={isChecking ? 'animate-spin text-accent' : ''} />
+                  <span>{isChecking ? 'Checking...' : 'Check updates'}</span>
+                </button>
+              </div>
             </>
           ) : (
             <button

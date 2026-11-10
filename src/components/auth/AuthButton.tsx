@@ -1,14 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useUpgradeStore } from '../../store/upgradeStore';
-import { LogOut, Cloud, Loader2, User as UserIcon, Wand2, FolderOpen } from 'lucide-react';
+import { LogOut, Cloud, Loader2, User as UserIcon, Wand2, FolderOpen, Settings, Volume2 } from 'lucide-react';
 import { ColourSchemeSection } from '../theme/ColourSchemeSection';
 import { DownloadFolderModal } from '../common/DownloadFolderModal';
 import { fetchDownloadDir } from '../../services/downloadFolderService';
+import { useAudioDeviceStore } from '../../store/audioDeviceStore';
+import { usePlayerStore } from '../../store/playerStore';
 
 export const AuthButton: React.FC = () => {
   const { user, isLoading, isSyncing, signOut, openAuthModal } = useAuthStore();
   const { openHelpModal, requests: upgradeRequests } = useUpgradeStore();
+  const { activeDeviceLabel, loadDevices } = useAudioDeviceStore();
+  const { setActiveView } = usePlayerStore();
   const hasProcessingUpgrade = upgradeRequests.some(
     (r) => r.status === 'processing' && Date.now() - (r.updatedAt || r.createdAt || 0) < 3600000
   );
@@ -34,6 +38,7 @@ export const AuthButton: React.FC = () => {
   // profile menu opens so the button subtitle always shows this device's folder.
   useEffect(() => {
     if (!isOpen) return;
+    loadDevices().catch(() => {});
     let cancelled = false;
     fetchDownloadDir()
       .then((info) => {
@@ -116,6 +121,39 @@ export const AuthButton: React.FC = () => {
             {/* Colour scheme (moved from TopBar to save title space) */}
             <ColourSchemeSection />
 
+            {/* Audio Output (per-device hardware routing) */}
+            <div className="rounded-xl border border-customBorder/60 bg-elevated/30 px-1 py-1">
+              <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-wide text-muted">
+                Audio Output · This device
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  setActiveView('settings');
+                }}
+                data-testid="profile-audio-output-btn"
+                title={activeDeviceLabel || 'Choose which speakers or headphones Dotify plays through'}
+                className="w-full flex items-center justify-between px-2 py-2 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-lg transition-colors text-left group cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Volume2 size={16} className="text-accent flex-shrink-0" />
+                  <div className="min-w-0">
+                    <span className="block font-semibold text-primary">Audio Device</span>
+                    <span
+                      className="block text-[10px] text-muted font-mono truncate max-w-[170px]"
+                      data-testid="profile-audio-device-label"
+                    >
+                      {activeDeviceLabel || 'Default Audio Output'}
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold text-accent px-2 py-1 rounded-md bg-accent/15 border border-accent/25 flex-shrink-0 ml-2">
+                  Change
+                </span>
+              </button>
+            </div>
+
             {/* Download folder (per-client: this device only, OS paths differ) */}
             <div className="rounded-xl border border-customBorder/60 bg-elevated/30 px-1 py-1">
               <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-wide text-muted">
@@ -145,6 +183,25 @@ export const AuthButton: React.FC = () => {
                 </span>
               </button>
             </div>
+
+            {/* Settings */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+                setActiveView('settings');
+              }}
+              data-testid="profile-settings-btn"
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-xl transition-colors text-left group cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5">
+                <Settings size={15} className="text-accent group-hover:rotate-45 transition-transform" />
+                <span>Settings</span>
+              </div>
+              <span className="text-[10px] text-muted font-mono px-2 py-0.5 rounded-md bg-elevated border border-customBorder/50">
+                Preferences
+              </span>
+            </button>
 
             {/* Help & AI Studio */}
             <button
@@ -237,6 +294,39 @@ export const AuthButton: React.FC = () => {
           {/* Colour scheme (moved from TopBar to save title space) */}
           <ColourSchemeSection />
 
+          {/* Audio Output (per-device hardware routing) */}
+          <div className="rounded-xl border border-customBorder/60 bg-elevated/30 px-1 py-1">
+            <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-wide text-muted">
+              Audio Output · This device
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+                setActiveView('settings');
+              }}
+              data-testid="profile-audio-output-btn-user"
+              title={activeDeviceLabel || 'Choose which speakers or headphones Dotify plays through'}
+              className="w-full flex items-center justify-between px-2 py-2 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-lg transition-colors text-left group cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Volume2 size={16} className="text-accent flex-shrink-0" />
+                <div className="min-w-0">
+                  <span className="block font-semibold text-primary">Audio Device</span>
+                  <span
+                    className="block text-[10px] text-muted font-mono truncate max-w-[150px]"
+                    data-testid="profile-audio-device-label-user"
+                  >
+                    {activeDeviceLabel || 'Default Audio Output'}
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] font-bold text-accent px-2 py-1 rounded-md bg-accent/15 border border-accent/25 flex-shrink-0 ml-2">
+                Change
+              </span>
+            </button>
+          </div>
+
           {/* Download folder (per-client: this device only, OS paths differ) */}
           <div className="rounded-xl border border-customBorder/60 bg-elevated/30 px-1 py-1">
             <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-wide text-muted">
@@ -266,6 +356,25 @@ export const AuthButton: React.FC = () => {
               </span>
             </button>
           </div>
+
+          {/* Settings */}
+          <button
+            type="button"
+            onClick={() => {
+              setIsOpen(false);
+              setActiveView('settings');
+            }}
+            data-testid="profile-settings-btn-user"
+            className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-secondary hover:text-primary hover:bg-elevated/70 rounded-xl transition-colors text-left group cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5">
+              <Settings size={15} className="text-accent group-hover:rotate-45 transition-transform" />
+              <span>Settings</span>
+            </div>
+            <span className="text-[10px] text-muted font-mono px-2 py-0.5 rounded-md bg-elevated border border-customBorder/50">
+              Preferences
+            </span>
+          </button>
 
           {/* Help & AI Studio item */}
           <button

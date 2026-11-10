@@ -39,6 +39,7 @@ export class YouTubeIframeBridge {
   private loadedVideoId: string | null = null;
   private targetStartSeconds = 0;
   private currentVolume = 1.0; // 0.0 - 1.0
+  private audioSinkId = 'default';
   private userInitiatedPause = false;
   private lastAutoResumeTime = 0;
 
@@ -138,6 +139,9 @@ export class YouTubeIframeBridge {
             try {
               this.player.setVolume(Math.round(this.currentVolume * 100));
             } catch {}
+            if (this.audioSinkId && this.audioSinkId !== 'default') {
+              this.setAudioOutputDevice(this.audioSinkId).catch(() => {});
+            }
             for (const resolve of this.readyResolvers) {
               try { resolve(); } catch {}
             }
@@ -363,5 +367,28 @@ export class YouTubeIframeBridge {
 
   public setOnError(cb: ErrorCallback | null): void {
     this.onErrorCallback = cb;
+  }
+
+  public async setAudioOutputDevice(deviceId: string): Promise<void> {
+    this.audioSinkId = deviceId;
+    if (typeof document === 'undefined') return;
+    try {
+      const container = document.getElementById('dotify-yt-bridge-wrapper');
+      const iframe = container?.querySelector('iframe');
+      if (iframe) {
+        const curAllow = iframe.getAttribute('allow') || '';
+        if (!curAllow.includes('speaker-selection')) {
+          iframe.setAttribute('allow', `${curAllow}; speaker-selection`);
+        }
+        try {
+          const video = iframe.contentDocument?.querySelector('video');
+          if (video && typeof (video as any).setSinkId === 'function') {
+            await (video as any).setSinkId(deviceId);
+          }
+        } catch {
+          // Expected cross-origin boundary
+        }
+      }
+    } catch {}
   }
 }
